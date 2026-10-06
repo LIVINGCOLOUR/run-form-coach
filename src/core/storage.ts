@@ -55,6 +55,7 @@ export const saveBaseline = (b: Baseline) => write('rfc.baseline', b)
 export interface Settings {
   screen: 'show' | 'dark'
   voice: VoiceKind
+  camera: 'front' | 'back' // 前面は画面を見ながら置ける。背面は暗い場所に強い
 }
-export const loadSettings = (): Settings => ({ screen: 'show', voice: 'female', ...(read<Partial<Settings>>('rfc.settings') ?? {}) })
+export const loadSettings = (): Settings => ({ screen: 'show', voice: 'female', camera: 'front', ...(read<Partial<Settings>>('rfc.settings') ?? {}) })
 export const saveSettings = (s: Settings) => write('rfc.settings', s)

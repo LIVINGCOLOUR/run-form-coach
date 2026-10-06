@@ -71,6 +71,11 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
     setSettings(s)
     saveSettings(s)
   }
+  const setCamera = (camera: Settings['camera']) => {
+    const s = { ...settings, camera }
+    setSettings(s)
+    saveSettings(s)
+  }
   const setVoice = async (voice: VoiceKind) => {
     const s = { ...settings, voice }
     setSettings(s)
@@ -187,6 +192,14 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
         <div className="seg" style={{ gridTemplateColumns: '1fr 1fr' }}>
           <button aria-pressed={settings.screen === 'show'} onClick={() => setScreen('show')}>常に表示</button>
           <button aria-pressed={settings.screen === 'dark'} onClick={() => setScreen('dark')}>真っ暗</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontSize: 13 }} className="muted">カメラ</div>
+        <div className="seg" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <button aria-pressed={settings.camera === 'front'} onClick={() => setCamera('front')}>前面（画面を見ながら置ける）</button>
+          <button aria-pressed={settings.camera === 'back'} onClick={() => setCamera('back')}>背面（暗い場所に強い）</button>
         </div>
       </div>
 

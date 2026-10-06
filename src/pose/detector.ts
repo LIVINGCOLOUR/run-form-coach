@@ -87,10 +87,10 @@ export function runPose(video: HTMLVideoElement, lm: PoseLandmarker, onTick: (p:
   return { stop: () => (stopped = true) }
 }
 
-export async function openCamera(video: HTMLVideoElement): Promise<MediaStream> {
+export async function openCamera(video: HTMLVideoElement, facing: 'front' | 'back' = 'front'): Promise<MediaStream> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+    video: { facingMode: facing === 'front' ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
   })
   video.srcObject = stream
   video.muted = true

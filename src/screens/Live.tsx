@@ -35,6 +35,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
   const coachRef = useRef<Coach | null>(null)
   const finishRef = useRef<() => void>(() => {})
   const screenMode = loadSettings().screen
+  // 前面カメラは鏡のように左右反転して見せる（骨格の計算は反転しない元の映像で行う）
+  const mirror = !file && loadSettings().camera === 'front'
   const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true } })
 
   useEffect(() => {
@@ -110,8 +112,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
       if (Math.min(...ys) < h * 0.04 || frame[L.nose].v < 0.5) return PHRASES.guideHead
       if (Math.max(...ys) > h * 0.98 || frame[L.leftAnkle].v < 0.5 || frame[L.rightAnkle].v < 0.5) return PHRASES.guideFeet
-      if (cx < w * 0.3) return PHRASES.guideLeft
-      if (cx > w * 0.7) return PHRASES.guideRight
+      if (cx < w * 0.3 || cx > w * 0.7) return mirror ? PHRASES.guideCenter : cx < w * 0.3 ? PHRASES.guideLeft : PHRASES.guideRight
       if (sideDeg > 15) return PHRASES.guideSide
       return null
     }
@@ -176,7 +177,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           await video.play()
           video.onended = () => finish()
         } else {
-          stream = await openCamera(video)
+          stream = await openCamera(video, loadSettings().camera)
         }
         if (disposed) return
         setPhase(file ? 'run' : 'setup')
@@ -312,8 +313,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
 
   return (
     <div className="live">
-      <video ref={videoRef} playsInline muted style={{ opacity: dark ? 0 : 1 }} />
-      <canvas ref={canvasRef} style={{ opacity: dark ? 0 : 1 }} />
+      <video ref={videoRef} playsInline muted style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
+      <canvas ref={canvasRef} style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
 
       {dark && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
