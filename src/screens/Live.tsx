@@ -331,7 +331,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             </button>
             <div style={{ width: 10, height: 10, borderRadius: 5, background: 'var(--accent)' }} />
             <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 3 }} className="muted">
-              {hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'}
+              {hud.phase === 'loading' || hud.phase === 'error' ? '' : hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'}
             </div>
           </div>
 
