@@ -1,3 +1,4 @@
+import React from 'react'
 import { useMemo } from 'react'
 import { demoStride, paths } from '../../src/ui/figure'
 import { C } from './theme'
@@ -11,6 +12,8 @@ export function Figure({
   transform,
   ghost,
   ghostColor = C.accent,
+  drop,
+  legColor = C.limb,
 }: {
   frame: number
   lean: number
@@ -19,8 +22,10 @@ export function Figure({
   transform: string
   ghost?: { lean: number; head: number }
   ghostColor?: string
+  drop?: number
+  legColor?: string
 }) {
-  const strides = useMemo(() => demoStride({ lean, head, drop: lean > 12 ? 6 : 0 }), [lean, head])
+  const strides = useMemo(() => demoStride({ lean, head, drop: drop ?? (lean > 12 ? 6 : 0) }), [lean, head, drop])
   const ghostStrides = useMemo(() => (ghost ? demoStride({ lean: ghost.lean, head: ghost.head, drop: 0 }) : null), [ghost])
   const i = frame % strides.length
   const p = paths(strides[i], true)
@@ -32,7 +37,7 @@ export function Figure({
         <path d={p.legBack} strokeWidth={20} />
         <path d={p.armBack} strokeWidth={16} />
       </g>
-      <path d={p.legFront} stroke={C.limb} strokeWidth={22} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d={p.legFront} stroke={legColor} strokeWidth={22} strokeLinecap="round" strokeLinejoin="round" fill="none" />
       <path d={p.trunk} stroke={upper} strokeWidth={26} strokeLinecap="round" fill="none" />
       <path d={p.neck} stroke={upper} strokeWidth={16} strokeLinecap="round" fill="none" />
       <circle cx={p.hx} cy={p.hy} r={26} fill={upper} />

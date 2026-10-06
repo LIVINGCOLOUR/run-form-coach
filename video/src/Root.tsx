@@ -1,3 +1,4 @@
+import React from 'react'
 import { Composition } from 'remotion'
 import { Promo, TOTAL } from './Promo'
 import { FPS, H, W } from './theme'

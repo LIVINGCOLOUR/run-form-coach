@@ -1,49 +1,55 @@
-// 紹介動画のナレーションを Vertex AI の Gemini TTS で作り、長さを assets/narration.json に書く
+// 紹介動画の声を Vertex AI の Gemini TTS で作り、長さを src/narration.json に書く
+//   n*: ナレーション（男性の声）
+//   a*: アプリの声かけ（アプリと同じ女性の声）。アプリにある言葉は、アプリの音声ファイルをそのまま使う
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { LINES, APP_LINES } from '../src/lines.mjs'
 
 const root = new URL('..', import.meta.url).pathname
-const out = join(root, 'public/narration')
-mkdirSync(out, { recursive: true })
-
 const project = process.env.VERTEX_PROJECT || execFileSync('gcloud', ['config', 'get-value', 'project']).toString().trim()
 const token = execFileSync('gcloud', ['auth', 'print-access-token']).toString().trim()
-const VOICE = 'Algieba'
-const STYLE = 'スポーツの映像のナレーターとして、落ち着いて力強く、かっこよく。言葉の間をたっぷりとって、ゆっくり語る'
 
-export const LINES = {
-  n1: 'フルマラソン。後半で、失速していませんか。',
-  n2: '原因のひとつは、疲れて崩れるフォーム。でも、走っている自分の姿は、自分では見えません。',
-  n3: 'ランフォームコーチ。スマホ一台で、あなたの走りを見続ける、AIコーチです。',
-  n4: '置いて、立って、走るだけ。',
-  n5: '崩れた瞬間に、声で直す。だから、疲れた後半でも崩れないフォームが、体に残ります。',
-  n6: '走り姿は、骨格で見える化。次に直すのは、ひとつだけ。',
-  n7: '後半で、落ちない走りへ。ランフォームコーチ。',
+const NARRATOR = { voice: 'Algieba', style: 'スポーツの映像のナレーターとして、落ち着いて力強く、かっこよく。言葉の間をたっぷりとって、ゆっくり語る' }
+const COACH = { voice: 'Sulafat', style: '日本語のランニングコーチとして、温かく落ち着いた大人の女性の声で、はっきり自然に話してください。' }
+
+async function tts(text, { voice, style }, m4a) {
+  const res = await fetch(`https://aiplatform.googleapis.com/v1/projects/${project}/locations/global/publishers/google/models/gemini-3.8-flash-tts:generateContent`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text, speech_metadata: { style } }] }],
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { voice } } },
+    }),
+  })
+  if (!res.ok) throw new Error(`${m4a}: ${res.status} ${(await res.text()).slice(0, 300)}`)
+  const data = (await res.json()).candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData?.data
+  const wav = m4a.replace(/\.m4a$/, '.wav')
+  writeFileSync(wav, Buffer.from(data, 'base64'))
+  execFileSync('afconvert', ['-f', 'm4af', '-d', 'aac', '-b', '64000', wav, m4a])
+  rmSync(wav)
 }
 
 const durations = {}
+const length = (f) => Number(execFileSync('afinfo', [f]).toString().match(/estimated duration: ([\d.]+)/)[1])
+
+mkdirSync(join(root, 'public/narration'), { recursive: true })
 for (const [id, text] of Object.entries(LINES)) {
-  const m4a = join(out, `${id}.m4a`)
-  if (!existsSync(m4a)) {
-    const res = await fetch(`https://aiplatform.googleapis.com/v1/projects/${project}/locations/global/publishers/google/models/gemini-3.8-flash-tts:generateContent`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text, speech_metadata: { style: STYLE } }] }],
-        generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { voice: VOICE } } },
-      }),
-    })
-    if (!res.ok) throw new Error(`${id}: ${res.status} ${(await res.text()).slice(0, 300)}`)
-    const json = await res.json()
-    const data = json.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData?.data
-    const wav = join(out, `${id}.wav`)
-    writeFileSync(wav, Buffer.from(data, 'base64'))
-    execFileSync('afconvert', ['-f', 'm4af', '-d', 'aac', '-b', '64000', wav, m4a])
-    rmSync(wav)
+  const f = join(root, 'public/narration', `${id}.m4a`)
+  if (!existsSync(f)) await tts(text, NARRATOR, f)
+  durations[id] = length(f)
+  console.log(id, durations[id].toFixed(2), 's')
+}
+
+mkdirSync(join(root, 'public/app'), { recursive: true })
+for (const [id, { text, appFile }] of Object.entries(APP_LINES)) {
+  const f = join(root, 'public/app', `${id}.m4a`)
+  if (!existsSync(f)) {
+    const src = appFile && join(root, '../public/voices/female', `${appFile}.m4a`)
+    if (src && existsSync(src)) copyFileSync(src, f)
+    else await tts(text, COACH, f)
   }
-  const info = execFileSync('afinfo', [m4a]).toString()
-  durations[id] = Number(info.match(/estimated duration: ([\d.]+)/)[1])
+  durations[id] = length(f)
   console.log(id, durations[id].toFixed(2), 's')
 }
 writeFileSync(join(root, 'src/narration.json'), JSON.stringify(durations, null, 2) + '\n')

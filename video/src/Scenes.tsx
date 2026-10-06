@@ -1,3 +1,4 @@
+import React from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { AbsoluteFill, Easing, interpolate, interpolateColors, spring, useCurrentFrame } from 'remotion'
 import { Figure } from './Figure'
@@ -54,7 +55,7 @@ function Mark({ size, draw = 1 }: { size: number; draw?: number }) {
 }
 
 // 1. 後半で失速するペースの線
-export function SHook() {
+export function SHook(_: { items?: unknown }) {
   const f = useCurrentFrame()
   const x = (km: number) => 120 + (km / 42.195) * 840
   const y = (km: number) => (km < 30 ? 820 + Math.sin(km * 0.7) * 1.5 : 820 + ((km - 30) / 12.195) ** 1.6 * 300)
@@ -99,7 +100,7 @@ export function SHook() {
 }
 
 // 2. 疲れて崩れるフォーム。自分では見えない
-export function SProblem() {
+export function SProblem(_: { items?: unknown }) {
   const f = useCurrentFrame()
   const k = interpolate(f, [50, 230], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
   const upper = interpolateColors(k, [0, 1], [C.limb, C.warn])
@@ -131,7 +132,7 @@ export function SProblem() {
 }
 
 // 3. ロゴ。スマホ1台で見続ける
-export function SSolution() {
+export function SSolution(_: { items?: unknown }) {
   const f = useCurrentFrame()
   const draw = interpolate(f, [0, 30], [0, 1], { ...clamp, easing: Easing.out(Easing.cubic) })
   const s = pop(f, 18)
@@ -195,7 +196,7 @@ export function SSteps() {
 // 5. 走行中：崩れたら声、直ったらほめる（アプリの実際の声）
 export const CUE_TEXT = '頭が前に出ています。顎を引いてください。'
 export const RECOVER_TEXT = 'いい感じです。その姿勢を保ちましょう。'
-export function SCoach() {
+export function SCoach(_: { items?: unknown }) {
   const f = useCurrentFrame()
   const k = interpolate(f, [118, 140], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
   const bad = k < 0.5
@@ -252,7 +253,7 @@ export function SCoach() {
 }
 
 // 6. 崩れ始めが後ろにずれていく
-export function SHabit() {
+export function SHabit(_: { items?: unknown }) {
   const f = useCurrentFrame()
   const X = (m: number) => 110 + (m / 60) * 860
   const Y = (v: number) => 1300 - v * 4.6
@@ -320,7 +321,7 @@ export function SHabit() {
 }
 
 // 7. 走り姿を骨格で。次に直すのは1つだけ
-export function SInsight() {
+export function SInsight(_: { items?: unknown }) {
   const f = useCurrentFrame()
   const g = interpolate(f, [10, 60], [0, 1], { ...clamp, easing: Easing.out(Easing.cubic) })
   return (
@@ -362,7 +363,7 @@ export function SInsight() {
 }
 
 // 8. 締め
-export function SEnd() {
+export function SEnd(_: { items?: unknown }) {
   const f = useCurrentFrame()
   const a = pop(f, 4)
   const b = pop(f, 22)
@@ -381,6 +382,7 @@ export function SEnd() {
         <div style={{ fontFamily: num, fontWeight: 700, fontSize: 124, letterSpacing: 14 }}>RUN FORM COACH</div>
         <div style={{ fontSize: 52, fontWeight: 700 }}>置いて、立って、走るだけ。</div>
         <div style={{ fontFamily: num, fontSize: 40, color: C.muted, marginTop: 30 }}>run-form-coach.vercel.app</div>
+        <div style={{ fontSize: 28, color: C.faint }}>※開発中の機能を含みます</div>
       </div>
     </Bg>
   )
