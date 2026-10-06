@@ -1,0 +1,21 @@
+{
+  "name": "run-form-coach-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "narration": "node scripts/gen-narration.mjs",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Promo out/run-form-coach-promo.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.533",
+    "@remotion/google-fonts": "^4.0.533",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.533"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -15,3 +15,16 @@ npm test        # 計測・判定・声かけの流れのテスト
 ```
 
 「動画で試す」から、横から撮ったランニングの動画を入れると、カメラの代わりに動画で一通り動かせる（直立の基準は仮のものになる）。
+
+## 紹介動画（video/）
+
+Remotion と SVG で作る60秒・縦（1080×1920）の紹介動画。ナレーションは Vertex AI の Gemini TTS、音楽は Lyria 3 Pro（Vertex AI には Lyria 3.5 がないため）。
+骨格の絵は、アプリと同じ `src/ui/figure.ts` で描く。
+
+```sh
+cd video
+npm install
+npm run narration   # ナレーションを作り直す（gcloud でログインしておく）
+npm run studio      # プレビュー
+npm run render      # out/run-form-coach-promo.mp4 に書き出す
+```
