@@ -7,7 +7,8 @@ import { L } from '../core/landmarks'
 import { overCue } from '../core/scoring'
 import { gravityAvailable, gravityRoll } from '../core/gravity'
 import { loadBaseline, loadSettings, saveBaseline, saveSession } from '../core/storage'
-import { speak } from '../core/voice'
+import { preloadVoice, speak, stopVoice } from '../core/voice'
+import { PHRASES } from '../core/phrases'
 import { loadLandmarker, openCamera, runPose } from '../pose/detector'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
@@ -102,16 +103,16 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     }
 
     const guide = (frame: Frame | null, w: number, h: number, sideDeg: number, light: boolean): string | null => {
-      if (!light) return '暗くて見えにくいです。明るい場所に置いてください。'
-      if (!frame) return 'トレッドミルの真横に置いて、全身が入るようにしてください。'
+      if (!light) return PHRASES.guideDark
+      if (!frame) return PHRASES.guideNone
       const ys = [L.nose, L.leftAnkle, L.rightAnkle].map((i) => frame[i].y)
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
-      if (Math.min(...ys) < h * 0.04 || frame[L.nose].v < 0.5) return '頭が切れています。スマホを少し後ろに離してください。'
-      if (Math.max(...ys) > h * 0.98 || frame[L.leftAnkle].v < 0.5 || frame[L.rightAnkle].v < 0.5) return '足元が切れています。スマホを少し後ろに離してください。'
-      if (cx < w * 0.3) return 'もう少し、スマホを左へ。'
-      if (cx > w * 0.7) return 'もう少し、スマホを右へ。'
-      if (sideDeg > 15) return 'もう少し真横から撮れるように、置き方を回してください。'
+      if (Math.min(...ys) < h * 0.04 || frame[L.nose].v < 0.5) return PHRASES.guideHead
+      if (Math.max(...ys) > h * 0.98 || frame[L.leftAnkle].v < 0.5 || frame[L.rightAnkle].v < 0.5) return PHRASES.guideFeet
+      if (cx < w * 0.3) return PHRASES.guideLeft
+      if (cx > w * 0.7) return PHRASES.guideRight
+      if (sideDeg > 15) return PHRASES.guideSide
       return null
     }
 
@@ -165,7 +166,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     const start = async () => {
       try {
         if ('wakeLock' in navigator) wake = await (navigator as unknown as { wakeLock: { request: (t: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock.request('screen').catch(() => null)
-        const lm = await loadLandmarker('full')
+        const [lm] = await Promise.all([loadLandmarker('full'), preloadVoice(loadSettings().voice)])
         if (disposed) return
         if (file) {
           objectUrl = URL.createObjectURL(file)
@@ -179,7 +180,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         }
         if (disposed) return
         setPhase(file ? 'run' : 'setup')
-        if (!file) say('トレッドミルの真横にスマホを置いてください。', 0)
+        if (!file) say(PHRASES.placeStart, 0)
         const clock = file ? () => video.currentTime : () => performance.now() / 1000
         stopPose = runPose(video, lm, (tick) => onTick(tick.frame, tick.t, tick.width, tick.height), clock)
       } catch (e) {
@@ -209,7 +210,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         } else {
           okSince ??= t
           if (t - okSince > 1.5) {
-            say('見えています。全身が入りました。', t)
+            say(PHRASES.placeOk, t)
             if (baseline) {
               setPhase('run')
             } else {
@@ -229,7 +230,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         } else {
           if (stillSince === null) {
             stillSince = t
-            say('上から吊られるように、まっすぐ立って、3秒止まってください。', t)
+            say(PHRASES.baseStand, t)
           }
           const el = t - stillSince
           if (el > 4) baseNecks.push(m.neck)
@@ -239,7 +240,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             const sorted = baseNecks.slice().sort((a, b) => a - b)
             baseline = { neck: sorted[Math.floor(sorted.length / 2)], createdAt: Date.now() }
             saveBaseline(baseline)
-            say('基準を登録しました。走り出すと始まります。', t)
+            say(PHRASES.baseDone, t)
             setPhase('run')
           }
         }
@@ -300,7 +301,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       stream?.getTracks().forEach((tr) => tr.stop())
       wake?.release().catch(() => {})
       if (objectUrl) URL.revokeObjectURL(objectUrl)
-      speechSynthesis.cancel()
+      stopVoice()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

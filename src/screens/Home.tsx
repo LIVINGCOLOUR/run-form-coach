@@ -4,7 +4,9 @@ import type { ItemKey, Session } from '../core/types'
 import { bestSession, nextItem, NEXT_TEXT } from '../core/nextStep'
 import { loadBaseline, loadSettings, saveSettings, type Settings } from '../core/storage'
 import { Mannequin } from '../ui/Mannequin'
-import { unlockVoice } from '../core/voice'
+import { preloadVoice, speak, unlockVoice } from '../core/voice'
+import { PHRASES } from '../core/phrases'
+import { VOICES, VOICE_ORDER, type VoiceKind } from '../core/voices'
 import { startGravity } from '../core/gravity'
 import { demoStride, idealFrame, lerpFrame, nextStepFrame, normalizeStride } from '../ui/figure'
 import { ShareBar } from '../ui/ShareBar'
@@ -68,6 +70,15 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
     const s = { ...settings, screen }
     setSettings(s)
     saveSettings(s)
+  }
+  const setVoice = async (voice: VoiceKind) => {
+    const s = { ...settings, voice }
+    setSettings(s)
+    saveSettings(s)
+    // 選んだ声で、ためしに一言話す
+    unlockVoice()
+    await preloadVoice(voice)
+    speak(PHRASES.sample, voice)
   }
 
   const goodPct = last ? Math.round(last.share.good * 100) : null
@@ -178,6 +189,19 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
           <button aria-pressed={settings.screen === 'dark'} onClick={() => setScreen('dark')}>真っ暗</button>
         </div>
       </div>
+
+      {VOICE_ORDER.length > 1 && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontSize: 13 }} className="muted">声（押すと試しに話します）</div>
+        <div className="seg" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          {VOICE_ORDER.map((v) => (
+            <button key={v} aria-pressed={settings.voice === v} onClick={() => setVoice(v)}>
+              {VOICES[v].label}
+            </button>
+          ))}
+        </div>
+      </div>
+      )}
 
       <div style={{ flexGrow: 1 }} />
 

@@ -23,3 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 public/mediapipe/
+.env.local
+.env*.local

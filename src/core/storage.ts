@@ -1,4 +1,5 @@
 import type { Baseline, Session } from './types'
+import type { VoiceKind } from './voices'
 
 // 記録は端末の中だけ（IndexedDB）。基準と設定は localStorage
 const DB = 'run-form-coach'
@@ -53,6 +54,7 @@ export const saveBaseline = (b: Baseline) => write('rfc.baseline', b)
 
 export interface Settings {
   screen: 'show' | 'dark'
+  voice: VoiceKind
 }
-export const loadSettings = (): Settings => read<Settings>('rfc.settings') ?? { screen: 'show' }
+export const loadSettings = (): Settings => ({ screen: 'show', voice: 'female', ...(read<Partial<Settings>>('rfc.settings') ?? {}) })
 export const saveSettings = (s: Settings) => write('rfc.settings', s)

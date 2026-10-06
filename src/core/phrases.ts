@@ -1,16 +1,14 @@
 import type { ItemKey } from './types'
 
-// 声の言い回し：何が起きているか ＋ どうすればいいか
-export const CUE: Record<ItemKey, string> = {
-  head: '頭が前に出ています。顎を引いてください。',
-  trunk: '上体が前に倒れすぎています。骨盤を立てて、上体を起こしてください。',
-  body: '体が前に倒れすぎています。上から吊られているように、体を起こしてください。',
-  hip: '腰が落ちています。上から吊られているように意識してください。',
-}
-
-export const RECOVER = ['いい感じです。その姿勢を保ちましょう。', 'いい感じです。']
-
-export const SAY = {
+// アプリが話す言葉の一覧。id ごとに、声の種類ぶんの音声ファイルを public/voices/<声>/<id>.m4a に用意する
+// （scripts/gen-voices.mjs で Gemini TTS から作る）。ここに文を足したら、音声も作り直す
+export const PHRASES = {
+  cueHead: '頭が前に出ています。顎を引いてください。',
+  cueTrunk: '上体が前に倒れすぎています。骨盤を立てて、上体を起こしてください。',
+  cueBody: '体が前に倒れすぎています。上から吊られているように、体を起こしてください。',
+  cueHip: '腰が落ちています。上から吊られているように意識してください。',
+  recover1: 'いい感じです。その姿勢を保ちましょう。',
+  recover2: 'いい感じです。',
   start: '始めます。いつもどおり走ってください。',
   pause: '一時停止します。',
   resume: '再開します。',
@@ -18,4 +16,41 @@ export const SAY = {
   praise5: 'いい感じです。きれいな姿勢が続いています。',
   quietStart: 'ここからしばらく、声なしで確認します。',
   quietDone: '声なしでも、きれいな姿勢を保てていました。',
+  placeStart: 'トレッドミルの真横にスマホを置いてください。',
+  placeOk: '見えています。全身が入りました。',
+  guideDark: '暗くて見えにくいです。明るい場所に置いてください。',
+  guideNone: 'トレッドミルの真横に置いて、全身が入るようにしてください。',
+  guideHead: '頭が切れています。スマホを少し後ろに離してください。',
+  guideFeet: '足元が切れています。スマホを少し後ろに離してください。',
+  guideLeft: 'もう少し、スマホを左へ。',
+  guideRight: 'もう少し、スマホを右へ。',
+  guideSide: 'もう少し真横から撮れるように、置き方を回してください。',
+  baseStand: '上から吊られるように、まっすぐ立って、3秒止まってください。',
+  baseDone: '基準を登録しました。走り出すと始まります。',
+  sample: 'こんにちは。今日も一緒に、きれいなフォームで走りましょう。',
+} as const
+
+export type PhraseId = keyof typeof PHRASES
+
+export const CUE: Record<ItemKey, string> = {
+  head: PHRASES.cueHead,
+  trunk: PHRASES.cueTrunk,
+  body: PHRASES.cueBody,
+  hip: PHRASES.cueHip,
 }
+
+export const RECOVER = [PHRASES.recover1, PHRASES.recover2]
+
+export const SAY = {
+  start: PHRASES.start,
+  pause: PHRASES.pause,
+  resume: PHRASES.resume,
+  end: PHRASES.end,
+  praise5: PHRASES.praise5,
+  quietStart: PHRASES.quietStart,
+  quietDone: PHRASES.quietDone,
+}
+
+// 文から id を引く（音声ファイルを探すため）
+const BY_TEXT = new Map<string, PhraseId>(Object.entries(PHRASES).map(([id, text]) => [text, id as PhraseId]))
+export const phraseId = (text: string) => BY_TEXT.get(text)
