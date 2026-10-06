@@ -25,3 +25,4 @@ dist-ssr
 public/mediapipe/
 .env.local
 .env*.local
+.gcp-key.json
