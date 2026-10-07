@@ -8,7 +8,12 @@ export async function exportLog(logId?: string): Promise<boolean> {
   const d = new Date(log.startedAt)
   const p = (n: number) => String(n).padStart(2, '0')
   const name = `rfc-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`
-  const file = new File([JSON.stringify({ log, session })], name, { type: 'application/json' })
+  return shareJson(name, { log, session })
+}
+
+// JSON をファイルにして渡す（iPhone は共有シートから、ほかはダウンロード）
+export async function shareJson(name: string, data: unknown): Promise<boolean> {
+  const file = new File([JSON.stringify(data)], name, { type: 'application/json' })
   const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean }
   if (nav.canShare?.({ files: [file] })) {
     try {

@@ -27,8 +27,15 @@ export async function loadLandmarker(model: 'lite' | 'full' = 'full'): Promise<P
   return landmarker
 }
 
+// 骨格の推定に渡す時刻（ミリ秒）は、カメラ・動画・スロー動画の分析をまたいで増え続けないといけない
+let lastTs = 0
+export function nextTs(ms: number) {
+  lastTs = Math.max(lastTs + 1, Math.round(ms))
+  return lastTs
+}
+
 // 複数人が映ったときは、一番大きく映っている1人だけを追う
-function largest(poses: { x: number; y: number; visibility?: number }[][]) {
+export function largest(poses: { x: number; y: number; visibility?: number }[][]) {
   let best = poses[0]
   let bestArea = -1
   for (const p of poses) {
@@ -59,7 +66,6 @@ export function runPose(video: HTMLVideoElement, lm: PoseLandmarker, onTick: (p:
   const filters: OneEuro[] = Array.from({ length: 66 }, () => new OneEuro())
   let stopped = false
   let lastVideoTime = -1
-  let lastTs = 0
   let lastRun = -1e9
 
   const step = () => {
@@ -73,9 +79,7 @@ export function runPose(video: HTMLVideoElement, lm: PoseLandmarker, onTick: (p:
         onTick({ frame: null, t, width: video.videoWidth, height: video.videoHeight, skipped: true })
         return schedule()
       }
-      const ts = Math.max(lastTs + 1, Math.round(t * 1000))
-      lastTs = ts
-      const res = lm.detectForVideo(video, ts)
+      const res = lm.detectForVideo(video, nextTs(t * 1000))
       const w = video.videoWidth
       const h = video.videoHeight
       if (res.landmarks.length) {

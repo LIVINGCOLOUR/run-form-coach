@@ -5,8 +5,9 @@ import { Home } from './screens/Home'
 import { Live } from './screens/Live'
 import { Result } from './screens/Result'
 import { Posture } from './screens/Posture'
+import { Slow } from './screens/Slow'
 
-export type Screen = { name: 'home' } | { name: 'live'; video?: File } | { name: 'result'; id: string } | { name: 'posture'; id: string }
+export type Screen = { name: 'home' } | { name: 'live'; video?: File } | { name: 'result'; id: string } | { name: 'posture'; id: string } | { name: 'slow'; video: File }
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' })
@@ -43,6 +44,8 @@ export default function App() {
       const s = find(screen.id)
       return s ? <Result session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} go={setScreen} />
     }
+    case 'slow':
+      return <Slow video={screen.video} go={setScreen} />
     case 'posture': {
       const s = find(screen.id)
       return s ? <Posture session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} go={setScreen} />

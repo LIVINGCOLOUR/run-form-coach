@@ -38,6 +38,7 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [ideal, setIdeal] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const slowRef = useRef<HTMLInputElement>(null)
   const k = useMorph(ideal)
 
   const last = sessions[0]
@@ -218,6 +219,22 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
             フォームの見方
           </a>
         </div>
+        <button className="card" onClick={() => slowRef.current?.click()} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>スロー動画で詳しく見る</div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+            iPhone のカメラの「スロー」で、真横から1〜1.5m離れて、足元まで入れて数歩撮った動画を選びます。接地時間・着地のすね・上下動を測ります。
+          </div>
+        </button>
+        <input
+          ref={slowRef}
+          type="file"
+          accept="video/*"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) go({ name: 'slow', video: f })
+          }}
+        />
         <input
           ref={fileRef}
           type="file"

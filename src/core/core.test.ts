@@ -6,6 +6,7 @@ import { nextItem } from './nextStep'
 import { capBaseline } from './storage'
 import { standingIssue } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
+import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, bodyVisible } from './motion'
 import { demoStride, strideStats, DEMO_SPM, REFERENCE } from '../ui/figure'
 import type { Frame, Measure, Sample, Session } from './types'
@@ -376,6 +377,47 @@ describe('調整用の記録', () => {
     expect(b.length).toBe(12)
     expect(b[11]).toBe(99)
     expect(rec.log.events).toEqual([[1.5, '始めます。']])
+  })
+})
+
+describe('スロー動画の分析', () => {
+  // 見本の走りを 240fps で3周ぶん撮った動画の代わり。slow 倍に引き延ばすと、iPhone のスロー動画と同じ時間の流れになる
+  const clip = (slow: number, over = 0): TimedFrame[] => {
+    const stride = 120 / REFERENCE.cadence
+    const per = Math.round(stride * 240)
+    const one = demoStride({ lean: 7, head: 0, drop: 0, over }, per)
+    return Array.from({ length: per * 3 + 10 }, (_, i) => ({ t: (i / 240) * slow, f: one[i % per] }))
+  }
+  it('実際の速さの240fps動画から、ピッチ・接地時間・着地のすねを出す', () => {
+    const r = analyzeRun(clip(1))!
+    expect(r.slow).toBe(1)
+    expect(r.cadence).toBeCloseTo(REFERENCE.cadence, -1)
+    expect(Math.abs(r.contactMs! - strideStats(demoStride({ lean: 7, head: 0, drop: 0 }, 400), 120 / DEMO_SPM).contactMs)).toBeLessThan(15)
+    expect(Math.abs(r.shankAtContact - REFERENCE.ideal.shankAtContact[0])).toBeLessThan(4)
+    expect(r.flightMs!).toBeGreaterThan(60)
+    expect(r.contacts.length).toBeGreaterThanOrEqual(2)
+  })
+  it('8倍に引き延ばされたスロー動画でも、倍率を見分けて同じ値を出す', () => {
+    const a = analyzeRun(clip(1))!
+    const b = analyzeRun(clip(8))!
+    expect(b.slow).toBe(8)
+    expect(b.cadence).toBeCloseTo(a.cadence, 5)
+    expect(b.contactMs!).toBeCloseTo(a.contactMs!, 5)
+    expect(b.framesPerSec).toBeCloseTo(240, 0)
+  })
+  it('点がぶれていても、8倍スローの倍率と接地時間を取り違えない', () => {
+    // 脚の長さの0.6%（約0.5cm）の、コマごとにばらばらなぶれを足す
+    let seed = 1
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 2
+    const noisy = clip(8).map(({ t, f }) => ({ t, f: f.map((p) => ({ ...p, x: p.x + rnd(), y: p.y + rnd() })) }))
+    const a = analyzeRun(clip(1))!
+    const b = analyzeRun(noisy)!
+    expect(b.slow).toBe(8)
+    expect(Math.abs(b.cadence - a.cadence)).toBeLessThan(5)
+    expect(Math.abs(b.contactMs! - a.contactMs!)).toBeLessThan(25)
+  })
+  it('オーバーストライドの走りは、着地のすねが大きく出る', () => {
+    expect(analyzeRun(clip(1, 1))!.shankAtContact).toBeGreaterThan(analyzeRun(clip(1))!.shankAtContact + 10)
   })
 })
 
