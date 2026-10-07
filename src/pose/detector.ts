@@ -14,8 +14,9 @@ export async function loadLandmarker(model: 'lite' | 'full' = 'full'): Promise<P
       baseOptions: { modelAssetPath: `${import.meta.env.BASE_URL}models/pose_landmarker_${model}.task`, delegate },
       runningMode: 'VIDEO',
       numPoses: 2,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
+      // 人のいない部屋でも、あいまいな人影を返すことがあるので、確かさの線を上げる
+      minPoseDetectionConfidence: 0.7,
+      minPosePresenceConfidence: 0.7,
       minTrackingConfidence: 0.5,
     })
   try {

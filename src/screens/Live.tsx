@@ -77,8 +77,9 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let setupAt: number | null = null
     let hintMsg = ''
     let hintSince = 0
-    let visibleSince: number | null = null
-    let hiddenSince: number | null = null
+    // 「映っている」は、直近2秒のコマのうち見えていた割合で決める（一瞬の見間違いで切り替えない）
+    let seenHist: { t: number; seen: boolean }[] = []
+    let present = false
     let bodyAnnounced = false
     let firstSaid = false
     let lastPresent = true
@@ -254,22 +255,21 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         // 手に持っている間は判定しない（動く映像を人と見間違えることがある）。置いて1.5秒静止してから見る
         const placed = !!file || phoneStillSec() > 1.5
         const seen = visible && placed
-        const ready = seen && lastLight && sideDeg <= 35
-        const hint = placed ? guide(visible ? frame : null, w, h, sideDeg, lastLight) : null
+        seenHist.push({ t, seen })
+        seenHist = seenHist.filter((x) => t - x.t <= 2)
+        const ratio = seenHist.filter((x) => x.seen).length / seenHist.length
+        // 9割以上のコマで2秒見えたら「映った」、3割を切ったら「映っていない」（間で行ったり来たりしない）
+        if (!present && t - seenHist[0].t >= 1.8 && ratio >= 0.9) present = true
+        else if (present && ratio < 0.3) {
+          present = false
+          bodyAnnounced = false
+        }
+        const ready = present && visible && lastLight && sideDeg <= 35
+        const hint = placed ? guide(present ? frame : null, w, h, sideDeg, lastLight) : null
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 開いてすぐは話さない（スマホを置いて離れるまでの間）
         setupAt ??= t
         const talk = t - setupAt >= 2
-        if (seen) {
-          visibleSince ??= t
-          hiddenSince = null
-        } else {
-          hiddenSince ??= t
-          if (t - hiddenSince > 1.5) {
-            visibleSince = null
-            bodyAnnounced = false
-          }
-        }
         if (ready) {
           notReadySince = null
           okSince ??= t
@@ -285,8 +285,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           // 判定が一瞬ゆれただけなら、数えた時間を消さない
           notReadySince ??= t
           if (t - notReadySince > 0.6) okSince = null
-          // 離れていて画面が見えなくても分かるよう、全身が入ったら声で知らせる（1.5秒続けて見えてから）
-          if (talk && !bodyAnnounced && visibleSince !== null && t - visibleSince > 1.5) {
+          // 離れていて画面が見えなくても分かるよう、全身が入ったら声で知らせる
+          if (talk && !bodyAnnounced && present) {
             bodyAnnounced = true
             say(PHRASES.bodyIn, t)
             lastGuide = t
