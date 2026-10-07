@@ -154,7 +154,8 @@ export class Coach {
     if (this.state !== 'running' || this.absentSince !== null || this.pending) return true
     const t = this.active
     if (t < 10) return true
-    if (this.samples.slice(-12).some((s) => s.t > t - 12 && s.score < 80)) return true
+    // 声をかける線を越えたら、点数がまだ高くても細かく見る（間引いたままだと記録が足りず、声がかからない）
+    if (this.samples.slice(-12).some((s) => s.t > t - 12 && (s.score < 80 || ITEMS.some((k) => overCue(k, this.value(s, k)))))) return true
     const every = this.quiet ? LOOK_EVERY_QUIET : LOOK_EVERY
     return t % every < LOOK_SEC
   }

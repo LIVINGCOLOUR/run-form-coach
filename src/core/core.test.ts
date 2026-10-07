@@ -182,6 +182,13 @@ describe('省電力（間引いて見る）', () => {
     expect(b.looked).toBeGreaterThan(0.6)
   })
 
+  it('点数はまだ高いが、声をかける線を少し越えた崩れでも、間引かずに見て声をかける', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 })
+    feedSparse(coach, 0, 120, good)
+    const b = feedSparse(coach, 120, 20, { ...good, neck: 8 }) // 頭 +6°：線（5°）は越えるが点数は90
+    expect(b.speak.some((x) => x.includes('頭が前に出ています'))).toBe(true)
+  })
+
   it('間引いても、割合は時間どおりに数える', () => {
     const coach = new Coach({ neck: 2, createdAt: 0 })
     feedSparse(coach, 0, 600, good)

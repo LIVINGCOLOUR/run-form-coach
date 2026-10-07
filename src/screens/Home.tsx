@@ -65,11 +65,6 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
   const shown = k > 0 ? base.map((f, i) => lerpFrame(f, idealFrames[i % idealFrames.length], k)) : base
   const focus = next ? NEXT_TEXT[next.item] : { title: '上から吊られるように', reason: best ? 'あなたのベストは、もう理想に近い姿勢です' : '最初の1回で、あなたの基準を作ります' }
 
-  const setScreen = (screen: Settings['screen']) => {
-    const s = { ...settings, screen }
-    setSettings(s)
-    saveSettings(s)
-  }
   const setVoice = async (voice: VoiceKind) => {
     const s = { ...settings, voice }
     setSettings(s)
@@ -180,14 +175,6 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
           <ShareBar share={last.share} />
         </button>
       )}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ fontSize: 13 }} className="muted">走行中の画面</div>
-        <div className="seg" style={{ gridTemplateColumns: '1fr 1fr' }}>
-          <button aria-pressed={settings.screen === 'show'} onClick={() => setScreen('show')}>常に表示</button>
-          <button aria-pressed={settings.screen === 'dark'} onClick={() => setScreen('dark')}>真っ暗</button>
-        </div>
-      </div>
 
       {VOICE_ORDER.length > 1 && (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
