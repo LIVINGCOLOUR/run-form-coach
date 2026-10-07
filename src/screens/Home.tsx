@@ -198,8 +198,8 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ fontSize: 13 }} className="muted">カメラ</div>
         <div className="seg" style={{ gridTemplateColumns: '1fr 1fr' }}>
-          <button aria-pressed={settings.camera === 'front'} onClick={() => setCamera('front')}>前面（画面を見ながら置ける）</button>
-          <button aria-pressed={settings.camera === 'back'} onClick={() => setCamera('back')}>背面（暗い場所に強い）</button>
+          <button aria-pressed={settings.camera === 'front'} onClick={() => setCamera('front')}>前面（画面が見える）</button>
+          <button aria-pressed={settings.camera === 'back'} onClick={() => setCamera('back')}>背面（超広角で近くに置ける）</button>
         </div>
       </div>
 

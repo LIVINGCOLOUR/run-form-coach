@@ -87,11 +87,32 @@ export function runPose(video: HTMLVideoElement, lm: PoseLandmarker, onTick: (p:
   return { stop: () => (stopped = true) }
 }
 
+// 使っているレンズ（画面に出す）
+export let cameraLens: 'ultra' | 'normal' = 'normal'
+
 export async function openCamera(video: HTMLVideoElement, facing: 'front' | 'back' = 'front'): Promise<MediaStream> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: facing === 'front' ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-  })
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+  let stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: facing === 'front' ? 'user' : 'environment', ...size } })
+  cameraLens = 'normal'
+  if (facing === 'back') {
+    // 背面は、超広角（0.5倍）があればそちらを使う。近くに置いても全身が入る
+    // 機種の名前は、カメラの許可をもらったあとでないと読めないので、一度開いてから探す
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const ultra = devices.find((d) => d.kind === 'videoinput' && /超広角|ultra ?wide/i.test(d.label))
+    if (ultra) {
+      stream.getTracks().forEach((t) => t.stop())
+      stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: { exact: ultra.deviceId }, ...size } })
+      cameraLens = 'ultra'
+    } else {
+      // 超広角が別のカメラとして見えない機種では、ズームを一番引いた状態にしてみる
+      const track = stream.getVideoTracks()[0]
+      const caps = (track.getCapabilities?.() ?? {}) as { zoom?: { min: number } }
+      if (caps.zoom && caps.zoom.min < 1) {
+        await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min } as MediaTrackConstraintSet] }).catch(() => {})
+        cameraLens = 'ultra'
+      }
+    }
+  }
   video.srcObject = stream
   video.muted = true
   video.playsInline = true

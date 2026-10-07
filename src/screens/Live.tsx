@@ -9,7 +9,7 @@ import { gravityAvailable, gravityRoll } from '../core/gravity'
 import { loadBaseline, loadSettings, saveBaseline, saveSession } from '../core/storage'
 import { preloadVoice, speak, stopVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
-import { loadLandmarker, openCamera, runPose } from '../pose/detector'
+import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -68,6 +68,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let lastLight = true
     let lastLightAt = 0
     let lastProblem: string | null = PHRASES.placeStart
+    let prevVisible = false
+    let lastBodySay = -10
 
     const setPhase = (p: Phase) => {
       phase = p
@@ -207,6 +209,13 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (phase === 'setup') {
         let problem = guide(visible ? frame : null, w, h, sideDeg, lastLight)
         lastProblem = problem
+        // 離れていて画面が見えなくても分かるよう、全身が入った瞬間に声で知らせる
+        if (visible && !prevVisible && t - lastBodySay > 3) {
+          say(PHRASES.bodyIn, t)
+          lastBodySay = t
+          lastGuide = t
+        }
+        prevVisible = visible
         if (skipRef.current && visible) {
           problem = null
           okSince = t - 2
@@ -377,6 +386,17 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           )}
 
           {hud.phase === 'setup' && (
+            <>
+              {/* 離れていても色で分かるよう、画面のふち全体を光らせる */}
+              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', border: `12px solid ${hud.checks.body ? 'var(--accent)' : 'var(--warn)'}`, opacity: 0.85 }} />
+              <div style={{ position: 'absolute', left: 0, right: 0, top: 'max(70px, calc(env(safe-area-inset-top) + 60px))', display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+                <div style={{ padding: '10px 22px', borderRadius: 20, background: hud.checks.body ? 'var(--accent)' : 'var(--warn)', color: '#0A0C0E', fontWeight: 900, fontSize: 34 }}>
+                  {hud.checks.body ? '✓ 全身 OK' : '全身が入っていません'}
+                </div>
+              </div>
+            </>
+          )}
+          {hud.phase === 'setup' && (
             <div style={{ position: 'absolute', left: 12, right: 12, bottom: 'max(12px, env(safe-area-inset-bottom))', padding: '12px 14px', borderRadius: 18, background: 'rgba(10,12,14,0.82)', border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Chip ok={hud.checks.body} label="全身" />
@@ -386,7 +406,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
               <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.45 }}>{hud.problem ?? 'そろいました。このまま待つと次へ進みます。'}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ flexGrow: 1, fontSize: 12 }} className="muted">
-                  3つそろうと自動で次へ進みます
+                  3つそろうと自動で次へ進みます{cameraLens === 'ultra' ? '（超広角）' : ''}
                 </div>
                 <button
                   disabled={!hud.checks.body}
