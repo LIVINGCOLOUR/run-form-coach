@@ -7,7 +7,7 @@ import { capBaseline } from './storage'
 import { standingIssue } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
 import { MotionDetector, bodyVisible } from './motion'
-import { demoStride } from '../ui/figure'
+import { demoStride, strideStats, DEMO_SPM } from '../ui/figure'
 import type { Frame, Measure, Sample, Session } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
@@ -88,10 +88,10 @@ describe('歩きと走りの区別（歩数の数え方）', () => {
   it('毎分約100歩の歩きは、歩数の数え方では走りにならない', () => {
     const walk = demoStride()
     const md = new MotionDetector()
-    for (let i = 0; i < 150; i++) md.update(walk[i % walk.length], i / 30) // 1周1.2秒＝毎分100歩
+    for (let i = 0; i < 100; i++) md.update(walk[i % walk.length], i / 18) // 1周20コマを1.11秒＝毎分108歩
     expect(md.by).not.toBe('steps')
-    expect(md.cadence).toBeGreaterThan(85)
-    expect(md.cadence).toBeLessThan(115)
+    expect(md.cadence).toBeGreaterThan(95)
+    expect(md.cadence).toBeLessThan(120)
   })
 })
 
@@ -103,6 +103,25 @@ describe('その場で走る・コンパクトなフォーム', () => {
   it('ゆっくり足踏みする、ほとんど持ち上げないときは走っていない', () => {
     expect(inPlace(1.2, 25)).toBe(false)
     expect(inPlace(2.8, 1)).toBe(false)
+  })
+})
+
+describe('見本の走り', () => {
+  // 基準：市民ランナーの接地時間 200〜300ms（よく走れる人は 200ms 前後）、上下動 6〜9cm、
+  // ピッチ 160〜180歩、着地のすねは鉛直から 10° 未満（15° 以上はオーバーストライド）
+  it('軽快に走る市民ランナーの値に入っている', () => {
+    const st = strideStats(demoStride({ lean: 7, head: 0, drop: 0 }, 400), 120 / DEMO_SPM)
+    expect(st.cadence).toBe(180)
+    expect(st.contactMs).toBeGreaterThan(190)
+    expect(st.contactMs).toBeLessThan(240)
+    expect(st.flightMsPerStep).toBeGreaterThan(80)
+    expect(st.verticalCm).toBeGreaterThan(6)
+    expect(st.verticalCm).toBeLessThan(9)
+    expect(Math.abs(st.shankAtContact)).toBeLessThan(10)
+  })
+  it('オーバーストライドの見本は、すねが15°以上前に倒れて着く', () => {
+    const st = strideStats(demoStride({ lean: 7, head: 0, drop: 0, over: 1 }, 400), 120 / DEMO_SPM)
+    expect(st.shankAtContact).toBeGreaterThan(15)
   })
 })
 
@@ -129,13 +148,13 @@ describe('走っているかの検知', () => {
     const run = demoStride()
     const md = new MotionDetector()
     let moving = false
-    // 1周36コマを0.72秒で（毎分約170歩）
-    for (let i = 0; i < 100; i++) moving = md.update(run[i % run.length], i / 50)
+    // 見本は1周20コマ。毎秒30コマで流すと1周0.667秒（毎分180歩）
+    for (let i = 0; i < 90; i++) moving = md.update(run[i % run.length], i / 30)
     expect(moving).toBe(true)
-    // 歩数の数え方で走りと判断し、ピッチも出る（1周0.72秒に2歩＝毎分約167歩）
+    // 歩数の数え方で走りと判断し、ピッチも出る
     expect(md.by).toBe('steps')
-    expect(md.cadence).toBeGreaterThan(150)
-    expect(md.cadence).toBeLessThan(185)
+    expect(md.cadence).toBeGreaterThan(170)
+    expect(md.cadence).toBeLessThan(190)
     const still = new MotionDetector()
     let m2 = true
     for (let i = 0; i < 90; i++) m2 = still.update(run[0], i / 30)

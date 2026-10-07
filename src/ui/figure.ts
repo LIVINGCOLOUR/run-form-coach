@@ -105,19 +105,27 @@ export function paths(f: Frame, nearLeft: boolean): Paths {
 // 記録がまだないときの見本：計算で作る1歩（右向き、近い側は左）
 //
 // 研究の値（Novacheck 1998「The biomechanics of running」ほか）をもとに、関節の角度を時間で決めて骨格を組む
-//   接地は1周の0〜36%（離地は36%）。左右は半周ずれる
-//   太もも（鉛直からの角度、前が正）：接地 +22°、接地の真ん中で足首が腰の真下に来る +16°、離地で一番後ろ −12°、
+//   ピッチは毎分180歩。接地は1周の0〜31%（1歩あたり約0.21秒）、両足が浮いている時間が1歩あたり約0.13秒
+//     （Novacheck の 3.2m/s は離地39%で、ゆっくりのジョグ。軽快に走る市民ランナーに合わせて短くした）
+//   左右は半周ずれる
+//   太もも（鉛直からの角度、前が正）：接地 +24°、接地の真ん中で足首が腰の真下に来る +23°、離地で一番後ろ −20°、
 //     離地のあとはすぐ前へ戻し（脚を後ろに流さない）、振り出しで一番前 +36°、接地の前に少し戻してから着く
-//   膝の曲がり：接地 18°、接地中に一番曲がって 35°（よく走れる人は曲がりが小さい）、離地 22°、
-//     離地のあとすぐたたんで 100°（踵がお尻の下を通る）、接地の直前 14°
-//   すね：接地の瞬間はほぼ鉛直（太もも 22° − 膝 18° ＝ 前に4°）。15°以上前に倒れるとオーバーストライド
+//   膝の曲がり：接地 20°、接地中に一番曲がって 46°（研究では約45°。ここで沈んで、離地で伸び上がる）、離地 14°（地面を押し切って伸びる）、
+//     離地のあとすぐ太ももを前に戻しながら膝を 118° までたたむ（踵がお尻の下を通り、脚が後ろに残らない）、接地の直前 16°
+//   すね：接地の瞬間はほぼ鉛直（太もも 24° − 膝 20° ＝ 前に4°）。15°以上前に倒れるとオーバーストライド
+//   宙に浮いている間は、放物線で上がって下りる（浮いている時間から重力で高さを決める）
 //   腕：脚と逆（左脚が前のとき左腕は後ろ）。肘は90°前後、後ろに大きく引く
 //   腰の高さ：接地している足が地面に着くように決める（宙に浮いたり沈んだりしない）
 type Key = [number, number][]
-const THIGH: Key = [[0, 22], [0.14, 16], [0.36, -12], [0.45, 8], [0.55, 24], [0.7, 34], [0.85, 36], [0.95, 27]]
-const KNEE: Key = [[0, 18], [0.14, 35], [0.36, 22], [0.45, 85], [0.53, 105], [0.7, 80], [0.85, 35], [0.95, 14]]
-const ANKLE: Key = [[0, -2], [0.14, -22], [0.3, 0], [0.36, 20], [0.5, 8], [0.8, -2]] // 底屈が正（つま先が下がる）。接地中は足裏が地面に沿う
-const STANCE = 0.36
+const THIGH: Key = [[0, 24], [0.12, 23], [0.31, -20], [0.4, 10], [0.5, 30], [0.65, 35], [0.82, 38], [0.94, 30]]
+const KNEE: Key = [[0, 20], [0.12, 46], [0.31, 14], [0.4, 90], [0.5, 118], [0.65, 90], [0.82, 40], [0.94, 16]]
+const ANKLE: Key = [[0, -2], [0.12, -24], [0.25, 0], [0.31, 30], [0.45, 10], [0.8, -2]] // 底屈が正（つま先が下がる）。接地中は足裏が地面に沿う
+const STANCE = 0.31
+// 見本の速さ：毎分180歩（1周＝2歩＝0.667秒）。毎秒30コマで再生するので、1周は20コマ
+export const DEMO_SPM = 180
+export const DEMO_FRAMES = 20
+const PX_PER_CM = 164 / 90 // 脚の長さ164（描画）を90cm とみなす
+const G = 981 // cm/s²
 const THIGH_LEN = 82
 const SHANK_LEN = 82
 const FOOT_LEN = 18
@@ -147,11 +155,11 @@ function curve(keys: Key, ph: number): number {
 }
 
 // over（0〜1）：オーバーストライドの見本用。接地で太ももを前に出し、膝を伸ばして着く（すねが前に倒れる）
-export function demoStride(cfg: { lean: number; head: number; drop: number; over?: number } = { lean: 7, head: 0, drop: 0 }, n = 36): Frame[] {
+export function demoStride(cfg: { lean: number; head: number; drop: number; over?: number } = { lean: 7, head: 0, drop: 0 }, n = DEMO_FRAMES): Frame[] {
   const R = (d: number) => (d * Math.PI) / 180
   const o = cfg.over ?? 0
-  const THIGH_K: Key = THIGH.map(([p, v]) => [p, p === 0 || p >= 0.95 ? v + 12 * o : v])
-  const KNEE_K: Key = KNEE.map(([p, v]) => [p, p === 0 || p >= 0.95 ? v - 10 * o : v])
+  const THIGH_K: Key = THIGH.map(([p, v]) => [p, p === 0 || p >= 0.9 ? v + 12 * o : v])
+  const KNEE_K: Key = KNEE.map(([p, v]) => [p, p === 0 || p >= 0.9 ? v - 10 * o : v])
   const down = (o: Pt, len: number, deg: number): Pt => ({ x: o.x + len * Math.sin(R(deg)), y: o.y + len * Math.cos(R(deg)), v: 1 })
   // 腰を (0,0) としたときの片脚の形
   const leg = (ph: number) => {
@@ -173,7 +181,9 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
     const a = ground(STANCE)
     const b = ground(0)
     const s = (u - STANCE) / (0.5 - STANCE)
-    return a + (b - a) * s + 7 * Math.sin(Math.PI * s) // 宙に浮いている間、少し上がる
+    // 宙に浮いている間は放物線。浮いている時間 T で、真ん中の高さは g·T²/8
+    const T = (0.5 - STANCE) * ((2 * 60) / DEMO_SPM)
+    return a + (b - a) * s + ((G * T * T) / 8) * PX_PER_CM * 4 * s * (1 - s)
   }
   const depths = Array.from({ length: n }, (_, i) => hipDepth(i / n))
   const meanDepth = depths.reduce((a, b) => a + b, 0) / n
@@ -225,4 +235,30 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
     frames.push(f)
   }
   return frames
+}
+
+// 見本の走りを数字で確かめる（テスト用）。frames は1周ぶん、strideSec は1周の秒数
+export function strideStats(frames: Frame[], strideSec: number) {
+  const lowOf = (f: Frame, side: 'l' | 'r') => {
+    const pts = side === 'l' ? [L.leftAnkle, L.leftHeel, L.leftFoot] : [L.rightAnkle, L.rightHeel, L.rightFoot]
+    return Math.max(...pts.map((i) => f[i].y))
+  }
+  const ground = Math.max(...frames.flatMap((f) => [lowOf(f, 'l'), lowOf(f, 'r')]))
+  const on = (f: Frame, side: 'l' | 'r') => lowOf(f, side) >= ground - 1.5
+  const n = frames.length
+  const contactL = frames.filter((f) => on(f, 'l')).length / n
+  const flight = frames.filter((f) => !on(f, 'l') && !on(f, 'r')).length / n
+  const hips = frames.map((f) => f[L.leftHip].y)
+  // 接地の瞬間：左足が地面に着いた最初のコマ
+  const ic = frames.findIndex((f, i) => on(f, 'l') && !on(frames[(i - 1 + n) % n], 'l'))
+  const f0 = frames[ic]
+  const shank = (Math.atan2(f0[L.leftAnkle].x - f0[L.leftKnee].x, f0[L.leftAnkle].y - f0[L.leftKnee].y) * 180) / Math.PI
+  return {
+    cadence: (2 * 60) / strideSec,
+    contactMs: contactL * strideSec * 1000,
+    flightMsPerStep: (flight / 2) * strideSec * 1000,
+    verticalCm: (Math.max(...hips) - Math.min(...hips)) / PX_PER_CM,
+    shankAtContact: shank,
+    footAheadAtContactCm: (f0[L.leftAnkle].x - f0[L.leftHip].x) / PX_PER_CM,
+  }
 }
