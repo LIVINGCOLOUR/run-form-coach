@@ -116,7 +116,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (!frame) return PHRASES.guideNone
       const ys = [L.nose, L.leftAnkle, L.rightAnkle].map((i) => frame[i].y)
       if (Math.min(...ys) < h * 0.04 || Math.max(...ys) > h * 0.98 || frame[L.nose].v < 0.5 || frame[L.leftAnkle].v < 0.5 || frame[L.rightAnkle].v < 0.5) return PHRASES.guideFar
-      if (sideDeg > 15) return PHRASES.guideSide
+      if (sideDeg > 20) return PHRASES.guideSide
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
       if (cx < w * 0.3 || cx > w * 0.7) {
@@ -213,7 +213,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       // 置き方の案内
       // 進む条件は、画面に出している3つ（全身・真横・明るさ）だけ。真ん中に寄っているかなどは声で案内するだけにする
       if (phase === 'setup') {
-        const ready = visible && lastLight && sideDeg <= 15
+        // 真横の判定は、骨格の推定で両肩・両腰が少し開いて見えるため、35°までは通す
+        const ready = visible && lastLight && sideDeg <= 35
         const hint = guide(visible ? frame : null, w, h, sideDeg, lastLight)
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 離れていて画面が見えなくても分かるよう、全身が入った瞬間に声で知らせる
@@ -317,7 +318,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           last: lastSample,
           scores: coach ? coach.samples.slice(-600).map((s) => s.score) : [],
           caption: t - captionAt < 6 ? caption : '',
-          checks: { body: visible, side: sideDeg <= 15, sideDeg: Math.round(sideDeg), light: lastLight },
+          checks: { body: visible, side: sideDeg <= 35, sideDeg: Math.round(sideDeg), light: lastLight },
           problem: lastProblem,
         }))
       }

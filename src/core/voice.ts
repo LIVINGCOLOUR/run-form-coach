@@ -8,10 +8,27 @@ let ctx: AudioContext | null = null
 let kind: VoiceKind = 'female'
 const buffers = new Map<string, AudioBuffer>()
 let current: AudioBufferSourceNode | null = null
+let fallbackEl: HTMLAudioElement | null = null
 
 const url = (k: VoiceKind, id: PhraseId) => `${import.meta.env.BASE_URL}voices/${k}/${id}.m4a`
 
 export function unlockVoice() {
+  // iPhone の消音スイッチがオンでも鳴るようにする（Safari 16.4 以降の Audio Session）
+  try {
+    const nav = navigator as Navigator & { audioSession?: { type: string } }
+    if (nav.audioSession) nav.audioSession.type = 'playback'
+  } catch {
+    /* 対応していないブラウザ */
+  }
+  // audio 要素も一度鳴らして、代わりの鳴らし方を使えるようにしておく
+  try {
+    fallbackEl ??= new Audio()
+    fallbackEl.muted = true
+    fallbackEl.play().catch(() => {})
+    fallbackEl.muted = false
+  } catch {
+    fallbackEl = null
+  }
   try {
     ctx ??= new AudioContext()
     if (ctx.state === 'suspended') ctx.resume()
@@ -65,20 +82,34 @@ function fallback(text: string) {
 export function speak(text: string, k: VoiceKind = kind) {
   const id = phraseId(text)
   const buf = id ? buffers.get(`${k}/${id}`) : undefined
-  if (!buf || !ctx) {
-    // まだ読み込めていなければ、読み込めしだい鳴らす
-    if (id && ctx) {
-      load(k, id).then((b) => (b ? play(b) : fallback(text)))
+  if (!buf || !ctx || ctx.state === 'closed') {
+    // まだ読み込めていなければ、audio 要素でファイルをそのまま鳴らす。ファイルがない言葉は標準の読み上げ
+    if (id && playFile(k, id)) {
+      if (ctx) load(k, id)
       return
     }
     fallback(text)
     return
   }
+  if (ctx.state !== 'running') {
+    // 止まっていて起こせないときは、audio 要素で鳴らす
+    ctx.resume().catch(() => {})
+    if (id && playFile(k, id)) return
+  }
   play(buf)
+}
+
+function playFile(k: VoiceKind, id: PhraseId) {
+  if (!fallbackEl) return false
+  fallbackEl.src = url(k, id)
+  fallbackEl.play().catch(() => {})
+  return true
 }
 
 function play(buf: AudioBuffer) {
   if (!ctx) return
+  // iPhone は画面の切り替えなどで音の仕組みが止まることがあるので、起こし直す
+  if (ctx.state !== 'running') ctx.resume().catch(() => {})
   try {
     current?.stop()
   } catch {
