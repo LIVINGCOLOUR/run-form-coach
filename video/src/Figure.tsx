@@ -1,9 +1,12 @@
 import React from 'react'
 import { useMemo } from 'react'
-import { demoStride, paths } from '../../src/ui/figure'
-import { C } from './theme'
+import { demoStride, lerpFrame, paths } from '../../src/ui/figure'
+import { C, jp } from './theme'
 
 // アプリと同じ描き方の、走る骨格。描画座標（350×470）を transform で置く
+// 実際のピッチ（毎分177歩）のままだと忙しく見えるので、紹介動画では半分の速さで流し、スローであることを表示する
+// （遅く流していると分からないと、早歩きに見える）。コマの間はなめらかにつなぐ
+const SLOW = 0.5
 export function Figure({
   frame,
   lean,
@@ -29,12 +32,18 @@ export function Figure({
 }) {
   const strides = useMemo(() => demoStride({ lean, head, drop: drop ?? (lean > 12 ? 6 : 0), over }), [lean, head, drop, over])
   const ghostStrides = useMemo(() => (ghost ? demoStride({ lean: ghost.lean, head: ghost.head, drop: 0 }) : null), [ghost])
-  const i = frame % strides.length
-  const p = paths(strides[i], true)
-  const g = ghostStrides ? paths(ghostStrides[i], true) : null
+  const t = frame * SLOW
+  const n = strides.length
+  const i = Math.floor(t) % n
+  const k = t - Math.floor(t)
+  const p = paths(lerpFrame(strides[i], strides[(i + 1) % n], k), true)
+  const g = ghostStrides ? paths(lerpFrame(ghostStrides[i], ghostStrides[(i + 1) % n], k), true) : null
   return (
     <g transform={transform}>
       <path d="M20 434H340" stroke={C.line} strokeWidth={3} />
+      <text x={340} y={462} textAnchor="end" fill={C.faint} fontSize={15} fontFamily={jp} fontWeight={700}>
+        スロー再生（1/2）
+      </text>
       <g stroke={C.limbBack} strokeLinecap="round" strokeLinejoin="round" fill="none">
         <path d={p.legBack} strokeWidth={20} />
         <path d={p.armBack} strokeWidth={16} />
