@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
 import { bestSession, nextItem, NEXT_TEXT } from '../core/nextStep'
@@ -207,6 +208,10 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
           {' · '}
           <button onClick={() => fileRef.current?.click()} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
             動画で試す
+          </button>
+          {' · '}
+          <button onClick={() => exportLog().then((ok) => ok || alert('まだ記録がありません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
+            直近の記録を書き出す
           </button>
         </div>
         <input

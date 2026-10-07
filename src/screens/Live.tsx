@@ -6,7 +6,8 @@ import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
 import { overCue } from '../core/scoring'
 import { gravityAvailable, gravityRoll, phoneStillSec } from '../core/gravity'
-import { capBaseline, loadBaselines, loadSettings, saveBaseline, saveSession } from '../core/storage'
+import { capBaseline, loadBaselines, loadSettings, saveBaseline, saveLog, saveSession } from '../core/storage'
+import { LogRecorder } from '../core/log'
 import { preloadVoice, speak, stopVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
 import { median, standingIssue, type Standing, type StandingIssue } from '../core/standing'
@@ -86,11 +87,16 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let lastMoving = false
     let lastNextSay = 0 // 次に何をすればいいかを最後に言った時刻
 
+    const rec = new LogRecorder() // 調整用の記録（骨格の点と判定の数字）
+    let nowT = 0
+    let tickMoving = false
     const setPhase = (p: Phase) => {
+      rec.event(nowT, `phase:${p}`)
       phase = p
       setHud((h) => ({ ...h, phase: p }))
     }
     const say = (text: string, t: number) => {
+      rec.event(t, text)
       speak(text)
       caption = text
       captionAt = t
@@ -105,9 +111,14 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         s.taps = tapsRef.current
         s.provisionalBaseline = !!file
         s.standing = standing
+        s.logId = rec.log.id
+        rec.log.sessionId = s.id
         await saveSession(s)
+        await saveLog(rec.log).catch(() => {})
         onDone(s.id)
       } else {
+        // 走りが始まらなかったときこそ調整に使うので、記録は残す
+        await saveLog(rec.log).catch(() => {})
         onDone()
       }
     }
@@ -239,6 +250,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     }
 
     const onTick = (raw: Frame | null, t: number, w: number, h: number) => {
+      nowT = t
+      tickMoving = false
       const frame = raw && !file && gravityAvailable() ? rotateFrame(raw, gravityRoll(), w / 2, h / 2) : raw
       const visible = !!frame && bodyVisible(frame, 0.5, h)
       const m: Measure | undefined = visible ? measure(frame!) : undefined
@@ -312,6 +325,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       // 直立の基準（走るたびに取る）。止まってから1秒は落ち着くのを待ち、そのあと3秒の真ん中の値を使う
       if (phase === 'baseline' && m) {
         const moving = motion.update(frame!, t)
+        tickMoving = moving
         // 骨格の推定は止まっていても少し揺れるので、1秒続けて動いたときだけ数え直す
         if (moving) baseMovingSince ??= t
         else baseMovingSince = null
@@ -363,6 +377,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       let hot = new Set<string>()
       if (phase === 'run') {
         const moving = frame && visible ? motion.update(frame, t) : false
+        tickMoving = moving
         lastPresent = visible
         lastMoving = moving
         // 動画で試すときは、最初の10秒から仮の基準を作る
@@ -394,6 +409,9 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (screenMode === 'show') draw(frame, w, h, hot)
       else draw(null, w, h, hot)
 
+      if (rec.log.rows.length < 80000) {
+        rec.frame(t, phase, w, h, frame, { visible, moving: tickMoving, by: motion.by, cadence: motion.cadence, m, sideDeg, still: phoneStillSec() })
+      }
       updateHud(t, visible, sideDeg)
     }
 
@@ -423,7 +441,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       wake?.release().catch(() => {})
       if (objectUrl) URL.revokeObjectURL(objectUrl)
       // 終わりの言葉（おつかれさまでした）は最後まで言わせる
-      if (!finished) stopVoice()
+      if (!finished) {
+        stopVoice()
+        saveLog(rec.log).catch(() => {})
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

@@ -1,25 +1,70 @@
 import type { Frame } from './types'
 import { L, HEAD_POINTS, KEY_PAIRS } from './landmarks'
-import { legLength } from './geometry'
+import { facing, legLength } from './geometry'
 
-// 「走っている」を見分ける。左右の脚が交互に入れ替わるリズムで見る
-//   前後：左右の足首の前後の開き（トレッドミルで大きく入れ替わる）
-//   上下：左右の膝と足首の高さの差（その場で走るときや、フォームがコンパクトな人はこちらが主）
-// どちらかが十分に大きく揺れていて、毎秒2歩以上のリズムで左右が入れ替わっていれば走っているとする
-// （歩きはおよそ毎秒1.5〜2歩、走りは2.5〜3歩）
-const MIN_SD = { x: 0.1, y: 0.04 } // 脚の長さに対する揺れの大きさ
+// 「走っている」を見分ける
+//
+// 本番：研究で確かめられた歩数の数え方（足首が腰より一番前に出た瞬間＝接地、一番後ろ＝離地）で歩数を数え、
+//   ピッチが毎分130歩以上なら走っている。トレッドミルでも外でも使え、ピッチ（歩／分）もここで出る
+//   参考：Zeni ら 2008、スマホ動画で2〜5コマの誤差（Automated Stride Detection from OpenPose Keypoints, 2023）
+// 検証用：その場で走るフリは脚が前後に動かず歩数が数えられないので、左右の膝と足首が上下に入れ替わる
+//   リズムでも走っているとする。トレッドミルで確かめられたら IN_PLACE_FOR_TESTING を false にして外す
+export const IN_PLACE_FOR_TESTING = true
+
+const RUN_SPM = 130 // 歩きはおよそ毎分100〜120歩、走りは150〜190歩
+const STEP_PROMINENCE = 0.1 // 足首の前後の振れ（脚の長さに対する割合）がこれだけ戻ったら山・谷とみなす
+const STEP_WINDOW = 4 // ピッチは直近4秒の接地から出す
+const MIN_SD = { x: 0.1, y: 0.04 } // 検証用：脚の長さに対する揺れの大きさ
 const MIN_STEPS_PER_SEC = 2
+
+// 片脚ずつ、足首の前後の位置（腰から見て、進む向きが正）の山と谷を見つける
+class LegSteps {
+  private seekMax = true
+  private ext = { t: 0, v: -Infinity }
+  strikes: number[] = []
+  update(t: number, v: number) {
+    if (this.seekMax) {
+      if (v > this.ext.v) this.ext = { t, v }
+      else if (v < this.ext.v - STEP_PROMINENCE) {
+        this.strikes.push(this.ext.t) // 一番前に出た瞬間＝接地
+        this.seekMax = false
+        this.ext = { t, v }
+      }
+    } else {
+      if (v < this.ext.v) this.ext = { t, v }
+      else if (v > this.ext.v + STEP_PROMINENCE) {
+        this.seekMax = true // 一番後ろ＝離地
+        this.ext = { t, v }
+      }
+    }
+    while (this.strikes.length && t - this.strikes[0] > STEP_WINDOW) this.strikes.shift()
+  }
+}
 
 export class MotionDetector {
   private xs: { t: number; x: number; y: number }[] = []
+  private legs = [new LegSteps(), new LegSteps()]
+  private lastT = -1e9
   private windowSec: number
+  cadence: number | null = null // ピッチ（歩／分）
+  by: 'steps' | 'inPlace' | null = null // 何で走っていると判断したか
   constructor(windowSec = 2) {
     this.windowSec = windowSec
   }
 
   update(frame: Frame, t: number): boolean {
     const leg = legLength(frame)
+    // 間があいたら（骨格を取っていない間）、つながらないので数え直す
+    if (t - this.lastT > 0.5) {
+      this.legs = [new LegSteps(), new LegSteps()]
+      this.xs = []
+    }
+    this.lastT = t
     if (leg > 0) {
+      const dir = facing(frame)
+      const pelvis = (frame[L.leftHip].x + frame[L.rightHip].x) / 2
+      this.legs[0].update(t, ((frame[L.leftAnkle].x - pelvis) * dir) / leg)
+      this.legs[1].update(t, ((frame[L.rightAnkle].x - pelvis) * dir) / leg)
       this.xs.push({
         t,
         x: (frame[L.leftAnkle].x - frame[L.rightAnkle].x) / leg,
@@ -27,6 +72,22 @@ export class MotionDetector {
       })
     }
     while (this.xs.length && t - this.xs[0].t > this.windowSec) this.xs.shift()
+
+    // ピッチは、片脚ごとの接地の間隔（1歩きの周期）から出す。左右の接地をまとめて数えると、窓の端でずれる
+    const periods = this.legs
+      .filter((l) => l.strikes.length >= 2 && t - l.strikes[l.strikes.length - 1] < 1.5)
+      .map((l) => (l.strikes[l.strikes.length - 1] - l.strikes[0]) / (l.strikes.length - 1))
+    this.cadence = periods.length ? 120 / (periods.reduce((a, b) => a + b, 0) / periods.length) : null
+    if (this.cadence !== null && this.cadence >= RUN_SPM) {
+      this.by = 'steps'
+      return true
+    }
+    this.by = IN_PLACE_FOR_TESTING && this.inPlace() ? 'inPlace' : null
+    return this.by !== null
+  }
+
+  // 検証用：左右が交互に入れ替わるリズム（上下・前後どちらでも）
+  private inPlace(): boolean {
     if (this.xs.length < 10) return false
     const span = this.xs[this.xs.length - 1].t - this.xs[0].t
     if (span < this.windowSec * 0.7) return false

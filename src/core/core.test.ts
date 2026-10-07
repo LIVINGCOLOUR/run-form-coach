@@ -5,6 +5,7 @@ import { Coach, breakdownMinute } from './coach'
 import { nextItem } from './nextStep'
 import { capBaseline } from './storage'
 import { standingIssue } from './standing'
+import { LogRecorder, LOG_POINTS } from './log'
 import { MotionDetector, bodyVisible } from './motion'
 import { demoStride } from '../ui/figure'
 import type { Frame, Measure, Sample, Session } from './types'
@@ -83,9 +84,20 @@ function inPlace(stepsPerSec: number, lift: number, sec = 3, fps = 15) {
   return moving
 }
 
+describe('歩きと走りの区別（歩数の数え方）', () => {
+  it('毎分約100歩の歩きは、歩数の数え方では走りにならない', () => {
+    const walk = demoStride()
+    const md = new MotionDetector()
+    for (let i = 0; i < 150; i++) md.update(walk[i % walk.length], i / 30) // 1周1.2秒＝毎分100歩
+    expect(md.by).not.toBe('steps')
+    expect(md.cadence).toBeGreaterThan(85)
+    expect(md.cadence).toBeLessThan(115)
+  })
+})
+
 describe('その場で走る・コンパクトなフォーム', () => {
   it('脚を前後に開かなくても、左右が交互に上がるリズムが毎秒2歩以上なら走っている', () => {
-    expect(inPlace(2.8, 25)).toBe(true)
+    expect(inPlace(2.8, 25)).toBe(true) // 検証用の判定（IN_PLACE_FOR_TESTING）で拾う
     expect(inPlace(2.8, 12)).toBe(true) // 小さく持ち上げるだけでも
   })
   it('ゆっくり足踏みする、ほとんど持ち上げないときは走っていない', () => {
@@ -120,6 +132,10 @@ describe('走っているかの検知', () => {
     // 1周36コマを0.72秒で（毎分約170歩）
     for (let i = 0; i < 100; i++) moving = md.update(run[i % run.length], i / 50)
     expect(moving).toBe(true)
+    // 歩数の数え方で走りと判断し、ピッチも出る（1周0.72秒に2歩＝毎分約167歩）
+    expect(md.by).toBe('steps')
+    expect(md.cadence).toBeGreaterThan(150)
+    expect(md.cadence).toBeLessThan(185)
     const still = new MotionDetector()
     let m2 = true
     for (let i = 0; i < 90; i++) m2 = still.update(run[0], i / 30)
@@ -294,6 +310,24 @@ describe('立ち姿勢（猫背）のチェック', () => {
     expect(standingIssue({ head: 10, trunk: 2 })).toBeNull()
     expect(standingIssue({ head: 30, trunk: 2 })).toBe('head')
     expect(standingIssue({ head: 15, trunk: 12 })).toBe('back')
+  })
+})
+
+describe('調整用の記録', () => {
+  it('取れたコマごとに、判定の数字と骨格の点を1行で残す。点がないコマは数字だけ', () => {
+    const rec = new LogRecorder()
+    const f = demoStride()[0]
+    rec.frame(1.234, 'run', 480, 640, f, { visible: true, moving: true, by: 'steps', cadence: 171.4, m: measure(f), sideDeg: 3, still: 5 })
+    rec.frame(1.3, 'setup', 480, 640, null, { visible: false, moving: false, by: null, cadence: null, sideDeg: 90, still: 1e9 })
+    rec.frame(1.4, 'loading', 480, 640, null, { visible: false, moving: false, by: null, cadence: null, sideDeg: 90, still: 0 })
+    rec.event(1.5, '始めます。')
+    const [a, b] = rec.log.rows
+    expect(rec.log.rows.length).toBe(2)
+    expect(a.slice(0, 6)).toEqual([1.23, 2, 1, 1, 1, 171])
+    expect(a.length).toBe(12 + LOG_POINTS.length * 3)
+    expect(b.length).toBe(12)
+    expect(b[11]).toBe(99)
+    expect(rec.log.events).toEqual([[1.5, '始めます。']])
   })
 })
 

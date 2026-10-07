@@ -1,14 +1,21 @@
 import type { Baseline, Session } from './types'
+import type { RunLog } from './log'
 import type { VoiceKind } from './voices'
 
 // 記録は端末の中だけ（IndexedDB）。基準と設定は localStorage
 const DB = 'run-form-coach'
 const STORE = 'sessions'
+const LOGS = 'logs' // 調整用の記録（骨格の点と判定の数字）。直近10回分だけ残す
+const KEEP_LOGS = 10
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1)
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' })
+    const req = indexedDB.open(DB, 2)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(LOGS)) db.createObjectStore(LOGS, { keyPath: 'id' })
+    }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
   })
@@ -22,6 +29,36 @@ export async function saveSession(s: Session): Promise<void> {
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
+}
+
+export async function saveLog(log: RunLog): Promise<void> {
+  const db = await open()
+  const all = await new Promise<RunLog[]>((resolve, reject) => {
+    const req = db.transaction(LOGS).objectStore(LOGS).getAll()
+    req.onsuccess = () => resolve(req.result as RunLog[])
+    req.onerror = () => reject(req.error)
+  })
+  const old = all.sort((a, b) => b.startedAt - a.startedAt).slice(KEEP_LOGS - 1)
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(LOGS, 'readwrite')
+    const st = tx.objectStore(LOGS)
+    for (const o of old) st.delete(o.id)
+    st.put(log)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+// id がなければ一番新しい記録
+export async function loadLog(id?: string): Promise<RunLog | undefined> {
+  const db = await open()
+  const all = await new Promise<RunLog[]>((resolve, reject) => {
+    const req = db.transaction(LOGS).objectStore(LOGS).getAll()
+    req.onsuccess = () => resolve(req.result as RunLog[])
+    req.onerror = () => reject(req.error)
+  })
+  if (id) return all.find((l) => l.id === id)
+  return all.sort((a, b) => b.startedAt - a.startedAt)[0]
 }
 
 export async function loadSessions(): Promise<Session[]> {

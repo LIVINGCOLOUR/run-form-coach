@@ -73,5 +73,6 @@ export interface Session {
   quietHeldSec: number // 声なしで保てた秒数
   taps?: number[] // そばの人が「今悪い」を押した時刻（秒）
   provisionalBaseline?: boolean // 動画で試したときの仮の基準
+  logId?: string // 調整用の記録
   standing?: { head: number; trunk: number; issue: 'head' | 'back' | null } // 走る前の立ち姿勢（猫背のチェック）
 }
