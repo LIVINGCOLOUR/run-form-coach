@@ -49,8 +49,17 @@ const write = (key: string, v: unknown) => {
   }
 }
 
-export const loadBaseline = () => read<Baseline>('rfc.baseline')
-export const saveBaseline = (b: Baseline) => write('rfc.baseline', b)
+// 直立の基準は走るたびに取り直す。直近5回分を残し、今日の基準が甘すぎないかの比較に使う
+export const loadBaselines = (): Baseline[] => read<Baseline[]>('rfc.baselines') ?? (read<Baseline>('rfc.baseline') ? [read<Baseline>('rfc.baseline')!] : [])
+export const saveBaseline = (b: Baseline) => write('rfc.baselines', [...loadBaselines(), b].slice(-5))
+
+// 猫背ぎみに立った日に基準が甘くならないよう、直近の基準の真ん中より5°以上悪い分は5°までに抑える
+export const BASELINE_SLACK = 5
+export function capBaseline(neck: number, history: Baseline[]): number {
+  if (!history.length) return neck
+  const sorted = history.map((b) => b.neck).sort((a, b) => a - b)
+  return Math.min(neck, sorted[Math.floor(sorted.length / 2)] + BASELINE_SLACK)
+}
 
 export interface Settings {
   screen: 'show' | 'dark'

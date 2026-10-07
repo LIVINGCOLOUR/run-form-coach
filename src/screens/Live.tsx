@@ -6,7 +6,7 @@ import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
 import { overCue } from '../core/scoring'
 import { gravityAvailable, gravityRoll } from '../core/gravity'
-import { loadBaseline, loadSettings, saveBaseline, saveSession } from '../core/storage'
+import { capBaseline, loadBaselines, loadSettings, saveBaseline, saveSession } from '../core/storage'
 import { preloadVoice, speak, stopVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
@@ -51,7 +51,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     const ctx = canvas.getContext('2d')!
 
     let phase: Phase = 'loading'
-    let baseline: Baseline | null = file ? null : loadBaseline()
+    // 直立の基準は毎回取る（その日の置き方のずれも消え、姿勢がよくなればそれについていく）
+    let baseline: Baseline | null = null
     const motion = new MotionDetector()
     let okSince: number | null = null
     let notReadySince: number | null = null
@@ -266,15 +267,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           if (t - okSince > 1.5 && talk) {
             // 次に何をすればいいかまで、続けて声で言う（画面は見えない前提）
             lastNextSay = t
-            if (baseline) {
-              say(PHRASES.readyRun, t)
-              setPhase('run')
-            } else {
-              say(PHRASES.placeOk, t)
-              say(PHRASES.baseStand, t)
-              setPhase('baseline')
-              stillSince = null
-            }
+            say(PHRASES.placeOk, t)
+            say(PHRASES.baseStand, t)
+            setPhase('baseline')
+            stillSince = null
           }
         } else {
           // 判定が一瞬ゆれただけなら、数えた時間を消さない
@@ -316,8 +312,9 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           setHud((hh) => (hh.countdown === left ? hh : { ...hh, countdown: left }))
           if (el > 7 && baseNecks.length > 10) {
             const sorted = baseNecks.slice().sort((a, b) => a - b)
-            baseline = { neck: sorted[Math.floor(sorted.length / 2)], createdAt: Date.now() }
-            saveBaseline(baseline)
+            const today = sorted[Math.floor(sorted.length / 2)]
+            baseline = { neck: capBaseline(today, loadBaselines()), createdAt: Date.now() }
+            saveBaseline({ neck: today, createdAt: baseline.createdAt })
             say(PHRASES.baseDone, t)
             lastNextSay = t
             setPhase('run')

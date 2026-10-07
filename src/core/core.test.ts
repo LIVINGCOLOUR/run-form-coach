@@ -3,6 +3,7 @@ import { measure, rotateFrame, sideOffDeg } from './geometry'
 import { category, itemScore, postureScore } from './scoring'
 import { Coach, breakdownMinute } from './coach'
 import { nextItem } from './nextStep'
+import { capBaseline } from './storage'
 import { MotionDetector } from './motion'
 import { demoStride } from '../ui/figure'
 import type { Frame, Measure, Sample, Session } from './types'
@@ -206,6 +207,16 @@ describe('画面から外れたとき', () => {
     const s = absent(coach, 25, 11)
     expect(coach.state).toBe('ended')
     expect(s).toEqual(['おつかれさまでした。'])
+  })
+})
+
+describe('直立の基準', () => {
+  it('毎回取り直すが、直近より5°以上悪い日は5°までに抑える', () => {
+    const h = [3, 2, 4].map((neck) => ({ neck, createdAt: 0 }))
+    expect(capBaseline(1, h)).toBe(1)
+    expect(capBaseline(6, h)).toBe(6)
+    expect(capBaseline(12, h)).toBe(8)
+    expect(capBaseline(12, [])).toBe(12)
   })
 })
 

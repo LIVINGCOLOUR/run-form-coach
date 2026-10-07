@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
 import { bestSession, nextItem, NEXT_TEXT } from '../core/nextStep'
-import { loadBaseline, loadSettings, saveSettings, type Settings } from '../core/storage'
+import { loadSettings, saveSettings, type Settings } from '../core/storage'
 import { Mannequin } from '../ui/Mannequin'
 import { preloadVoice, speak, unlockVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
@@ -43,7 +43,6 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
   const prev = sessions[1]
   const best = bestSession(sessions)
   const next = best ? nextItem(best) : undefined
-  const hasBaseline = !!loadBaseline()
 
   const { base, ghost, idealFrames, exaggerated } = useMemo(() => {
     const stride = best?.strides.good
@@ -217,7 +216,7 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
           はじめる
         </button>
         <div style={{ fontSize: 12 }} className="muted">
-          {hasBaseline ? '直立の基準は登録済み' : '最初に、直立の基準を3秒で取ります'}
+          走る前に、まっすぐ立って基準を取ります
           {' · '}
           <button onClick={() => fileRef.current?.click()} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
             動画で試す
