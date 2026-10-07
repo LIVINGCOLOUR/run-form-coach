@@ -125,7 +125,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (!light) return PHRASES.guideDark
       if (!frame) return PHRASES.guideNone
       const ys = [L.nose, L.leftAnkle, L.rightAnkle].map((i) => frame[i].y)
-      if (Math.min(...ys) < h * 0.04 || Math.max(...ys) > h * 0.98 || frame[L.nose].v < 0.5 || frame[L.leftAnkle].v < 0.5 || frame[L.rightAnkle].v < 0.5) return PHRASES.guideFar
+      if (Math.min(...ys) < h * 0.04 || Math.max(...ys) > h * 0.98 || !bodyVisible(frame)) return PHRASES.guideFar
       if (sideDeg > 20) return PHRASES.guideSide
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)

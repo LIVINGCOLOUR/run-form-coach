@@ -27,5 +27,12 @@ export const SIDE_POINTS = {
   right: { ear: L.rightEar, shoulder: L.rightShoulder, elbow: L.rightElbow, wrist: L.rightWrist, hip: L.rightHip, knee: L.rightKnee, ankle: L.rightAnkle, heel: L.rightHeel, foot: L.rightFoot },
 } as const
 
-// 全身が入っているかを見る点
-export const KEY_POINTS = [L.nose, L.leftShoulder, L.rightShoulder, L.leftHip, L.rightHip, L.leftKnee, L.rightKnee, L.leftAnkle, L.rightAnkle]
+// 全身が入っているかを見る点。左右の組は、どちらか片方が見えていればよい
+// （真横から撮ると奥側は体に隠れて、推定の確かさが下がるため）
+export const KEY_PAIRS: [number, number][] = [
+  [L.leftShoulder, L.rightShoulder],
+  [L.leftHip, L.rightHip],
+  [L.leftKnee, L.rightKnee],
+  [L.leftAnkle, L.rightAnkle],
+]
+export const HEAD_POINTS = [L.nose, L.leftEar, L.rightEar]

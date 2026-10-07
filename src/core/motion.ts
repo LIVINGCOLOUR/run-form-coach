@@ -1,5 +1,5 @@
 import type { Frame } from './types'
-import { L, KEY_POINTS } from './landmarks'
+import { L, HEAD_POINTS, KEY_PAIRS } from './landmarks'
 import { legLength } from './geometry'
 
 // 両足首の前後の開きが、脚の長さに対してどれだけ揺れているかで「走っている」を見分ける
@@ -25,5 +25,5 @@ export class MotionDetector {
 
 // 全身が見えているか
 export function bodyVisible(frame: Frame, minV = 0.5): boolean {
-  return KEY_POINTS.every((i) => frame[i].v >= minV)
+  return HEAD_POINTS.some((i) => frame[i].v >= minV) && KEY_PAIRS.every(([a, b]) => Math.max(frame[a].v, frame[b].v) >= minV)
 }

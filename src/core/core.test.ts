@@ -4,7 +4,7 @@ import { category, itemScore, postureScore } from './scoring'
 import { Coach, breakdownMinute } from './coach'
 import { nextItem } from './nextStep'
 import { capBaseline } from './storage'
-import { MotionDetector } from './motion'
+import { MotionDetector, bodyVisible } from './motion'
 import { demoStride } from '../ui/figure'
 import type { Frame, Measure, Sample, Session } from './types'
 
@@ -61,6 +61,17 @@ describe('点数', () => {
     expect(category(85)).toBe('good')
     expect(category(60)).toBe('mid')
     expect(category(20)).toBe('bad')
+  })
+})
+
+describe('全身が見えているか', () => {
+  it('真横から撮って奥側の手足が隠れていても、手前側が見えていれば全身が入っている', () => {
+    const f = demoStride()[0].map((p, i) => ([12, 24, 26, 28, 8].includes(i) ? { ...p, v: 0.2 } : p))
+    expect(bodyVisible(f)).toBe(true)
+  })
+  it('足首が両方見えなければ、入っていない', () => {
+    const f = demoStride()[0].map((p, i) => ([27, 28].includes(i) ? { ...p, v: 0.2 } : p))
+    expect(bodyVisible(f)).toBe(false)
   })
 })
 
