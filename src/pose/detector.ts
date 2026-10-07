@@ -4,8 +4,9 @@ import { OneEuro } from '../core/filter'
 
 let landmarker: PoseLandmarker | null = null
 
-// 電池と発熱を抑えるため、軽いモデルを使う
-export async function loadLandmarker(model: 'lite' | 'full' = 'lite'): Promise<PoseLandmarker> {
+// 軽いモデルは止まっていても点が揺れ、直立の判定などに時間がかかったので、精度の高いモデルを使う
+// （電池と発熱は、コマ数の上限と間引きで抑える）
+export async function loadLandmarker(model: 'lite' | 'full' = 'full'): Promise<PoseLandmarker> {
   if (landmarker) return landmarker
   const fileset = await FilesetResolver.forVisionTasks(`${import.meta.env.BASE_URL}mediapipe`)
   const make = (delegate: 'GPU' | 'CPU') =>

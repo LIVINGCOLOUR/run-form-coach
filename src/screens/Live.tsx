@@ -59,6 +59,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let lastGuide = 0
     let stillSince: number | null = null
     let baseNecks: number[] = []
+    let baseMovingSince: number | null = null
     let provisional: number[] = []
     let lastHud = 0
     let caption = ''
@@ -298,19 +299,22 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         }
       }
 
-      // 直立の基準（初回だけ）
+      // 直立の基準（走るたびに取る）。止まってから1秒は落ち着くのを待ち、そのあと3秒の真ん中の値を使う
       if (phase === 'baseline' && m) {
         const moving = motion.update(frame!, t)
-        if (moving) {
+        // 骨格の推定は止まっていても少し揺れるので、1秒続けて動いたときだけ数え直す
+        if (moving) baseMovingSince ??= t
+        else baseMovingSince = null
+        if (baseMovingSince !== null && t - baseMovingSince > 1) {
           stillSince = null
           baseNecks = []
         } else {
           stillSince ??= t
           const el = t - stillSince
-          if (el > 4) baseNecks.push(m.neck)
-          const left = Math.ceil(7 - el)
+          if (el > 1) baseNecks.push(m.neck)
+          const left = Math.max(1, Math.ceil(4 - el))
           setHud((hh) => (hh.countdown === left ? hh : { ...hh, countdown: left }))
-          if (el > 7 && baseNecks.length > 10) {
+          if (el > 4 && baseNecks.length > 10) {
             const sorted = baseNecks.slice().sort((a, b) => a - b)
             const today = sorted[Math.floor(sorted.length / 2)]
             baseline = { neck: capBaseline(today, loadBaselines()), createdAt: Date.now() }
