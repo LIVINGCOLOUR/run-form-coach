@@ -138,6 +138,77 @@ describe('コーチの流れ', () => {
   })
 })
 
+// 実機と同じく、コーチが要らないと言ったコマは骨格を取らずに時間だけ進める（毎秒15コマ）
+function feedSparse(coach: Coach, from: number, sec: number, m: Measure) {
+  const speak: string[] = []
+  let looked = 0
+  const frames = demoStride()
+  for (let i = 0; i < sec * 15; i++) {
+    const t = from + i / 15
+    const look = coach.wantsDetail()
+    if (look) looked++
+    const inp = look ? { t, present: true, moving: true, m, frame: frames[(i * 2) % frames.length] } : { t, present: true, moving: true }
+    for (const e of coach.update(inp)) if (e.type === 'speak') speak.push(e.text)
+  }
+  return { speak, looked: looked / (sec * 15) }
+}
+
+const absent = (coach: Coach, from: number, sec: number) => {
+  const speak: string[] = []
+  for (let i = 0; i < sec * 15; i++) for (const e of coach.update({ t: from + i / 15, present: false, moving: false })) if (e.type === 'speak') speak.push(e.text)
+  return speak
+}
+
+describe('省電力（間引いて見る）', () => {
+  it('安定している間は3割ほどしか骨格を取らず、それでも崩れたら声をかける', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 })
+    const a = feedSparse(coach, 0, 120, good)
+    expect(a.looked).toBeLessThan(0.4)
+    const b = feedSparse(coach, 120, 20, headDown)
+    expect(b.speak.some((x) => x.includes('頭が前に出ています'))).toBe(true)
+    expect(b.looked).toBeGreaterThan(0.6)
+  })
+
+  it('間引いても、割合は時間どおりに数える', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 })
+    feedSparse(coach, 0, 600, good)
+    const s = coach.finish()
+    expect(s.share.good).toBeGreaterThan(0.95)
+    expect(s.strides.good?.frames.length).toBe(36)
+  })
+})
+
+describe('画面から外れたとき', () => {
+  it('走っている途中なら5秒で戻るよう促し、30秒戻らなければ終わる', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 })
+    feed(coach, 0, 20, good)
+    const s1 = absent(coach, 20, 6)
+    expect(s1.some((x) => x.includes('戻ってください'))).toBe(true)
+    expect(coach.state).toBe('running')
+    const s2 = absent(coach, 26, 25)
+    expect(coach.state).toBe('ended')
+    expect(s2.some((x) => x.includes('ここで終わりにします'))).toBe(true)
+  })
+
+  it('戻ってくれば続ける', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 })
+    feed(coach, 0, 20, good)
+    absent(coach, 20, 10)
+    feed(coach, 30, 5, good)
+    expect(coach.state).toBe('running')
+  })
+
+  it('止まってから外れたなら、10秒でおつかれさまでした', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 })
+    feed(coach, 0, 20, good)
+    feed(coach, 20, 5, good, false)
+    expect(coach.state).toBe('paused')
+    const s = absent(coach, 25, 11)
+    expect(coach.state).toBe('ended')
+    expect(s).toEqual(['おつかれさまでした。'])
+  })
+})
+
 describe('崩れ始め', () => {
   it('後半にスコアが下がった時刻を見つける', () => {
     const samples: Sample[] = Array.from({ length: 3600 }, (_, t) => ({ t, head: 0, trunk: 7, body: 3, hipDrop: 0, score: t < 2280 ? 92 : 55, quiet: false }))

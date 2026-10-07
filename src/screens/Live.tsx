@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Baseline, Frame, ItemKey, Measure, Sample } from '../core/types'
-import { Coach, type CoachState } from '../core/coach'
+import { Coach, type CoachEvent, type CoachState } from '../core/coach'
 import { facing, measure, rotateFrame, sideOffDeg } from '../core/geometry'
 import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
@@ -67,9 +67,16 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let lastLight = true
     let lastLightAt = 0
     let lastProblem: string | null = PHRASES.placeStart
-    let prevVisible = false
     let lastSaid = ''
-    let lastBodySay = -10
+    let setupAt: number | null = null
+    let hintMsg = ''
+    let hintSince = 0
+    let visibleSince: number | null = null
+    let hiddenSince: number | null = null
+    let bodyAnnounced = false
+    let firstSaid = false
+    let lastPresent = true
+    let lastMoving = false
 
     const setPhase = (p: Phase) => {
       phase = p
@@ -178,7 +185,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     const start = async () => {
       try {
         if ('wakeLock' in navigator) wake = await (navigator as unknown as { wakeLock: { request: (t: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock.request('screen').catch(() => null)
-        const [lm] = await Promise.all([loadLandmarker('full'), preloadVoice(loadSettings().voice)])
+        const [lm] = await Promise.all([loadLandmarker(), preloadVoice(loadSettings().voice)])
         if (disposed) return
         if (file) {
           objectUrl = URL.createObjectURL(file)
@@ -192,12 +199,34 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         }
         if (disposed) return
         setPhase(file ? 'run' : 'setup')
-        if (!file) say(PHRASES.placeStart, 0)
         const clock = file ? () => video.currentTime : () => performance.now() / 1000
-        stopPose = runPose(video, lm, (tick) => onTick(tick.frame, tick.t, tick.width, tick.height), clock)
+        // 走っている間は、コーチが要ると言ったときだけ骨格を取る（人が見えなくなったら毎コマ取って探す）
+        const want = () => !!file || phase !== 'run' || !coachRef.current || !lastPresent || coachRef.current.wantsDetail()
+        stopPose = runPose(
+          video,
+          lm,
+          (tick) => (tick.skipped ? onSkip(tick.t) : onTick(tick.frame, tick.t, tick.width, tick.height)),
+          clock,
+          want,
+        )
       } catch (e) {
         setHud((h) => ({ ...h, phase: 'error', error: e instanceof Error ? e.message : String(e) }))
       }
+    }
+
+    const handle = (events: CoachEvent[], t: number) => {
+      for (const e of events) {
+        if (e.type === 'speak') say(e.text, t)
+        if (e.type === 'state' && e.state === 'ended') finish()
+      }
+    }
+
+    // 骨格を取らなかったコマ。時間だけ進め、見えている・走っているは直前のままにする
+    const onSkip = (t: number) => {
+      const coach = coachRef.current
+      if (phase !== 'run' || !coach) return
+      handle(coach.update({ t, present: lastPresent, moving: lastMoving }), t)
+      updateHud(t, lastPresent, 0)
     }
 
     const onTick = (raw: Frame | null, t: number, w: number, h: number) => {
@@ -217,17 +246,23 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         const ready = visible && lastLight && sideDeg <= 35
         const hint = guide(visible ? frame : null, w, h, sideDeg, lastLight)
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
-        // 離れていて画面が見えなくても分かるよう、全身が入った瞬間に声で知らせる
-        if (visible && !prevVisible && t - lastBodySay > 3) {
-          say(PHRASES.bodyIn, t)
-          lastBodySay = t
-          lastGuide = t
+        // 開いてすぐは話さない（スマホを置いて離れるまでの間）
+        setupAt ??= t
+        const talk = t - setupAt >= 2
+        if (visible) {
+          visibleSince ??= t
+          hiddenSince = null
+        } else {
+          hiddenSince ??= t
+          if (t - hiddenSince > 1.5) {
+            visibleSince = null
+            bodyAnnounced = false
+          }
         }
-        prevVisible = visible
         if (ready) {
           notReadySince = null
           okSince ??= t
-          if (t - okSince > 1.5) {
+          if (t - okSince > 1.5 && talk) {
             say(PHRASES.placeOk, t)
             if (baseline) {
               setPhase('run')
@@ -240,12 +275,24 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           // 判定が一瞬ゆれただけなら、数えた時間を消さない
           notReadySince ??= t
           if (t - notReadySince > 0.6) okSince = null
-          const msg = lastProblem ?? PHRASES.guideNone
-          // 案内が変わったら2秒で、同じなら5秒ごとに言う
-          if (t - lastGuide > (msg !== lastSaid ? 2 : 5)) {
+          // 離れていて画面が見えなくても分かるよう、全身が入ったら声で知らせる（1.5秒続けて見えてから）
+          if (talk && !bodyAnnounced && visibleSince !== null && t - visibleSince > 1.5) {
+            bodyAnnounced = true
+            say(PHRASES.bodyIn, t)
+            lastGuide = t
+          }
+          let msg = lastProblem ?? PHRASES.guideNone
+          if (!firstSaid && msg === PHRASES.guideNone) msg = PHRASES.placeStart
+          if (msg !== hintMsg) {
+            hintMsg = msg
+            hintSince = t
+          }
+          // 同じ案内が1.2秒続いてから言う。変わったら言い直し、同じなら6秒ごとに繰り返す
+          if (talk && t - hintSince >= 1.2 && t - lastGuide > (msg !== lastSaid ? 1.5 : 6)) {
             say(msg, t)
             lastGuide = t
-            lastSaid = msg
+            lastSaid = msg === PHRASES.placeStart ? PHRASES.guideNone : msg
+            firstSaid = true
           }
         }
       }
@@ -279,6 +326,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       let hot = new Set<string>()
       if (phase === 'run') {
         const moving = frame && visible ? motion.update(frame, t) : false
+        lastPresent = visible
+        lastMoving = moving
         // 動画で試すときは、最初の10秒から仮の基準を作る
         if (!baseline && file) {
           if (m) provisional.push(m.neck)
@@ -290,11 +339,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         if (baseline && !coachRef.current) coachRef.current = new Coach(baseline)
         const coach = coachRef.current
         if (coach) {
-          const events = coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined })
-          for (const e of events) {
-            if (e.type === 'speak') say(e.text, t)
-            if (e.type === 'state' && e.state === 'ended') finish()
-          }
+          handle(coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined }), t)
           lastSample = coach.samples[coach.samples.length - 1]
           if (lastSample && !coach.quiet) {
             if (overCue('head', lastSample.head)) hot.add('head')
@@ -307,6 +352,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (screenMode === 'show' || phase !== 'run') draw(frame, w, h, hot)
       else draw(null, w, h, hot)
 
+      updateHud(t, visible, sideDeg)
+    }
+
+    const updateHud = (t: number, visible: boolean, sideDeg: number) => {
       if (t - lastHud > 0.25) {
         lastHud = t
         const coach = coachRef.current
@@ -331,7 +380,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       stream?.getTracks().forEach((tr) => tr.stop())
       wake?.release().catch(() => {})
       if (objectUrl) URL.revokeObjectURL(objectUrl)
-      stopVoice()
+      // 終わりの言葉（おつかれさまでした）は最後まで言わせる
+      if (!finished) stopVoice()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

@@ -9,6 +9,11 @@ let kind: VoiceKind = 'female'
 const buffers = new Map<string, AudioBuffer>()
 let current: AudioBufferSourceNode | null = null
 let fallbackEl: HTMLAudioElement | null = null
+// 声は重ねない。話している間に来た言葉は最新の1つだけ取っておき、言い終わって1秒あけてから話す
+const GAP_MS = 1000
+let busyUntil = 0
+let queued: { text: string; k: VoiceKind } | null = null
+let timer: ReturnType<typeof setTimeout> | null = null
 
 const url = (k: VoiceKind, id: PhraseId) => `${import.meta.env.BASE_URL}voices/${k}/${id}.m4a`
 
@@ -80,23 +85,44 @@ function fallback(text: string) {
 }
 
 export function speak(text: string, k: VoiceKind = kind) {
+  const now = performance.now()
+  if (now < busyUntil) {
+    queued = { text, k }
+    timer ??= setTimeout(flush, busyUntil - now)
+    return
+  }
+  const sec = say(text, k)
+  busyUntil = performance.now() + sec * 1000 + GAP_MS
+}
+
+function flush() {
+  timer = null
+  const q = queued
+  queued = null
+  if (q) speak(q.text, q.k)
+}
+
+// 話し始めて、話し終わるまでのおよその秒数を返す
+function say(text: string, k: VoiceKind): number {
+  const guess = text.length * 0.15 // ファイルの長さが分からないときの目安
   const id = phraseId(text)
   const buf = id ? buffers.get(`${k}/${id}`) : undefined
   if (!buf || !ctx || ctx.state === 'closed') {
     // まだ読み込めていなければ、audio 要素でファイルをそのまま鳴らす。ファイルがない言葉は標準の読み上げ
     if (id && playFile(k, id)) {
       if (ctx) load(k, id)
-      return
+      return guess
     }
     fallback(text)
-    return
+    return guess
   }
   if (ctx.state !== 'running') {
     // 止まっていて起こせないときは、audio 要素で鳴らす
     ctx.resume().catch(() => {})
-    if (id && playFile(k, id)) return
+    if (id && playFile(k, id)) return buf.duration
   }
   play(buf)
+  return buf.duration
 }
 
 function playFile(k: VoiceKind, id: PhraseId) {
@@ -123,10 +149,15 @@ function play(buf: AudioBuffer) {
 }
 
 export function stopVoice() {
+  queued = null
+  if (timer) clearTimeout(timer)
+  timer = null
+  busyUntil = 0
   try {
     current?.stop()
   } catch {
     /* すでに止まっている */
   }
+  fallbackEl?.pause()
   if ('speechSynthesis' in window) speechSynthesis.cancel()
 }

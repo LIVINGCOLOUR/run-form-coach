@@ -17,7 +17,9 @@ export type CoachEvent = { type: 'speak'; text: string } | { type: 'state'; stat
 const ITEMS: ItemKey[] = ['head', 'trunk', 'body', 'hip']
 const START_AFTER = 2 // 走り出しを2秒続けて見たら始める
 const PAUSE_AFTER = 3 // 3秒止まったら一時停止
-const END_AFTER = 20 // 20秒いなくなったら終わり
+const LOST_SAY = 5 // 走っている途中で5秒いなくなったら、戻るよう声をかける
+const LOST_END = 30 // それでも30秒戻らなければ終わり
+const STOP_END = 10 // 止まってから画面を出たときは、10秒で終わり
 const CUE_WINDOW = 10
 const CUE_COOLDOWN = 30
 const CUE_GAP = 12
@@ -27,8 +29,13 @@ const HIP_REF_TO = 180
 const QUIET_FIRST = 300
 const QUIET_STEP = 150
 const QUIET_MAX = 900
-const STRIDE_FRAMES = 36 // 約1.2秒
+const STRIDE_FRAMES = 36 // 1.2秒を30コマにならして持つ
+const STRIDE_SEC = 1.2
 const STRIDE_EVERY = 20 // 20秒ごとに走り姿の候補を取る
+// 電池と発熱を抑えるため、安定して走れている間は10秒のうち3秒だけ骨格を取る（声なしの間は20秒のうち3秒）
+const LOOK_SEC = 3
+const LOOK_EVERY = 10
+const LOOK_EVERY_QUIET = 20
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 
@@ -49,6 +56,7 @@ export class Coach {
   private movingSince: number | null = null
   private stillSince: number | null = null
   private absentSince: number | null = null
+  private lostSaid = false
   private everRan = false
 
   private bucket: Measure[] = []
@@ -65,7 +73,7 @@ export class Coach {
   private quietEnd = -1e9
   quietHeldSec = 0
 
-  private ring: { frame: Frame; dir: 1 | -1 }[] = []
+  private ring: { frame: Frame; dir: 1 | -1; t: number }[] = []
   private candidates: Record<Category, Stride[]> = { good: [], mid: [], bad: [] }
   private lastStrideAt = -1e9
 
@@ -79,17 +87,25 @@ export class Coach {
     const dt = this.lastT === null ? 0 : Math.min(1, Math.max(0, inp.t - this.lastT))
     this.lastT = inp.t
 
-    // 状態の切り替え
+    // 画面から出たとき。走っている途中なら戻るよう促し、止まってから出たなら終わりにする
     if (!inp.present) {
       this.absentSince ??= inp.t
       this.movingSince = null
-      if (this.everRan && this.state !== 'ended' && inp.t - this.absentSince >= END_AFTER) {
-        this.state = 'ended'
-        ev.push({ type: 'state', state: 'ended' }, { type: 'speak', text: SAY.end })
+      const gone = inp.t - this.absentSince
+      if (!this.everRan || this.state === 'ended') return ev
+      if (this.state === 'running') {
+        if (gone >= LOST_SAY && !this.lostSaid) {
+          this.lostSaid = true
+          ev.push({ type: 'speak', text: SAY.lost })
+        }
+        if (gone >= LOST_END) this.end(ev, SAY.giveUp)
+      } else if (gone >= STOP_END) {
+        this.end(ev, SAY.end)
       }
       return ev
     }
     this.absentSince = null
+    this.lostSaid = false
     if (inp.moving) {
       this.movingSince ??= inp.t
       this.stillSince = null
@@ -113,8 +129,11 @@ export class Coach {
     // 走っている間だけ時間を進める
     this.active += dt
     if (inp.frame && inp.m) {
-      this.ring.push({ frame: inp.frame, dir: inp.m.dir })
-      if (this.ring.length > STRIDE_FRAMES) this.ring.shift()
+      // 骨格を取っていない間があいたら、つながらないので捨てる
+      const last = this.ring[this.ring.length - 1]
+      if (last && inp.t - last.t > 0.3) this.ring = []
+      this.ring.push({ frame: inp.frame, dir: inp.m.dir, t: inp.t })
+      while (this.ring.length && inp.t - this.ring[0].t > STRIDE_SEC + 0.3) this.ring.shift()
     }
     if (inp.m) this.bucket.push(inp.m)
     if (this.active - this.bucketStart >= 1) {
@@ -123,6 +142,21 @@ export class Coach {
       if (s) ev.push(...this.decide(s))
     }
     return ev
+  }
+
+  private end(ev: CoachEvent[], text: string) {
+    this.state = 'ended'
+    ev.push({ type: 'state', state: 'ended' }, { type: 'speak', text })
+  }
+
+  // 今この瞬間の骨格を取るべきか。崩れかけ・声をかけた直後・走り出す前後・人がいないときは毎コマ取る
+  wantsDetail(): boolean {
+    if (this.state !== 'running' || this.absentSince !== null || this.pending) return true
+    const t = this.active
+    if (t < 10) return true
+    if (this.samples.slice(-12).some((s) => s.t > t - 12 && s.score < 80)) return true
+    const every = this.quiet ? LOOK_EVERY_QUIET : LOOK_EVERY
+    return t % every < LOOK_SEC
   }
 
   // 1秒分の測定をまとめて1件の記録にする
@@ -146,8 +180,12 @@ export class Coach {
     return sample
   }
 
-  private recent(n: number): Sample[] {
-    return this.samples.slice(-n)
+  // 直近 sec 秒の記録。骨格を間引いて取っているので、件数ではなく時間で区切る
+  private within(sec: number): Sample[] {
+    const now = this.samples.length ? this.samples[this.samples.length - 1].t : 0
+    const out: Sample[] = []
+    for (let i = this.samples.length - 1; i >= 0 && this.samples[i].t > now - sec; i--) out.push(this.samples[i])
+    return out.reverse()
   }
 
   private value(s: Sample, k: ItemKey) {
@@ -165,9 +203,11 @@ export class Coach {
 
     // 声なしで確認する時間
     if (this.quiet) {
-      if (s.score >= 80) this.quietHeldSec += 1
-      const last30 = this.recent(30)
-      if (last30.length >= 30 && mean(last30.map((x) => x.score)) < 50) {
+      // 間引いた分は、前の記録からの時間をこの記録の分として数える
+      const prev = this.samples[this.samples.length - 2]
+      if (s.score >= 80) this.quietHeldSec += prev ? Math.min(LOOK_EVERY_QUIET, t - prev.t) : 1
+      const last30 = this.within(30)
+      if (last30.length >= 10 && mean(last30.map((x) => x.score)) < 50) {
         this.quiet = false
         this.quietEnd = t
         this.quietLen = QUIET_FIRST
@@ -182,8 +222,8 @@ export class Coach {
 
     // 直ったらほめる
     if (this.pending && t - this.pending.t <= RECOVER_WITHIN) {
-      const last5 = this.recent(5)
-      if (mean(last5.map((x) => this.value(x, this.pending!.item))) <= LIMITS[this.pending.item].full) {
+      const last5 = this.within(5)
+      if (last5.length >= 3 && mean(last5.map((x) => this.value(x, this.pending!.item))) <= LIMITS[this.pending.item].full) {
         this.say(ev, t, 'recover', RECOVER[this.cues.length % RECOVER.length])
         this.pending = null
         return ev
@@ -193,8 +233,8 @@ export class Coach {
     }
 
     // 崩れていたら声をかける（優先順：頭 → 体幹 → 体全体 → 腰）
-    const win = this.recent(CUE_WINDOW)
-    if (win.length >= CUE_WINDOW && t - this.lastAnyCue >= CUE_GAP) {
+    const win = this.within(CUE_WINDOW)
+    if (win.length >= CUE_WINDOW * 0.6 && t - this.lastAnyCue >= CUE_GAP) {
       for (const k of ITEMS) {
         const avg = mean(win.map((x) => this.value(x, k)))
         if (overCue(k, avg) && t - (this.lastCue[k] ?? -1e9) >= CUE_COOLDOWN) {
@@ -208,17 +248,18 @@ export class Coach {
     }
 
     // 5分きれいに走れていたらほめる
-    const last300 = this.recent(300)
-    if (last300.length >= 300 && t - this.lastPraise >= 300 && mean(last300.map((x) => x.score)) >= 80 && t - this.lastAnyCue >= 60) {
+    const last300 = this.within(300)
+    if (t >= 300 && last300.length >= 60 && t - this.lastPraise >= 300 && mean(last300.map((x) => x.score)) >= 80 && t - this.lastAnyCue >= 60) {
       this.say(ev, t, 'praise', SAY.praise5)
       this.lastPraise = t
       return ev
     }
 
     // 安定していたら、声なしで確認する時間に入る
-    const last180 = this.recent(180)
+    const last180 = this.within(180)
     if (
-      last180.length >= 180 &&
+      t >= 180 &&
+      last180.length >= 36 &&
       mean(last180.map((x) => x.score)) >= 80 &&
       t - this.lastAnyCue >= 180 &&
       t - this.quietEnd >= 120
@@ -231,12 +272,13 @@ export class Coach {
   }
 
   private maybeKeepStride(s: Sample) {
-    if (this.ring.length < STRIDE_FRAMES || s.t - this.lastStrideAt < STRIDE_EVERY) return
+    const r = this.ring
+    if (r.length < 8 || r[r.length - 1].t - r[0].t < STRIDE_SEC || s.t - this.lastStrideAt < STRIDE_EVERY) return
     this.lastStrideAt = s.t
     const cat = category(s.score)
     const list = this.candidates[cat]
     const stride: Stride = {
-      frames: this.ring.map((r) => r.frame),
+      frames: resample(r, STRIDE_FRAMES, STRIDE_SEC),
       dir: this.ring[this.ring.length - 1].dir,
       score: s.score,
       avg: { head: s.head, trunk: s.trunk, body: s.body, hipDrop: s.hipDrop },
@@ -246,9 +288,12 @@ export class Coach {
   }
 
   finish(speedKmh?: number): Session {
-    const n = this.samples.length || 1
+    // 間引いた分は、次の記録までの時間をその記録の重みにする（崩れて細かく見た時間に偏らないように）
     const share = { good: 0, mid: 0, bad: 0 }
-    for (const s of this.samples) share[category(s.score)] += 1 / n
+    const ss = this.samples
+    const w = ss.map((s, i) => (i + 1 < ss.length ? Math.min(LOOK_EVERY_QUIET, ss[i + 1].t - s.t) : 1))
+    const total = w.reduce((a, b) => a + b, 0) || 1
+    ss.forEach((s, i) => (share[category(s.score)] += w[i] / total))
     const strides: Session['strides'] = {}
     for (const cat of ['good', 'mid', 'bad'] as Category[]) {
       const list = this.candidates[cat]
@@ -273,14 +318,35 @@ export class Coach {
 
 // 崩れ始め：5分平均の姿勢スコアが、序盤の平均より15点以上下がった最初の時刻（分）
 export function breakdownMinute(samples: Sample[]): number | undefined {
-  if (samples.length < 600) return undefined
-  const early = samples.filter((s) => s.t >= 60 && s.t <= Math.max(600, samples.length * 0.25))
+  const last = samples.length ? samples[samples.length - 1].t : 0
+  if (last < 600) return undefined
+  const early = samples.filter((s) => s.t >= 60 && s.t <= Math.max(600, last * 0.25))
   const base = mean(early.map((s) => s.score))
-  for (let i = 300; i < samples.length; i++) {
-    const w = samples.slice(i - 300, i)
-    if (mean(w.map((s) => s.score)) < base - 15) return Math.round(samples[i - 150].t / 60)
+  let from = 0
+  let sum = 0
+  for (let i = 0; i < samples.length; i++) {
+    sum += samples[i].score
+    while (samples[from].t <= samples[i].t - 300) sum -= samples[from++].score
+    const n = i - from + 1
+    if (samples[i].t >= 300 && n >= 30 && sum / n < base - 15) return Math.round((samples[i].t - 150) / 60)
   }
   return undefined
+}
+
+// 実際に取れたコマ（毎秒15コマ前後）を、直近 sec 秒を n コマに等間隔でならす
+function resample(ring: { frame: Frame; t: number }[], n: number, sec: number): Frame[] {
+  const end = ring[ring.length - 1].t
+  const out: Frame[] = []
+  let j = 0
+  for (let k = 0; k < n; k++) {
+    const t = end - sec + (sec * k) / (n - 1)
+    while (j + 1 < ring.length - 1 && ring[j + 1].t <= t) j++
+    const a = ring[j]
+    const b = ring[Math.min(j + 1, ring.length - 1)]
+    const u = b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0
+    out.push(a.frame.map((p, i) => ({ x: p.x + (b.frame[i].x - p.x) * u, y: p.y + (b.frame[i].y - p.y) * u, v: Math.min(p.v, b.frame[i].v) })))
+  }
+  return out
 }
 
 export { itemScore }
