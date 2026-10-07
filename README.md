@@ -18,6 +18,8 @@ npm test        # 計測・判定・声かけの流れのテスト
 
 ## 紹介動画（video/）
 
+書き出した動画は [リリース promo-2026-10-07](https://github.com/LIVINGCOLOUR/run-form-coach/releases/tag/promo-2026-10-07) に置いてある（構想を含む）。
+
 Remotion と SVG で作る60秒・縦（1080×1920）の紹介動画。ナレーションは Vertex AI の Gemini TTS、音楽は Lyria 3 Pro（Vertex AI には Lyria 3.5 がないため）。
 骨格の絵は、アプリと同じ `src/ui/figure.ts` で描く。
 
