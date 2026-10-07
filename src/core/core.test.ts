@@ -100,6 +100,32 @@ describe('その場で走る・コンパクトなフォーム', () => {
     expect(inPlace(2.8, 25)).toBe(true) // 検証用の判定（IN_PLACE_FOR_TESTING）で拾う
     expect(inPlace(2.8, 12)).toBe(true) // 小さく持ち上げるだけでも
   })
+  it('真横から撮って奥の脚が手前の脚に重なっていても、片脚の上下のリズムで走っていると分かる', () => {
+    const base = demoStride()[0]
+    const md = new MotionDetector()
+    let moving = false
+    for (let i = 0; i < 45; i++) {
+      const t = i / 15
+      const up = 25 * Math.max(0, Math.sin(Math.PI * 2.8 * t)) // 手前の脚が毎秒1.4回上がる
+      const f = base.map((p) => ({ ...p }))
+      for (const [n, k] of [[25, 0.6], [27, 1]] as const) f[n] = { ...f[n], x: base[25 + (n - 25)].x, y: base[n].y - up * k }
+      // 奥の脚は手前の脚と同じ位置（推定が重ねて返す）
+      f[26] = { ...f[25] }
+      f[28] = { ...f[27] }
+      moving = md.update(f, t)
+    }
+    expect(moving).toBe(true)
+  })
+  it('立ったまま点が少し揺れるだけなら、走っていない', () => {
+    const base = demoStride()[0]
+    const md = new MotionDetector()
+    let moving = true
+    for (let i = 0; i < 45; i++) {
+      const j = Math.sin(i * 2.1) * 1.2 // 1px 前後のゆれ
+      moving = md.update(base.map((p) => ({ ...p, y: p.y + j })), i / 15)
+    }
+    expect(moving).toBe(false)
+  })
   it('ゆっくり足踏みする、ほとんど持ち上げないときは走っていない', () => {
     expect(inPlace(1.2, 25)).toBe(false)
     expect(inPlace(2.8, 1)).toBe(false)

@@ -16,6 +16,7 @@ const STEP_PROMINENCE = 0.1 // 足首の前後の振れ（脚の長さに対す�
 const STEP_WINDOW = 4 // ピッチは直近4秒の接地から出す
 const MIN_SD = { x: 0.1, y: 0.04 } // 検証用：脚の長さに対する揺れの大きさ
 const MIN_STEPS_PER_SEC = 2
+const MIN_LIFT_SD = 0.03 // 片脚の持ち上げの揺れ（脚の長さに対する割合）
 
 // 片脚ずつ、足首の前後の位置（腰から見て、進む向きが正）の山と谷を見つける
 class LegSteps {
@@ -42,9 +43,10 @@ class LegSteps {
 }
 
 export class MotionDetector {
-  private xs: { t: number; x: number; y: number }[] = []
+  private xs: { t: number; x: number; y: number; l: number; r: number }[] = []
   private legs = [new LegSteps(), new LegSteps()]
   private lastT = -1e9
+  private legRef = 0 // 直近の脚の長さの最大（脚を上げると見かけの長さが縮むので、持ち上げの量はこれで割る）
   private windowSec: number
   cadence: number | null = null // ピッチ（歩／分）
   by: 'steps' | 'inPlace' | null = null // 何で走っていると判断したか
@@ -65,10 +67,16 @@ export class MotionDetector {
       const pelvis = (frame[L.leftHip].x + frame[L.rightHip].x) / 2
       this.legs[0].update(t, ((frame[L.leftAnkle].x - pelvis) * dir) / leg)
       this.legs[1].update(t, ((frame[L.rightAnkle].x - pelvis) * dir) / leg)
+      const hipY = (frame[L.leftHip].y + frame[L.rightHip].y) / 2
+      // 片脚ずつの持ち上げ：腰から見た足首と膝の高さ（真横からだと奥の脚が手前の脚に重なることがあるので、片脚だけでも見る）
+      this.legRef = Math.max(leg, this.legRef * 0.995)
+      const lift = (a: number, k: number) => (hipY - frame[a].y + (hipY - frame[k].y)) / this.legRef
       this.xs.push({
         t,
         x: (frame[L.leftAnkle].x - frame[L.rightAnkle].x) / leg,
         y: (frame[L.leftAnkle].y - frame[L.rightAnkle].y + frame[L.leftKnee].y - frame[L.rightKnee].y) / leg,
+        l: lift(L.leftAnkle, L.leftKnee),
+        r: lift(L.rightAnkle, L.rightKnee),
       })
     }
     while (this.xs.length && t - this.xs[0].t > this.windowSec) this.xs.shift()
@@ -86,17 +94,25 @@ export class MotionDetector {
     return this.by !== null
   }
 
-  // 検証用：左右が交互に入れ替わるリズム（上下・前後どちらでも）
+  // 検証用：左右が交互に入れ替わるリズム（上下・前後どちらでも）、または片脚が上下するリズム
   private inPlace(): boolean {
     if (this.xs.length < 10) return false
     const span = this.xs[this.xs.length - 1].t - this.xs[0].t
     if (span < this.windowSec * 0.7) return false
-    return (['x', 'y'] as const).some((k) => {
+    const rhythm = (k: 'x' | 'y' | 'l' | 'r') => {
       const v = this.xs.map((p) => p[k])
       const m = v.reduce((a, b) => a + b, 0) / v.length
       const sd = Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length)
-      if (sd < MIN_SD[k]) return false
-      return steps(v, m, sd * 0.4) / span >= MIN_STEPS_PER_SEC
+      return { sd, perSec: steps(v, m, sd * 0.4) / span }
+    }
+    if ((['x', 'y'] as const).some((k) => {
+      const r = rhythm(k)
+      return r.sd >= MIN_SD[k] && r.perSec >= MIN_STEPS_PER_SEC
+    })) return true
+    // 片脚：上がって下りるで2回入れ替わる＝1周（2歩）。毎秒1周以上（毎分120歩以上）
+    return (['l', 'r'] as const).some((k) => {
+      const r = rhythm(k)
+      return r.sd >= MIN_LIFT_SD && r.perSec / 2 >= MIN_STEPS_PER_SEC / 2
     })
   }
 }

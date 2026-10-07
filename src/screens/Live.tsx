@@ -29,6 +29,10 @@ interface Hud {
   problem?: string | null // 置き方で、いま足りないこと（null ならそろっている）
 }
 
+// 頭から足までが画面の高さの何割か。超広角で 1m 前後なら約6割、3m だと約2割
+const SPAN_MIN = 0.4
+const bodySpan = (f: Frame, h: number) => (Math.max(f[L.leftAnkle].y, f[L.rightAnkle].y, f[L.leftHeel].y, f[L.rightHeel].y) - f[L.nose].y) / h
+
 const ITEM_TEXT: Record<ItemKey, string> = { head: '頭が前に出ています', trunk: '上体が倒れすぎています', body: '体が倒れすぎています', hip: '腰が落ちています' }
 
 export function Live({ video: file, onDone }: { video?: File; onDone: (id?: string) => void }) {
@@ -143,6 +147,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (!frame) return PHRASES.guideNone
       const ys = [L.nose, L.leftAnkle, L.rightAnkle].map((i) => frame[i].y)
       if (Math.min(...ys) < h * 0.04 || Math.max(...ys) > h * 0.98 || !bodyVisible(frame)) return PHRASES.guideFar
+      // 小さく映っていると膝や足首の点がぶれて、走り出しや角度が取れない。画面の高さの4割はほしい
+      if (bodySpan(frame, h) < SPAN_MIN) return PHRASES.guideNear
       if (sideDeg > 20) return PHRASES.guideSide
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
@@ -277,7 +283,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           present = false
           bodyAnnounced = false
         }
-        const ready = present && visible && lastLight && sideDeg <= 35
+        const ready = present && visible && lastLight && sideDeg <= 35 && !!frame && bodySpan(frame, h) >= SPAN_MIN
         const hint = placed ? guide(present ? frame : null, w, h, sideDeg, lastLight) : null
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 開いてすぐは話さない（スマホを置いて離れるまでの間）
