@@ -29,6 +29,8 @@ export interface Measure {
 export interface Baseline {
   neck: number
   createdAt: number
+  head?: number // 立ち姿勢：肩→耳の前傾（度）
+  trunk?: number // 立ち姿勢：腰→肩の前傾（度）
 }
 
 // 1秒ごとの記録
@@ -71,4 +73,5 @@ export interface Session {
   quietHeldSec: number // 声なしで保てた秒数
   taps?: number[] // そばの人が「今悪い」を押した時刻（秒）
   provisionalBaseline?: boolean // 動画で試したときの仮の基準
+  standing?: { head: number; trunk: number; issue: 'head' | 'back' | null } // 走る前の立ち姿勢（猫背のチェック）
 }

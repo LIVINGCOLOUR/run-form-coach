@@ -4,6 +4,7 @@ import { category, itemScore, postureScore } from './scoring'
 import { Coach, breakdownMinute } from './coach'
 import { nextItem } from './nextStep'
 import { capBaseline } from './storage'
+import { standingIssue } from './standing'
 import { MotionDetector, bodyVisible } from './motion'
 import { demoStride } from '../ui/figure'
 import type { Frame, Measure, Sample, Session } from './types'
@@ -228,6 +229,14 @@ describe('直立の基準', () => {
     expect(capBaseline(6, h)).toBe(6)
     expect(capBaseline(12, h)).toBe(8)
     expect(capBaseline(12, [])).toBe(12)
+  })
+})
+
+describe('立ち姿勢（猫背）のチェック', () => {
+  it('まっすぐなら問題なし、頭が前・背中が丸いを見分ける', () => {
+    expect(standingIssue({ head: 10, trunk: 2 })).toBeNull()
+    expect(standingIssue({ head: 30, trunk: 2 })).toBe('head')
+    expect(standingIssue({ head: 15, trunk: 12 })).toBe('back')
   })
 })
 

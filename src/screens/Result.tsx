@@ -54,6 +54,11 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         <ShareBar share={s.share} height={12} />
         <div style={{ fontSize: 12 }} className="muted">良い姿勢 {goodMin}分 / {Math.round(s.durationSec / 60)}分</div>
         <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.5, paddingTop: 4 }}>{summary}</div>
+        {s.standing && (
+          <div style={{ fontSize: 12 }} className="muted">
+            走る前の立ち姿勢：{s.standing.issue === 'head' ? '頭が前に出ていました' : s.standing.issue === 'back' ? '背中が丸まっていました' : '頭も背中もまっすぐ'}（頭 {Math.round(s.standing.head)}° / 上体 {Math.round(s.standing.trunk)}°）
+          </div>
+        )}
         {s.provisionalBaseline && <div style={{ fontSize: 12, color: 'var(--warn)' }}>動画で試したため、直立の基準は仮のものです</div>}
       </div>
 

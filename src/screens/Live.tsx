@@ -9,6 +9,7 @@ import { gravityAvailable, gravityRoll } from '../core/gravity'
 import { capBaseline, loadBaselines, loadSettings, saveBaseline, saveSession } from '../core/storage'
 import { preloadVoice, speak, stopVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
+import { median, standingIssue, type Standing, type StandingIssue } from '../core/standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
@@ -60,6 +61,9 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let stillSince: number | null = null
     let baseNecks: number[] = []
     let baseMovingSince: number | null = null
+    let baseStands: Standing[] = []
+    let baseTries = 0 // 立ち姿勢を直してもらった回数
+    let standing: { head: number; trunk: number; issue: StandingIssue | null } | undefined
     let provisional: number[] = []
     let lastHud = 0
     let caption = ''
@@ -99,6 +103,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         const s = coach.finish()
         s.taps = tapsRef.current
         s.provisionalBaseline = !!file
+        s.standing = standing
         await saveSession(s)
         onDone(s.id)
       } else {
@@ -308,20 +313,37 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         if (baseMovingSince !== null && t - baseMovingSince > 1) {
           stillSince = null
           baseNecks = []
+          baseStands = []
         } else {
           stillSince ??= t
           const el = t - stillSince
-          if (el > 1) baseNecks.push(m.neck)
+          if (el > 1) {
+            baseNecks.push(m.neck)
+            baseStands.push({ head: m.neck + m.trunk, trunk: m.trunk })
+          }
           const left = Math.max(1, Math.ceil(4 - el))
           setHud((hh) => (hh.countdown === left ? hh : { ...hh, countdown: left }))
           if (el > 4 && baseNecks.length > 10) {
-            const sorted = baseNecks.slice().sort((a, b) => a - b)
-            const today = sorted[Math.floor(sorted.length / 2)]
-            baseline = { neck: capBaseline(today, loadBaselines()), createdAt: Date.now() }
-            saveBaseline({ neck: today, createdAt: baseline.createdAt })
-            say(PHRASES.baseDone, t)
-            lastNextSay = t
-            setPhase('run')
+            // 猫背のチェック。崩れていたら1つだけ直し方を言って取り直す（2回まで。それでもだめならその姿勢で始める）
+            const st = { head: median(baseStands.map((x) => x.head)), trunk: median(baseStands.map((x) => x.trunk)) }
+            const issue = standingIssue(st)
+            if (issue && baseTries < 2) {
+              baseTries++
+              say(issue === 'head' ? PHRASES.baseHead : PHRASES.baseBack, t)
+              lastNextSay = t
+              stillSince = null
+              baseNecks = []
+              baseStands = []
+            } else {
+              const today = median(baseNecks)
+              const createdAt = Date.now()
+              baseline = { neck: capBaseline(today, loadBaselines()), createdAt, ...st }
+              saveBaseline({ neck: today, createdAt, ...st })
+              standing = { ...st, issue }
+              say(!issue ? PHRASES.baseGood : issue === 'head' ? PHRASES.baseHeadLeft : PHRASES.baseBackLeft, t)
+              lastNextSay = t
+              setPhase('run')
+            }
           }
         }
       }
@@ -364,7 +386,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         }
       }
 
-      if (screenMode === 'show' || phase !== 'run') draw(frame, w, h, hot)
+      if (screenMode === 'show') draw(frame, w, h, hot)
       else draw(null, w, h, hot)
 
       updateHud(t, visible, sideDeg)
@@ -401,8 +423,11 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 真っ暗にするのは走っている間だけ。走り出す前は「走り出すと始まります」を見せる
-  const dark = screenMode === 'dark' && hud.phase === 'run' && hud.state === 'running'
+  // 背面カメラで画面は見えないので、置き方・基準・走行中のすべてで真っ暗にする（案内は声で行う）
+  const dark = screenMode === 'dark' && (hud.phase === 'setup' || hud.phase === 'baseline' || hud.phase === 'run')
+  const darkLabel = hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.state === 'waiting' ? 'READY' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
+  const darkText =
+    hud.phase === 'setup' ? '置き方を声で案内します' : hud.phase === 'baseline' ? 'まっすぐ立って、3秒止まってください' : hud.state === 'waiting' ? '走り出すと始まります' : hud.state === 'paused' ? '一時停止中' : '画面を消しても、声でお知らせします'
   const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
   const last = hud.last
 
@@ -414,9 +439,12 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       {dark && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
           <div style={{ width: 14, height: 14, borderRadius: 7, background: 'var(--accent)' }} />
-          <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 4, color: 'var(--faint)' }}>COACHING</div>
-          <div style={{ fontSize: 13, color: 'var(--faint)' }}>画面を消しても、声でお知らせします</div>
-          <div className="num" style={{ position: 'absolute', right: 24, top: 20, fontSize: 28, color: '#4A525B' }}>{mmss(hud.elapsed)}</div>
+          <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 4, color: 'var(--faint)' }}>{darkLabel}</div>
+          <div style={{ fontSize: 13, color: 'var(--faint)' }}>{darkText}</div>
+          {hud.phase === 'run' && <div className="num" style={{ position: 'absolute', right: 24, top: 20, fontSize: 28, color: '#4A525B' }}>{mmss(hud.elapsed)}</div>}
+          <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()} style={{ position: 'absolute', left: 16, top: 'max(16px, env(safe-area-inset-top))', opacity: 0.4 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
         </div>
       )}
 
