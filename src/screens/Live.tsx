@@ -77,6 +77,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let firstSaid = false
     let lastPresent = true
     let lastMoving = false
+    let lastNextSay = 0 // 次に何をすればいいかを最後に言った時刻
 
     const setPhase = (p: Phase) => {
       phase = p
@@ -263,10 +264,14 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           notReadySince = null
           okSince ??= t
           if (t - okSince > 1.5 && talk) {
-            say(PHRASES.placeOk, t)
+            // 次に何をすればいいかまで、続けて声で言う（画面は見えない前提）
+            lastNextSay = t
             if (baseline) {
+              say(PHRASES.readyRun, t)
               setPhase('run')
             } else {
+              say(PHRASES.placeOk, t)
+              say(PHRASES.baseStand, t)
               setPhase('baseline')
               stillSince = null
             }
@@ -304,10 +309,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           stillSince = null
           baseNecks = []
         } else {
-          if (stillSince === null) {
-            stillSince = t
-            say(PHRASES.baseStand, t)
-          }
+          stillSince ??= t
           const el = t - stillSince
           if (el > 4) baseNecks.push(m.neck)
           const left = Math.ceil(7 - el)
@@ -317,9 +319,16 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             baseline = { neck: sorted[Math.floor(sorted.length / 2)], createdAt: Date.now() }
             saveBaseline(baseline)
             say(PHRASES.baseDone, t)
+            lastNextSay = t
             setPhase('run')
           }
         }
+      }
+
+      // 基準がなかなか取れないときは、立ち方をもう一度言う
+      if (phase === 'baseline' && t - lastNextSay > 12) {
+        lastNextSay = t
+        say(PHRASES.baseStand, t)
       }
 
       // 走行中
@@ -338,6 +347,11 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         }
         if (baseline && !coachRef.current) coachRef.current = new Coach(baseline)
         const coach = coachRef.current
+        // 走り出すのを待っている間は、黙ったままにしない
+        if (coach && coach.state === 'waiting' && t - lastNextSay > 15) {
+          lastNextSay = t
+          say(PHRASES.waitRun, t)
+        }
         if (coach) {
           handle(coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined }), t)
           lastSample = coach.samples[coach.samples.length - 1]
@@ -386,7 +400,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const dark = screenMode === 'dark' && hud.phase === 'run' && hud.state !== 'paused'
+  // 真っ暗にするのは走っている間だけ。走り出す前は「走り出すと始まります」を見せる
+  const dark = screenMode === 'dark' && hud.phase === 'run' && hud.state === 'running'
   const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
   const last = hud.last
 
