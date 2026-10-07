@@ -172,6 +172,19 @@ const absent = (coach: Coach, from: number, sec: number) => {
   return speak
 }
 
+describe('前かがみ', () => {
+  it('上体が倒れたら声をかけ、起こしたらほめる。一時停止を切っていれば、止まっても走り続ける扱い', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 }, { pause: false })
+    feedSparse(coach, 0, 60, good)
+    const a = feedSparse(coach, 60, 10, { ...good, trunk: 20 })
+    expect(a.speak.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
+    const b = feedSparse(coach, 70, 12, { ...good, trunk: 11 })
+    expect(b.speak.some((x) => x.includes('いい感じです'))).toBe(true)
+    feed(coach, 82, 10, good, false)
+    expect(coach.state).toBe('running')
+  })
+})
+
 describe('省電力（間引いて見る）', () => {
   it('安定している間は3割ほどしか骨格を取らず、それでも崩れたら声をかける', () => {
     const coach = new Coach({ neck: 2, createdAt: 0 })

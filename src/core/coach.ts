@@ -20,10 +20,11 @@ const PAUSE_AFTER = 3 // 3秒止まったら一時停止
 const LOST_SAY = 5 // 走っている途中で5秒いなくなったら、戻るよう声をかける
 const LOST_END = 30 // それでも30秒戻らなければ終わり
 const STOP_END = 10 // 止まってから画面を出たときは、10秒で終わり
-const CUE_WINDOW = 10
+const CUE_WINDOW = 6 // 6秒続いた崩れに声をかける
 const CUE_COOLDOWN = 30
 const CUE_GAP = 12
-const RECOVER_WITHIN = 15
+const RECOVER_WITHIN = 25 // 声をかけてから25秒以内に直ればほめる（声そのものに5秒ほどかかる）
+const RECOVER_SEC = 3 // 声をかけたあと、3秒続けて線より内側に戻れば「直った」
 const HIP_REF_FROM = 30 // 腰の高さの基準は、走り始めて30秒〜3分の平均
 const HIP_REF_TO = 180
 const QUIET_FIRST = 300
@@ -78,8 +79,11 @@ export class Coach {
   private lastStrideAt = -1e9
 
   private baseline: Baseline
-  constructor(baseline: Baseline) {
+  private pauseOn: boolean
+  // pause: 止まったら一時停止するか（検証中は切っておく）
+  constructor(baseline: Baseline, opts: { pause?: boolean } = {}) {
     this.baseline = baseline
+    this.pauseOn = opts.pause ?? true
   }
 
   update(inp: CoachInput): CoachEvent[] {
@@ -119,7 +123,7 @@ export class Coach {
       this.state = 'running'
       this.everRan = true
       ev.push({ type: 'state', state: 'running' })
-    } else if (this.state === 'running' && this.stillSince !== null && inp.t - this.stillSince >= PAUSE_AFTER) {
+    } else if (this.pauseOn && this.state === 'running' && this.stillSince !== null && inp.t - this.stillSince >= PAUSE_AFTER) {
       this.state = 'paused'
       this.bucket = []
       ev.push({ type: 'state', state: 'paused' }, { type: 'speak', text: SAY.pause })
@@ -223,8 +227,11 @@ export class Coach {
 
     // 直ったらほめる
     if (this.pending && t - this.pending.t <= RECOVER_WITHIN) {
-      const last5 = this.within(5)
-      if (last5.length >= 3 && mean(last5.map((x) => this.value(x, this.pending!.item))) <= LIMITS[this.pending.item].full) {
+      // 直ったかの線は、満点の範囲と声をかける線の真ん中（満点まで戻らなくても、はっきり戻ればほめる）
+      const p = this.pending
+      const back = this.within(RECOVER_SEC).filter((x) => x.t > p.t)
+      const line = (LIMITS[p.item].full + LIMITS[p.item].cue) / 2
+      if (back.length >= 2 && t - p.t >= RECOVER_SEC && back.every((x) => this.value(x, p.item) <= line)) {
         this.say(ev, t, 'recover', RECOVER[this.cues.length % RECOVER.length])
         this.pending = null
         return ev

@@ -368,7 +368,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             baseline = { neck: sorted[Math.floor(sorted.length * 0.25)], createdAt: Date.now() }
           }
         }
-        if (baseline && !coachRef.current) coachRef.current = new Coach(baseline)
+        if (baseline && !coachRef.current) coachRef.current = new Coach(baseline, { pause: false }) // 検証中は一時停止を切る
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない
         if (coach && coach.state === 'waiting' && t - lastNextSay > 15) {
