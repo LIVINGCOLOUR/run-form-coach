@@ -1,5 +1,7 @@
 # ランフォームコーチ（RUN FORM COACH）
 
+▶ 紹介動画：https://run-form-coach.vercel.app/promo/
+
 トレッドミルの横に置いたスマホ1台で走りを見続け、外から見て分かるフォームの崩れ（猫背・前傾）を、その場で声で直すウェブアプリ。
 
 - 骨格の推定：MediaPipe Pose Landmarker（端末の中で動かす。映像は保存も送信もしない）
@@ -18,7 +20,9 @@ npm test        # 計測・判定・声かけの流れのテスト
 
 ## 紹介動画（video/）
 
-書き出した動画は [リリース promo-2026-10-07](https://github.com/LIVINGCOLOUR/run-form-coach/releases/tag/promo-2026-10-07) に置いてある（構想を含む）。
+**紹介動画（だれでも見られる）：https://run-form-coach.vercel.app/promo/** （構想を含む）
+
+書き出した動画の元ファイルは [リリース promo-2026-10-07](https://github.com/LIVINGCOLOUR/run-form-coach/releases/tag/promo-2026-10-07) にもある。公開ページの動画は `public/promo/` に置いている。
 
 Remotion と SVG で作る60秒・縦（1080×1920）の紹介動画。ナレーションは Vertex AI の Gemini TTS、音楽は Lyria 3 Pro（Vertex AI には Lyria 3.5 がないため）。
 骨格の絵は、アプリと同じ `src/ui/figure.ts` で描く。
