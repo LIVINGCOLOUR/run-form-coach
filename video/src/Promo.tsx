@@ -1,28 +1,30 @@
 import React from 'react'
 import type { ComponentType } from 'react'
 import { AbsoluteFill, Audio, interpolate, Sequence, staticFile } from 'remotion'
-import { Caption, SEnd, SHabit, SHook, SInsight, SProblem, SSolution } from './Scenes'
+import { Caption, SInsight, SSolution } from './Scenes'
+import { SEnd2, SHabits, SLearn, SRelapse, STime } from './Scenes3'
 import { SExample, SPoints } from './Scenes2'
 import { TIMELINE, type Item, type SceneKey } from './timeline'
 import { C, FPS } from './theme'
 
 const SCENES: Record<SceneKey, ComponentType<{ items: Item[] }>> = {
-  hook: SHook,
-  problem: SProblem,
+  habits: SHabits,
+  relapse: SRelapse,
   solution: SSolution,
   points: SPoints,
   over: (p) => <SExample kind="over" {...p} />,
-  hip: (p) => <SExample kind="hip" {...p} />,
   head: (p) => <SExample kind="head" {...p} />,
+  hip: (p) => <SExample kind="hip" {...p} />,
   lr: (p) => <SExample kind="lr" {...p} />,
   good: (p) => <SExample kind="good" {...p} />,
-  habit: SHabit,
+  learn: SLearn,
   insight: SInsight,
-  end: SEnd,
+  time: STime,
+  end: SEnd2,
 }
 
 export const TOTAL = TIMELINE.total
-const MUSIC_AT = Math.round(5.2 * FPS)
+const MUSIC_AT = Math.round(0.2 * FPS)
 
 export function Promo() {
   return (
@@ -49,7 +51,7 @@ export function Promo() {
 
       <Sequence from={MUSIC_AT}>
         <Audio
-          src={staticFile('music2.mp3')}
+          src={staticFile('music3.mp3')}
           volume={(f) => {
             const t = f + MUSIC_AT
             // 声の間は音楽を下げる

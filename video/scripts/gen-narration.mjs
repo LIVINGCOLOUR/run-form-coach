@@ -10,7 +10,7 @@ const root = new URL('..', import.meta.url).pathname
 const project = process.env.VERTEX_PROJECT || execFileSync('gcloud', ['config', 'get-value', 'project']).toString().trim()
 const token = execFileSync('gcloud', ['auth', 'print-access-token']).toString().trim()
 
-const NARRATOR = { voice: 'Algieba', style: 'スポーツの映像のナレーターとして、落ち着いて力強く、かっこよく。言葉の間をたっぷりとって、ゆっくり語る' }
+const NARRATOR = { voice: 'Autonoe', style: '20代の明るく爽やかな女性ナレーターとして、前向きに、はずむように。でも聞き取りやすく、ていねいに' }
 const COACH = { voice: 'Sulafat', style: '日本語のランニングコーチとして、温かく落ち着いた大人の女性の声で、はっきり自然に話してください。' }
 
 async function tts(text, { voice, style }, m4a) {

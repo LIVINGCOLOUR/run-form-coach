@@ -145,9 +145,9 @@ export function SSolution(_: { items?: unknown }) {
         </div>
         <div style={{ fontFamily: num, fontWeight: 700, fontSize: 122, letterSpacing: 14, opacity: s, transform: `translateY(${(1 - s) * 30}px)` }}>RUN FORM COACH</div>
         <div style={{ fontSize: 52, fontWeight: 700, textAlign: 'center', lineHeight: 1.5, ...fadeUp(f, 60) }}>
-          スマホ1台で、
+          走っている間ずっと、
           <br />
-          あなたの走りを<span style={{ color: C.accent }}>見続ける</span>AIコーチ。
+          あなたのフォームを<span style={{ color: C.accent }}>見守る</span>コーチ。
         </div>
       </div>
       <div style={{ position: 'absolute', left: 90, right: 90, top: 1010, height: 480, ...fadeUp(f, 130) }}>

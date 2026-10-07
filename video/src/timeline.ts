@@ -2,31 +2,35 @@ import narration from './narration.json'
 import { APP_LINES, LINES } from './lines.mjs'
 import { FPS } from './theme'
 
-export type SceneKey = 'hook' | 'problem' | 'solution' | 'points' | 'over' | 'hip' | 'head' | 'lr' | 'good' | 'habit' | 'insight' | 'end'
+export type SceneKey = 'habits' | 'relapse' | 'solution' | 'points' | 'over' | 'head' | 'hip' | 'lr' | 'good' | 'learn' | 'insight' | 'time' | 'end'
 type Id = keyof typeof narration
 
 // 話す順番と、どの場面で話すか
 const ORDER: [Id, SceneKey][] = [
-  ['n1', 'hook'],
-  ['n2', 'problem'],
-  ['n3', 'solution'],
-  ['n4', 'points'],
-  ['n5', 'points'],
+  ['n1', 'habits'],
+  ['n2', 'habits'],
+  ['n3', 'relapse'],
+  ['n4', 'relapse'],
+  ['n5', 'solution'],
   ['n6', 'points'],
   ['n7', 'points'],
-  ['n8', 'over'],
+  ['n8', 'points'],
+  ['n9', 'points'],
+  ['n10', 'over'],
   ['aOver', 'over'],
-  ['n9', 'hip'],
-  ['aHip', 'hip'],
-  ['n10', 'head'],
+  ['n11', 'head'],
   ['aHead', 'head'],
-  ['n11', 'lr'],
+  ['n12', 'hip'],
+  ['aHip', 'hip'],
+  ['n13', 'lr'],
   ['aLR', 'lr'],
-  ['n12', 'good'],
+  ['n14', 'good'],
   ['aGood', 'good'],
-  ['n13', 'habit'],
-  ['n14', 'insight'],
-  ['n15', 'end'],
+  ['n15', 'learn'],
+  ['n16', 'learn'],
+  ['n17', 'insight'],
+  ['n18', 'time'],
+  ['n19', 'end'],
 ]
 
 export interface Item {
