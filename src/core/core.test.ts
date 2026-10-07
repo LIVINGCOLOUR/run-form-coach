@@ -65,6 +65,35 @@ describe('点数', () => {
   })
 })
 
+// その場で走る：足首を前後に開かず、左右の膝と足首を交互に持ち上げる（stepsPerSec 歩／秒、lift は持ち上げる高さ）
+function inPlace(stepsPerSec: number, lift: number, sec = 3, fps = 15) {
+  const base = demoStride()[0]
+  const md = new MotionDetector()
+  let moving = false
+  for (let i = 0; i < sec * fps; i++) {
+    const t = i / fps
+    const ph = Math.sin(Math.PI * stepsPerSec * t)
+    const up = (side: 'l' | 'r') => lift * Math.max(0, side === 'l' ? ph : -ph)
+    const f = base.map((p) => ({ ...p }))
+    for (const [i2, side, k] of [[25, 'l', 0.6], [27, 'l', 1], [26, 'r', 0.6], [28, 'r', 1]] as const) {
+      f[i2] = { ...f[i2], x: base[i2 === 25 || i2 === 26 ? 25 : 27].x, y: base[i2 === 25 || i2 === 26 ? 25 : 27].y - up(side) * k }
+    }
+    moving = md.update(f, t)
+  }
+  return moving
+}
+
+describe('その場で走る・コンパクトなフォーム', () => {
+  it('脚を前後に開かなくても、左右が交互に上がるリズムが毎秒2歩以上なら走っている', () => {
+    expect(inPlace(2.8, 25)).toBe(true)
+    expect(inPlace(2.8, 12)).toBe(true) // 小さく持ち上げるだけでも
+  })
+  it('ゆっくり足踏みする、ほとんど持ち上げないときは走っていない', () => {
+    expect(inPlace(1.2, 25)).toBe(false)
+    expect(inPlace(2.8, 1)).toBe(false)
+  })
+})
+
 describe('全身が見えているか', () => {
   it('真横から撮って奥側の手足が隠れていても、手前側が見えていれば全身が入っている', () => {
     const f = demoStride()[0].map((p, i) => ([12, 24, 26, 28, 8].includes(i) ? { ...p, v: 0.2 } : p))
@@ -88,7 +117,8 @@ describe('走っているかの検知', () => {
     const run = demoStride()
     const md = new MotionDetector()
     let moving = false
-    for (let i = 0; i < 90; i++) moving = md.update(run[i % run.length], i / 30)
+    // 1周36コマを0.72秒で（毎分約170歩）
+    for (let i = 0; i < 100; i++) moving = md.update(run[i % run.length], i / 50)
     expect(moving).toBe(true)
     const still = new MotionDetector()
     let m2 = true
