@@ -22,8 +22,8 @@ const POINTS: { label: string; at: [number, number]; box: [number, number]; side
   { label: '頭の位置', at: [190, 82], box: [R, 650], side: 'r' },
   { label: '上体の傾き', at: [182, 200], box: [R, 850], side: 'r' },
   { label: '腕振り', at: [222, 200], box: [R, 1030], side: 'r' },
-  { label: '着地の位置', at: [232, 432], box: [R, 1420], side: 'r' },
-  { label: '接地時間', at: [180, 446], box: [390, 1580], side: 'b' },
+  { label: '着地の位置', at: [204, 424], box: [R, 1420], side: 'r' },
+  { label: '接地時間', at: [180, 434], box: [390, 1580], side: 'b' },
   { label: 'ピッチ', at: [120, 390], box: [40, 1400], side: 'l' },
   { label: '腰の高さ', at: [170, 262], box: [40, 1040], side: 'l' },
   { label: '上下動', at: [160, 238], box: [40, 860], side: 'l' },
@@ -130,6 +130,7 @@ export function SExample({ kind, items }: { kind: Kind; items: Item[] }) {
             lean={kind === 'head' || kind === 'good' ? 12 - 5 * fix : 9}
             head={kind === 'head' ? 12 : kind === 'good' ? 12 * (1 - fix) : 1}
             drop={kind === 'hip' ? 16 : 0}
+            over={kind === 'over' ? 1 - fix : 0}
             upper={upper}
             legColor={legColor}
             transform="translate(330,40) scale(1.06)"

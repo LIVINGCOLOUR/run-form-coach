@@ -42,6 +42,7 @@ export function SHabits({ items }: { items: Item[] }) {
           lean={8 + 4 * head}
           head={11 * head}
           drop={14 * hip}
+          over={leg}
           upper={interpolateColors(head, [0, 1], [C.limb, C.warn])}
           legColor={interpolateColors(leg, [0, 1], [C.limb, C.warn])}
           transform="translate(150,560) scale(2)"

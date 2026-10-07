@@ -41,7 +41,7 @@ export function Mannequin({ frames, ghost, ghostColor = 'var(--accent)', upperCo
   return (
     <svg width={width} height={height} viewBox={viewBox} aria-hidden="true">
       <g transform={transform}>
-        <path d="M30 446H330" stroke="#262C33" strokeWidth={3} />
+        <path d="M30 434H330" stroke="#262C33" strokeWidth={3} />
         <g stroke="#2E353D" strokeLinecap="round" strokeLinejoin="round" fill="none">
           <path d={p.legBack} strokeWidth={20} />
           <path d={p.armBack} strokeWidth={16} />

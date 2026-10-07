@@ -14,6 +14,7 @@ export function Figure({
   ghostColor = C.accent,
   drop,
   legColor = C.limb,
+  over = 0,
 }: {
   frame: number
   lean: number
@@ -24,15 +25,16 @@ export function Figure({
   ghostColor?: string
   drop?: number
   legColor?: string
+  over?: number
 }) {
-  const strides = useMemo(() => demoStride({ lean, head, drop: drop ?? (lean > 12 ? 6 : 0) }), [lean, head, drop])
+  const strides = useMemo(() => demoStride({ lean, head, drop: drop ?? (lean > 12 ? 6 : 0), over }), [lean, head, drop, over])
   const ghostStrides = useMemo(() => (ghost ? demoStride({ lean: ghost.lean, head: ghost.head, drop: 0 }) : null), [ghost])
   const i = frame % strides.length
   const p = paths(strides[i], true)
   const g = ghostStrides ? paths(ghostStrides[i], true) : null
   return (
     <g transform={transform}>
-      <path d="M20 446H340" stroke={C.line} strokeWidth={3} />
+      <path d="M20 434H340" stroke={C.line} strokeWidth={3} />
       <g stroke={C.limbBack} strokeLinecap="round" strokeLinejoin="round" fill="none">
         <path d={p.legBack} strokeWidth={20} />
         <path d={p.armBack} strokeWidth={16} />
