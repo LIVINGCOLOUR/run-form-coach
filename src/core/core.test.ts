@@ -70,6 +70,13 @@ describe('全身が見えているか', () => {
     const f = demoStride()[0].map((p, i) => ([12, 24, 26, 28, 8].includes(i) ? { ...p, v: 0.2 } : p))
     expect(bodyVisible(f)).toBe(true)
   })
+  it('並び方がおかしいもの（人の見間違い）や、小さすぎるものは入っていない', () => {
+    const f = demoStride()[0]
+    const upside = f.map((p) => ({ ...p, y: 600 - p.y }))
+    expect(bodyVisible(upside)).toBe(false)
+    expect(bodyVisible(f, 0.5, 300)).toBe(true)
+    expect(bodyVisible(f, 0.5, 3000)).toBe(false)
+  })
   it('足首が両方見えなければ、入っていない', () => {
     const f = demoStride()[0].map((p, i) => ([27, 28].includes(i) ? { ...p, v: 0.2 } : p))
     expect(bodyVisible(f)).toBe(false)

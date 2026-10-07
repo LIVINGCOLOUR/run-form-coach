@@ -24,6 +24,21 @@ export class MotionDetector {
 }
 
 // 全身が見えているか
-export function bodyVisible(frame: Frame, minV = 0.5): boolean {
-  return HEAD_POINTS.some((i) => frame[i].v >= minV) && KEY_PAIRS.every(([a, b]) => Math.max(frame[a].v, frame[b].v) >= minV)
+// 人以外のもの（床や家具）を人と見間違えたものは、並び方と大きさで落とす
+export function bodyVisible(frame: Frame, minV = 0.5, height?: number): boolean {
+  if (!(HEAD_POINTS.some((i) => frame[i].v >= minV) && KEY_PAIRS.every(([a, b]) => Math.max(frame[a].v, frame[b].v) >= minV))) return false
+  return plausibleBody(frame, height)
+}
+
+// 上から 頭 → 肩 → 腰 → 膝 → 足首 の順に並び、画面の高さの3割以上を占めているか
+// （足首は、蹴り上げた脚が膝より上に来るので、低い方＝接地している側で見る）
+export function plausibleBody(frame: Frame, height?: number): boolean {
+  const y = (a: number, b: number) => (frame[a].y + frame[b].y) / 2
+  const head = frame[L.nose].y
+  const shoulder = y(L.leftShoulder, L.rightShoulder)
+  const hip = y(L.leftHip, L.rightHip)
+  const knee = y(L.leftKnee, L.rightKnee)
+  const ankle = Math.max(frame[L.leftAnkle].y, frame[L.rightAnkle].y)
+  if (!(head < shoulder && shoulder < hip && hip < knee && knee < ankle)) return false
+  return height === undefined || ankle - head >= height * 0.3
 }

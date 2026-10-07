@@ -5,7 +5,7 @@ import { facing, measure, rotateFrame, sideOffDeg } from '../core/geometry'
 import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
 import { overCue } from '../core/scoring'
-import { gravityAvailable, gravityRoll } from '../core/gravity'
+import { gravityAvailable, gravityRoll, phoneStillSec } from '../core/gravity'
 import { capBaseline, loadBaselines, loadSettings, saveBaseline, saveSession } from '../core/storage'
 import { preloadVoice, speak, stopVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
@@ -239,7 +239,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
 
     const onTick = (raw: Frame | null, t: number, w: number, h: number) => {
       const frame = raw && !file && gravityAvailable() ? rotateFrame(raw, gravityRoll(), w / 2, h / 2) : raw
-      const visible = !!frame && bodyVisible(frame)
+      const visible = !!frame && bodyVisible(frame, 0.5, h)
       const m: Measure | undefined = visible ? measure(frame!) : undefined
       const sideDeg = frame ? sideOffDeg(frame) : 90
       if (phase === 'setup' && t - lastLightAt > 1) {
@@ -251,13 +251,16 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       // 進む条件は、画面に出している3つ（全身・真横・明るさ）だけ。真ん中に寄っているかなどは声で案内するだけにする
       if (phase === 'setup') {
         // 真横の判定は、骨格の推定で両肩・両腰が少し開いて見えるため、35°までは通す
-        const ready = visible && lastLight && sideDeg <= 35
-        const hint = guide(visible ? frame : null, w, h, sideDeg, lastLight)
+        // 手に持っている間は判定しない（動く映像を人と見間違えることがある）。置いて1.5秒静止してから見る
+        const placed = !!file || phoneStillSec() > 1.5
+        const seen = visible && placed
+        const ready = seen && lastLight && sideDeg <= 35
+        const hint = placed ? guide(visible ? frame : null, w, h, sideDeg, lastLight) : null
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 開いてすぐは話さない（スマホを置いて離れるまでの間）
         setupAt ??= t
         const talk = t - setupAt >= 2
-        if (visible) {
+        if (seen) {
           visibleSince ??= t
           hiddenSince = null
         } else {
@@ -289,16 +292,18 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             lastGuide = t
           }
           let msg = lastProblem ?? PHRASES.guideNone
-          if (!firstSaid && msg === PHRASES.guideNone) msg = PHRASES.placeStart
+          if (!placed || (!firstSaid && msg === PHRASES.guideNone)) msg = PHRASES.placeStart
           if (msg !== hintMsg) {
             hintMsg = msg
             hintSince = t
           }
           // 同じ案内が1.2秒続いてから言う。変わったら言い直し、同じなら6秒ごとに繰り返す
-          if (talk && t - hintSince >= 1.2 && t - lastGuide > (msg !== lastSaid ? 1.5 : 6)) {
+          // 「置いてください」のあとの「まだ体が映っていません」は、同じ案内として扱う
+          const same = msg === lastSaid || (msg === PHRASES.guideNone && lastSaid === PHRASES.placeStart)
+          if (talk && t - hintSince >= 1.2 && t - lastGuide > (same ? 6 : 1.5)) {
             say(msg, t)
             lastGuide = t
-            lastSaid = msg === PHRASES.placeStart ? PHRASES.guideNone : msg
+            lastSaid = msg
             firstSaid = true
           }
         }
