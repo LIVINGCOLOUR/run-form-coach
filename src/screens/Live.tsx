@@ -24,6 +24,7 @@ interface Hud {
   checks: { body: boolean; side: boolean; sideDeg: number; light: boolean }
   countdown?: number
   error?: string
+  problem?: string | null // 置き方で、いま足りないこと（null ならそろっている）
 }
 
 const ITEM_TEXT: Record<ItemKey, string> = { head: '頭が前に出ています', trunk: '上体が倒れすぎています', body: '体が倒れすぎています', hip: '腰が落ちています' }
@@ -34,6 +35,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
   const tapsRef = useRef<number[]>([])
   const coachRef = useRef<Coach | null>(null)
   const finishRef = useRef<() => void>(() => {})
+  // 「このまま次へ」を押したら、真横・明るさがそろっていなくても進む（全身が入っていることは必要）
+  const skipRef = useRef(false)
   const screenMode = loadSettings().screen
   // 前面カメラは鏡のように左右反転して見せる（骨格の計算は反転しない元の映像で行う）
   const mirror = !file && loadSettings().camera === 'front'
@@ -64,6 +67,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let lastSample: Sample | undefined
     let lastLight = true
     let lastLightAt = 0
+    let lastProblem: string | null = PHRASES.placeStart
 
     const setPhase = (p: Phase) => {
       phase = p
@@ -201,7 +205,12 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
 
       // 置き方の案内
       if (phase === 'setup') {
-        const problem = guide(visible ? frame : null, w, h, sideDeg, lastLight)
+        let problem = guide(visible ? frame : null, w, h, sideDeg, lastLight)
+        lastProblem = problem
+        if (skipRef.current && visible) {
+          problem = null
+          okSince = t - 2
+        }
         if (problem) {
           okSince = null
           if (t - lastGuide > 5) {
@@ -291,6 +300,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           scores: coach ? coach.samples.slice(-600).map((s) => s.score) : [],
           caption: t - captionAt < 6 ? caption : '',
           checks: { body: visible, side: sideDeg <= 15, sideDeg: Math.round(sideDeg), light: lastLight },
+          problem: lastProblem,
         }))
       }
     }
@@ -367,29 +377,39 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           )}
 
           {hud.phase === 'setup' && (
-            <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 230, padding: 20, background: 'rgba(10,12,14,0.92)', borderLeft: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ fontSize: 13 }} className="muted">置き方チェック</div>
-              <Check ok={hud.checks.body} label="全身が入っている" />
-              <Check ok={hud.checks.side} label="真横から" sub={hud.checks.side ? undefined : `ずれ ${hud.checks.sideDeg}°`} />
-              <Check ok={hud.checks.light} label="明るさ" />
-              <div style={{ flexGrow: 1 }} />
-              <div style={{ fontSize: 12 }} className="muted">スマホの傾き：{gravityAvailable() ? `${gravityRoll().toFixed(1)}° · 自動補正` : '補正なし'}</div>
+            <div style={{ position: 'absolute', left: 12, right: 12, bottom: 'max(12px, env(safe-area-inset-bottom))', padding: '12px 14px', borderRadius: 18, background: 'rgba(10,12,14,0.82)', border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Chip ok={hud.checks.body} label="全身" />
+                <Chip ok={hud.checks.side} label={hud.checks.side ? '真横' : `真横（ずれ ${hud.checks.sideDeg}°）`} />
+                <Chip ok={hud.checks.light} label="明るさ" />
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.45 }}>{hud.problem ?? 'そろいました。このまま待つと次へ進みます。'}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flexGrow: 1, fontSize: 12 }} className="muted">
+                  3つそろうと自動で次へ進みます
+                </div>
+                <button
+                  disabled={!hud.checks.body}
+                  onClick={() => (skipRef.current = true)}
+                  style={{ height: 44, padding: '0 18px', borderRadius: 22, border: 0, background: hud.checks.body ? 'var(--accent)' : 'var(--line)', color: hud.checks.body ? '#0A0C0E' : 'var(--faint)', fontWeight: 900, fontSize: 15 }}
+                >
+                  このまま次へ
+                </button>
+              </div>
             </div>
           )}
 
           {hud.phase === 'baseline' && (
-            <div style={{ position: 'absolute', right: 40, top: '20%', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div className="num" style={{ fontSize: 160, color: 'var(--accent)' }}>{Math.max(1, Math.min(3, hud.countdown ?? 3))}</div>
-              <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.35 }}>
-                そのまま。
-                <br />
-                上から吊られるように。
+            <div style={{ position: 'absolute', left: 12, right: 12, top: 'max(70px, calc(env(safe-area-inset-top) + 60px))', padding: '12px 16px', borderRadius: 18, background: 'rgba(10,12,14,0.78)', display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div className="num" style={{ fontSize: 72, color: 'var(--accent)', width: 50, textAlign: 'center' }}>{Math.max(1, Math.min(3, hud.countdown ?? 3))}</div>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.4 }}>上から吊られるように、まっすぐ立って3秒止まる</div>
+                <div style={{ fontSize: 12 }} className="muted">初回だけ。写真は残さず、骨格の角度だけを使います</div>
               </div>
-              <div style={{ fontSize: 13 }} className="muted">写真は残さず、骨格の角度だけを使います</div>
             </div>
           )}
 
-          {hud.caption && (
+          {hud.caption && hud.phase !== 'setup' && (
             <div style={{ position: 'absolute', left: '50%', bottom: 90, transform: 'translateX(-50%)', maxWidth: '90%' }}>
               <div className="pill">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7" /></svg>
@@ -433,16 +453,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
   )
 }
 
-function Check({ ok, label, sub }: { ok: boolean; label: string; sub?: string }) {
+function Chip({ ok, label }: { ok: boolean; label: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-      <div style={{ width: 28, height: 28, borderRadius: 14, background: ok ? 'var(--accent)' : 'transparent', border: ok ? 0 : '2px solid var(--warn)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        {ok && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0A0C0E" strokeWidth="3"><path d="M5 12l5 5 9-10" /></svg>}
-      </div>
-      <div>
-        <div style={{ fontSize: 15, fontWeight: 700 }}>{label}</div>
-        {sub && <div style={{ fontSize: 12, color: 'var(--warn)' }}>{sub}</div>}
-      </div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 16, background: ok ? 'rgba(200,240,60,0.16)' : 'rgba(255,138,61,0.16)', border: `1px solid ${ok ? 'var(--accent)' : 'var(--warn)'}`, fontSize: 13, fontWeight: 700, color: ok ? 'var(--accent)' : 'var(--warn)' }}>
+      {ok ? '✓' : '・'} {label}
     </div>
   )
 }
