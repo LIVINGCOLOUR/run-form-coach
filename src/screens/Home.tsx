@@ -213,6 +213,10 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
           <button onClick={() => exportLog().then((ok) => ok || alert('まだ記録がありません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
             直近の記録を書き出す
           </button>
+          {' · '}
+          <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>
+            フォームの見方
+          </a>
         </div>
         <input
           ref={fileRef}

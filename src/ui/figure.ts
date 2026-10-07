@@ -1,6 +1,7 @@
 import type { Frame, ItemKey, Pt, Stride } from '../core/types'
 import { L } from '../core/landmarks'
 import { legLength, mid } from '../core/geometry'
+import reference from '../core/reference.json'
 
 // 描画用の座標系：腰の平均が (170, 262)、脚の長さが 164、右向き
 const CX = 170
@@ -102,28 +103,22 @@ export function paths(f: Frame, nearLeft: boolean): Paths {
   }
 }
 
-// 記録がまだないときの見本：計算で作る1歩（右向き、近い側は左）
+// 記録がまだないときの見本：研究データから作る1歩（右向き、近い側は左）
 //
-// 研究の値（Novacheck 1998「The biomechanics of running」ほか）をもとに、関節の角度を時間で決めて骨格を組む
-//   ピッチは毎分180歩。接地は1周の0〜31%（1歩あたり約0.21秒）、両足が浮いている時間が1歩あたり約0.13秒
-//     （Novacheck の 3.2m/s は離地39%で、ゆっくりのジョグ。軽快に走る市民ランナーに合わせて短くした）
-//   左右は半周ずれる
-//   太もも（鉛直からの角度、前が正）：接地 +24°、接地の真ん中で足首が腰の真下に来る +23°、離地で一番後ろ −20°、
-//     離地のあとはすぐ前へ戻し（脚を後ろに流さない）、振り出しで一番前 +36°、接地の前に少し戻してから着く
-//   膝の曲がり：接地 20°、接地中に一番曲がって 46°（研究では約45°。ここで沈んで、離地で伸び上がる）、離地 14°（地面を押し切って伸びる）、
-//     離地のあとすぐ太ももを前に戻しながら膝を 118° までたたむ（踵がお尻の下を通り、脚が後ろに残らない）、接地の直前 16°
-//   すね：接地の瞬間はほぼ鉛直（太もも 24° − 膝 20° ＝ 前に4°）。15°以上前に倒れるとオーバーストライド
-//   宙に浮いている間は、放物線で上がって下りる（浮いている時間から重力で高さを決める）
-//   腕：脚と逆（左脚が前のとき左腕は後ろ）。肘は90°前後、後ろに大きく引く
-//   腰の高さ：接地している足が地面に着くように決める（宙に浮いたり沈んだりしない）
-type Key = [number, number][]
-const THIGH: Key = [[0, 24], [0.12, 23], [0.31, -20], [0.4, 10], [0.5, 30], [0.65, 35], [0.82, 38], [0.94, 30]]
-const KNEE: Key = [[0, 20], [0.12, 46], [0.31, 14], [0.4, 90], [0.5, 118], [0.65, 90], [0.82, 40], [0.94, 16]]
-const ANKLE: Key = [[0, -2], [0.12, -24], [0.25, 0], [0.31, 30], [0.45, 10], [0.8, -2]] // 底屈が正（つま先が下がる）。接地中は足裏が地面に沿う
-const STANCE = 0.31
-// 見本の速さ：毎分180歩（1周＝2歩＝0.667秒）。毎秒30コマで再生するので、1周は20コマ
-export const DEMO_SPM = 180
-export const DEMO_FRAMES = 20
+// 関節の角度は、市民ランナーをトレッドミルで測った公開データ（Fukuchi ら 2017、CC BY 4.0）のうち、
+// 着地のすねが鉛直に近い上位4分の1の脚の平均の曲線を使う
+// （scripts/build-reference.mjs で src/core/reference.json を作る。秒速4.0m＝キロ4分10秒、サブ3のペース）
+//   股関節・膝・足首の前後の角度、接地の長さ（1周の割合）、ピッチ はデータどおり
+//   股関節の角度は骨盤から見た太ももの角度なので、骨盤の前傾ぶんを引いて鉛直からの角度にする。
+//     前傾の大きさはデータにないので、接地中に膝が一番曲がる瞬間に足首が腰の真下に来るように決める
+//   データにないもの：腕（脚と逆に振る。肘は90°前後）、上体の傾き（設定の lean）、頭
+//   腰の高さ：接地している足が地面に着くように決め、宙に浮いている間は放物線で上がって下りる
+export const REFERENCE = reference
+const IDEAL = reference.ideal
+const STANCE = IDEAL.stancePct / 100
+export const DEMO_SPM = reference.cadence
+// 毎秒30コマで再生するので、1周（2歩）のコマ数
+export const DEMO_FRAMES = Math.round((30 * 120) / DEMO_SPM)
 const PX_PER_CM = 164 / 90 // 脚の長さ164（描画）を90cm とみなす
 const G = 981 // cm/s²
 const THIGH_LEN = 82
@@ -131,43 +126,38 @@ const SHANK_LEN = 82
 const FOOT_LEN = 18
 const HEEL_LEN = 6
 
-// 周期的になめらかにつなぐ（Catmull-Rom）
-function curve(keys: Key, ph: number): number {
-  const t = ((ph % 1) + 1) % 1
-  const n = keys.length
-  let i = n - 1
-  for (let k = 0; k < n; k++) if (keys[k][0] <= t) i = k
-  const at = (k: number) => {
-    const j = ((k % n) + n) % n
-    const wrap = Math.floor(k / n)
-    return { x: keys[j][0] + wrap, y: keys[j][1] }
-  }
-  const p0 = at(i - 1)
-  const p1 = at(i)
-  const p2 = at(i + 1)
-  const p3 = at(i + 2)
-  const u = (t - p1.x) / (p2.x - p1.x)
-  const m1 = ((p2.y - p0.y) / (p2.x - p0.x)) * (p2.x - p1.x)
-  const m2 = ((p3.y - p1.y) / (p3.x - p1.x)) * (p2.x - p1.x)
-  const u2 = u * u
-  const u3 = u2 * u
-  return (2 * u3 - 3 * u2 + 1) * p1.y + (u3 - 2 * u2 + u) * m1 + (-2 * u3 + 3 * u2) * p2.y + (u3 - u2) * m2
+// 0〜100% の曲線（101点）から、ph（0〜1）の値を取る
+function at(curve: number[], ph: number): number {
+  const t = (((ph % 1) + 1) % 1) * 100
+  const i = Math.floor(t)
+  const u = t - i
+  return curve[i] + (curve[Math.min(100, i + 1)] - curve[i]) * u
 }
+const HIP = IDEAL.hip[0]
+const KNEE = IDEAL.knee[0]
+const ANKLE = IDEAL.ankle[0]
+// 骨盤の前傾ぶん：接地中に膝が一番曲がる瞬間、太もも＝膝の曲がりの半分なら足首が腰の真下
+const MID = KNEE.slice(0, Math.round(IDEAL.stancePct)).reduce((m, v, i, a) => (v > a[m] ? i : m), 0)
+export const PELVIS_TILT = HIP[MID] - KNEE[MID] / 2
+const TH_MIN = Math.min(...HIP) - PELVIS_TILT
+const TH_MAX = Math.max(...HIP) - PELVIS_TILT
 
 // over（0〜1）：オーバーストライドの見本用。接地で太ももを前に出し、膝を伸ばして着く（すねが前に倒れる）
-export function demoStride(cfg: { lean: number; head: number; drop: number; over?: number } = { lean: 7, head: 0, drop: 0 }, n = DEMO_FRAMES): Frame[] {
+// arm：腕振りの大きさ（1 = 見本、0 = 振らない）
+export function demoStride(cfg: { lean: number; head: number; drop: number; over?: number; arm?: number } = { lean: 7, head: 0, drop: 0 }, n = DEMO_FRAMES): Frame[] {
   const R = (d: number) => (d * Math.PI) / 180
   const o = cfg.over ?? 0
-  const THIGH_K: Key = THIGH.map(([p, v]) => [p, p === 0 || p >= 0.9 ? v + 12 * o : v])
-  const KNEE_K: Key = KNEE.map(([p, v]) => [p, p === 0 || p >= 0.9 ? v - 10 * o : v])
+  // オーバーストライドは、接地の前後だけ太ももを前に、膝を伸ばす
+  const nearContact = (ph: number) => Math.max(0, Math.cos(2 * Math.PI * ph)) ** 4
   const down = (o: Pt, len: number, deg: number): Pt => ({ x: o.x + len * Math.sin(R(deg)), y: o.y + len * Math.cos(R(deg)), v: 1 })
   // 腰を (0,0) としたときの片脚の形
   const leg = (ph: number) => {
-    const th = curve(THIGH_K, ph)
-    const sh = th - curve(KNEE_K, ph)
+    const w = o * nearContact(ph)
+    const th = at(HIP, ph) - PELVIS_TILT + 12 * w
+    const sh = th - (at(KNEE, ph) - 10 * w)
     const K = down({ x: 0, y: 0, v: 1 }, THIGH_LEN, th)
     const A = down(K, SHANK_LEN, sh)
-    const footDeg = sh + 90 - curve(ANKLE, ph)
+    const footDeg = sh + 90 + at(ANKLE, ph) // 背屈が正
     return { K, A, F: down(A, FOOT_LEN, footDeg), H: down(A, HEEL_LEN, footDeg + 180) }
   }
   const low = (l: ReturnType<typeof leg>) => Math.max(l.A.y, l.F.y, l.H.y)
@@ -183,7 +173,9 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
     const s = (u - STANCE) / (0.5 - STANCE)
     // 宙に浮いている間は放物線。浮いている時間 T で、真ん中の高さは g·T²/8
     const T = (0.5 - STANCE) * ((2 * 60) / DEMO_SPM)
-    return a + (b - a) * s + ((G * T * T) / 8) * PX_PER_CM * 4 * s * (1 - s)
+    const fly = a + (b - a) * s + ((G * T * T) / 8) * PX_PER_CM * 4 * s * (1 - s)
+    // 浮いている間に、着こうとしている足が先に地面に着かないようにする
+    return Math.max(fly, low(leg(ph)) + 2, low(leg(ph + 0.5)) + 2)
   }
   const depths = Array.from({ length: n }, (_, i) => hipDepth(i / n))
   const meanDepth = depths.reduce((a, b) => a + b, 0) / n
@@ -203,8 +195,9 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
     }
     // 腕は同じ側の脚と逆に振る：太ももが一番後ろ（−12°）で腕は一番前、太ももが一番前（+38°）で腕は一番後ろ
     const arm = (ph: number, v: number) => {
-      const th = curve(THIGH, ph)
-      const a = 18 - ((th + 12) / 50) * 58 // 前 +18° 〜 後ろ −40°
+      const th = at(HIP, ph) - PELVIS_TILT
+      const full = 18 - ((th - TH_MIN) / (TH_MAX - TH_MIN)) * 58 // 前 +18° 〜 後ろ −40°
+      const a = -11 + (full + 11) * (cfg.arm ?? 1)
       const E = down(S, 54, a)
       const elbow = 88 + Math.max(0, -a - 20) * 0.5 // 後ろに引いたときだけ、肘が少し開く
       return { E: { ...E, v }, W: { ...down(E, 44, a + elbow), v } }

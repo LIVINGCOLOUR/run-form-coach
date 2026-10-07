@@ -12,10 +12,10 @@ interface Props {
   viewBox?: string
   width: number
   height: number
-  slow?: number // 1 = 実際の速さ。0.5 = 半分の速さ
+  slow?: number // 1 = 実際の速さ（既定）。0.5 = 半分の速さ。見本を遅く流すと早歩きに見えるので、ふだんは 1
 }
 
-export function useFrameIndex(n: number, slow = 0.5) {
+export function useFrameIndex(n: number, slow = 1) {
   const [i, setI] = useState(0)
   useEffect(() => {
     if (!n) return
@@ -32,7 +32,7 @@ export function useFrameIndex(n: number, slow = 0.5) {
   return i
 }
 
-export function Mannequin({ frames, ghost, ghostColor = 'var(--accent)', upperColor, transform, viewBox = '0 0 350 470', width, height, slow = 0.5 }: Props) {
+export function Mannequin({ frames, ghost, ghostColor = 'var(--accent)', upperColor, transform, viewBox = '0 0 350 470', width, height, slow = 1 }: Props) {
   const i = useFrameIndex(frames.length, slow)
   if (!frames.length) return null
   const near = nearIsLeft(frames)

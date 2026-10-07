@@ -7,7 +7,7 @@ import { capBaseline } from './storage'
 import { standingIssue } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
 import { MotionDetector, bodyVisible } from './motion'
-import { demoStride, strideStats, DEMO_SPM } from '../ui/figure'
+import { demoStride, strideStats, DEMO_SPM, REFERENCE } from '../ui/figure'
 import type { Frame, Measure, Sample, Session } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
@@ -107,17 +107,19 @@ describe('その場で走る・コンパクトなフォーム', () => {
 })
 
 describe('見本の走り', () => {
-  // 基準：市民ランナーの接地時間 200〜300ms（よく走れる人は 200ms 前後）、上下動 6〜9cm、
-  // ピッチ 160〜180歩、着地のすねは鉛直から 10° 未満（15° 以上はオーバーストライド）
-  it('軽快に走る市民ランナーの値に入っている', () => {
+  // 見本は研究データ（Fukuchi ら 2017）の、着地のすねが鉛直に近い上位4分の1の脚の平均
+  it('研究データの接地の長さ・ピッチ・着地のすねの角度になっている', () => {
     const st = strideStats(demoStride({ lean: 7, head: 0, drop: 0 }, 400), 120 / DEMO_SPM)
-    expect(st.cadence).toBe(180)
-    expect(st.contactMs).toBeGreaterThan(190)
-    expect(st.contactMs).toBeLessThan(240)
-    expect(st.flightMsPerStep).toBeGreaterThan(80)
-    expect(st.verticalCm).toBeGreaterThan(6)
+    const stride = 120 / REFERENCE.cadence
+    expect(st.cadence).toBe(REFERENCE.cadence)
+    expect(st.contactMs).toBeCloseTo((REFERENCE.ideal.stancePct / 100) * stride * 1000, -1)
+    expect(st.flightMsPerStep).toBeGreaterThan(80) // 走りなので、両足が浮いている時間がある
+    expect(Math.abs(st.shankAtContact - REFERENCE.ideal.shankAtContact[0])).toBeLessThan(3)
+    expect(st.verticalCm).toBeGreaterThan(4) // 平面の骨格の腰の上下動。実際の重心の上下動（6〜9cm）より小さく出る
     expect(st.verticalCm).toBeLessThan(9)
-    expect(Math.abs(st.shankAtContact)).toBeLessThan(10)
+  })
+  it('見本は、データ全体（ふつうの市民ランナー）より着地のすねが鉛直に近い', () => {
+    expect(REFERENCE.ideal.shankAtContact[0]).toBeLessThan(REFERENCE.normal.shankAtContact[0] - 3)
   })
   it('オーバーストライドの見本は、すねが15°以上前に倒れて着く', () => {
     const st = strideStats(demoStride({ lean: 7, head: 0, drop: 0, over: 1 }, 400), 120 / DEMO_SPM)
