@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Baseline, Frame, ItemKey, Measure, Sample } from '../core/types'
 import { Coach, type CoachState } from '../core/coach'
-import { measure, rotateFrame, sideOffDeg } from '../core/geometry'
+import { facing, measure, rotateFrame, sideOffDeg } from '../core/geometry'
 import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
 import { overCue } from '../core/scoring'
@@ -68,6 +68,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let lastLightAt = 0
     let lastProblem: string | null = PHRASES.placeStart
     let prevVisible = false
+    let lastSaid = ''
     let lastBodySay = -10
 
     const setPhase = (p: Phase) => {
@@ -109,16 +110,21 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       return sum / (d.length / 4)
     }
 
+    // 置き方の案内。背面カメラでは画面が見えないので、本人がどう動けばいいかで言う
     const guide = (frame: Frame | null, w: number, h: number, sideDeg: number, light: boolean): string | null => {
       if (!light) return PHRASES.guideDark
       if (!frame) return PHRASES.guideNone
       const ys = [L.nose, L.leftAnkle, L.rightAnkle].map((i) => frame[i].y)
+      if (Math.min(...ys) < h * 0.04 || Math.max(...ys) > h * 0.98 || frame[L.nose].v < 0.5 || frame[L.leftAnkle].v < 0.5 || frame[L.rightAnkle].v < 0.5) return PHRASES.guideFar
+      if (sideDeg > 15) return PHRASES.guideSide
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
-      if (Math.min(...ys) < h * 0.04 || frame[L.nose].v < 0.5) return PHRASES.guideHead
-      if (Math.max(...ys) > h * 0.98 || frame[L.leftAnkle].v < 0.5 || frame[L.rightAnkle].v < 0.5) return PHRASES.guideFeet
-      if (cx < w * 0.3 || cx > w * 0.7) return mirror ? PHRASES.guideCenter : cx < w * 0.3 ? PHRASES.guideLeft : PHRASES.guideRight
-      if (sideDeg > 15) return PHRASES.guideSide
+      if (cx < w * 0.3 || cx > w * 0.7) {
+        // 画面の真ん中へ向かう向きが、本人の前か後ろかで言い分ける（前面カメラは映像が反転しているので逆）
+        const toCenter = cx < w * 0.3 ? 1 : -1
+        const forward = toCenter === facing(frame) ? !mirror : mirror
+        return forward ? PHRASES.guideForward : PHRASES.guideBack
+      }
       return null
     }
 
@@ -209,7 +215,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (phase === 'setup') {
         const ready = visible && lastLight && sideDeg <= 15
         const hint = guide(visible ? frame : null, w, h, sideDeg, lastLight)
-        lastProblem = ready ? null : hint ?? PHRASES.guideSide
+        lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 離れていて画面が見えなくても分かるよう、全身が入った瞬間に声で知らせる
         if (visible && !prevVisible && t - lastBodySay > 3) {
           say(PHRASES.bodyIn, t)
@@ -233,9 +239,12 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           // 判定が一瞬ゆれただけなら、数えた時間を消さない
           notReadySince ??= t
           if (t - notReadySince > 0.6) okSince = null
-          if (t - lastGuide > 5) {
-            say(lastProblem ?? PHRASES.guideNone, t)
+          const msg = lastProblem ?? PHRASES.guideNone
+          // 案内が変わったら2秒で、同じなら5秒ごとに言う
+          if (t - lastGuide > (msg !== lastSaid ? 2 : 5)) {
+            say(msg, t)
             lastGuide = t
+            lastSaid = msg
           }
         }
       }
