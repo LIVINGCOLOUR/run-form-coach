@@ -35,8 +35,6 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
   const tapsRef = useRef<number[]>([])
   const coachRef = useRef<Coach | null>(null)
   const finishRef = useRef<() => void>(() => {})
-  // 「このまま次へ」を押したら、真横・明るさがそろっていなくても進む（全身が入っていることは必要）
-  const skipRef = useRef(false)
   const screenMode = loadSettings().screen
   // 前面カメラは鏡のように左右反転して見せる（骨格の計算は反転しない元の映像で行う）
   const mirror = !file && loadSettings().camera === 'front'
@@ -56,6 +54,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let baseline: Baseline | null = file ? null : loadBaseline()
     const motion = new MotionDetector()
     let okSince: number | null = null
+    let notReadySince: number | null = null
     let lastGuide = 0
     let stillSince: number | null = null
     let baseNecks: number[] = []
@@ -206,9 +205,11 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       }
 
       // 置き方の案内
+      // 進む条件は、画面に出している3つ（全身・真横・明るさ）だけ。真ん中に寄っているかなどは声で案内するだけにする
       if (phase === 'setup') {
-        let problem = guide(visible ? frame : null, w, h, sideDeg, lastLight)
-        lastProblem = problem
+        const ready = visible && lastLight && sideDeg <= 15
+        const hint = guide(visible ? frame : null, w, h, sideDeg, lastLight)
+        lastProblem = ready ? null : hint ?? PHRASES.guideSide
         // 離れていて画面が見えなくても分かるよう、全身が入った瞬間に声で知らせる
         if (visible && !prevVisible && t - lastBodySay > 3) {
           say(PHRASES.bodyIn, t)
@@ -216,17 +217,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           lastGuide = t
         }
         prevVisible = visible
-        if (skipRef.current && visible) {
-          problem = null
-          okSince = t - 2
-        }
-        if (problem) {
-          okSince = null
-          if (t - lastGuide > 5) {
-            say(problem, t)
-            lastGuide = t
-          }
-        } else {
+        if (ready) {
+          notReadySince = null
           okSince ??= t
           if (t - okSince > 1.5) {
             say(PHRASES.placeOk, t)
@@ -236,6 +228,14 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
               setPhase('baseline')
               stillSince = null
             }
+          }
+        } else {
+          // 判定が一瞬ゆれただけなら、数えた時間を消さない
+          notReadySince ??= t
+          if (t - notReadySince > 0.6) okSince = null
+          if (t - lastGuide > 5) {
+            say(lastProblem ?? PHRASES.guideNone, t)
+            lastGuide = t
           }
         }
       }
@@ -406,15 +406,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
               <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.45 }}>{hud.problem ?? 'そろいました。このまま待つと次へ進みます。'}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ flexGrow: 1, fontSize: 12 }} className="muted">
-                  3つそろうと自動で次へ進みます{cameraLens === 'ultra' ? '（超広角）' : ''}
+                  3つそろうと、触らなくても自動で次へ進みます{cameraLens === 'ultra' ? '（超広角）' : ''}
                 </div>
-                <button
-                  disabled={!hud.checks.body}
-                  onClick={() => (skipRef.current = true)}
-                  style={{ height: 44, padding: '0 18px', borderRadius: 22, border: 0, background: hud.checks.body ? 'var(--accent)' : 'var(--line)', color: hud.checks.body ? '#0A0C0E' : 'var(--faint)', fontWeight: 900, fontSize: 15 }}
-                >
-                  このまま次へ
-                </button>
               </div>
             </div>
           )}
