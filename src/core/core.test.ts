@@ -115,8 +115,9 @@ describe('見本の走り', () => {
     expect(st.contactMs).toBeCloseTo((REFERENCE.ideal.stancePct / 100) * stride * 1000, -1)
     expect(st.flightMsPerStep).toBeGreaterThan(80) // 走りなので、両足が浮いている時間がある
     expect(Math.abs(st.shankAtContact - REFERENCE.ideal.shankAtContact[0])).toBeLessThan(3)
-    expect(st.verticalCm).toBeGreaterThan(4) // 平面の骨格の腰の上下動。実際の重心の上下動（6〜9cm）より小さく出る
-    expect(st.verticalCm).toBeLessThan(9)
+    // 上下動は市民ランナー860人の実測 7.7 ± 1.2cm（Malisoux ら 2023）の範囲。跳ねていないと早歩きに見える
+    expect(st.verticalCm).toBeGreaterThan(6.5)
+    expect(st.verticalCm).toBeLessThan(8.9)
   })
   it('見本は、データ全体（ふつうの市民ランナー）より着地のすねが鉛直に近い', () => {
     expect(REFERENCE.ideal.shankAtContact[0]).toBeLessThan(REFERENCE.normal.shankAtContact[0] - 3)

@@ -123,8 +123,15 @@ const PX_PER_CM = 164 / 90 // 脚の長さ164（描画）を90cm とみなす
 const G = 981 // cm/s²
 const THIGH_LEN = 82
 const SHANK_LEN = 82
-const FOOT_LEN = 18
-const HEEL_LEN = 6
+// 足：足首の関節は足裏から約8cm上にある。かかとは足首の約5cm後ろ、つま先（指の付け根）は約15cm前
+// （足首を地面に置くと、接地中に腰が上下しなくなり、跳ねて見えない）
+const ANKLE_H = 8 * PX_PER_CM
+// 接地の真ん中で、脚の角度から決まる高さよりさらに沈む量。重心の上下動を、市民ランナー860人の実測
+// （7.7 ± 1.2cm、Malisoux ら 2023）に合わせるため。平面の骨格では骨盤や腕の動きがないぶん上下動が小さく出るので、
+// 接地中の膝で補う。膝の曲がりは最大約51°で、データの平均（43°）より標準偏差1.5個ぶん深い
+const SINK = 1.5 * PX_PER_CM
+const HEEL_BACK = 5 * PX_PER_CM
+const TOE_FWD = 15 * PX_PER_CM
 
 // 0〜100% の曲線（101点）から、ph（0〜1）の値を取る
 function at(curve: number[], ph: number): number {
@@ -150,15 +157,16 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
   // オーバーストライドは、接地の前後だけ太ももを前に、膝を伸ばす
   const nearContact = (ph: number) => Math.max(0, Math.cos(2 * Math.PI * ph)) ** 4
   const down = (o: Pt, len: number, deg: number): Pt => ({ x: o.x + len * Math.sin(R(deg)), y: o.y + len * Math.cos(R(deg)), v: 1 })
-  // 腰を (0,0) としたときの片脚の形
-  const leg = (ph: number) => {
+  // 腰を (0,0) としたときの片脚の形。e は接地中に膝をさらに曲げる量（足首の前後位置が変わらないよう、太ももも半分だけ前へ）
+  const leg = (ph: number, e = 0) => {
     const w = o * nearContact(ph)
-    const th = at(HIP, ph) - PELVIS_TILT + 12 * w
-    const sh = th - (at(KNEE, ph) - 10 * w)
+    const th = at(HIP, ph) - PELVIS_TILT + 12 * w + e / 2
+    const sh = th - (at(KNEE, ph) - 10 * w + e)
     const K = down({ x: 0, y: 0, v: 1 }, THIGH_LEN, th)
     const A = down(K, SHANK_LEN, sh)
-    const footDeg = sh + 90 + at(ANKLE, ph) // 背屈が正
-    return { K, A, F: down(A, FOOT_LEN, footDeg), H: down(A, HEEL_LEN, footDeg + 180) }
+    const footDeg = sh + 90 + at(ANKLE, ph) // 足裏の向き（つま先の方向）。背屈が正
+    const sole = down(A, ANKLE_H, footDeg - 90) // 足首の真下の足裏
+    return { K, A, F: down(sole, TOE_FWD, footDeg), H: down(sole, HEEL_BACK, footDeg + 180) }
   }
   const low = (l: ReturnType<typeof leg>) => Math.max(l.A.y, l.F.y, l.H.y)
   // 腰の高さ：接地中の脚の一番低い点が地面になるように。宙に浮いている間は、離地と接地の高さをなめらかにつなぐ
@@ -167,7 +175,8 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
     const u = ((t % 0.5) + 0.5) % 0.5 // 半周ごとに左右が入れ替わる
     const ph = t - Math.floor(t)
     const stanceLeg = ph < 0.5 ? ph : ph - 0.5
-    if (u < STANCE) return ground(stanceLeg)
+    // 接地中は、脚の角度で決まる高さより、真ん中でさらに少し沈む（重心の上下動を実測値に合わせる。膝で吸収する）
+    if (u < STANCE) return ground(stanceLeg) - SINK * Math.sin((Math.PI * u) / STANCE)
     const a = ground(STANCE)
     const b = ground(0)
     const s = (u - STANCE) / (0.5 - STANCE)
@@ -178,6 +187,19 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
     return Math.max(fly, low(leg(ph)) + 2, low(leg(ph + 0.5)) + 2)
   }
   const depths = Array.from({ length: n }, (_, i) => hipDepth(i / n))
+  // 接地している脚は、腰の高さに合わせて足裏が地面に着くよう、膝の曲げを足す
+  const planted = (ph: number, depth: number) => {
+    const p = ((ph % 1) + 1) % 1
+    if (p >= STANCE) return leg(p)
+    let lo = 0
+    let hi = 20
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2
+      if (low(leg(p, mid)) > depth) lo = mid
+      else hi = mid
+    }
+    return leg(p, lo)
+  }
   const meanDepth = depths.reduce((a, b) => a + b, 0) / n
 
   const frames: Frame[] = []
@@ -202,8 +224,8 @@ export function demoStride(cfg: { lean: number; head: number; drop: number; over
       const elbow = 88 + Math.max(0, -a - 20) * 0.5 // 後ろに引いたときだけ、肘が少し開く
       return { E: { ...E, v }, W: { ...down(E, 44, a + elbow), v } }
     }
-    const ln = place(leg(t), 1)
-    const lf = place(leg(t + 0.5), 0.5)
+    const ln = place(planted(t, depths[i]), 1)
+    const lf = place(planted(t + 0.5, depths[i]), 0.5)
     const an = arm(t, 1)
     const af = arm(t + 0.5, 0.5)
     f[L.nose] = nose

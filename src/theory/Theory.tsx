@@ -61,6 +61,11 @@ const REFS: Record<string, Ref> = {
     text: 'Beck ON, Azua EN, Grabowski AM. Step time asymmetry increases metabolic energy expenditure during running. Eur J Appl Physiol 118(10):2147–2154 (2018).',
     url: 'https://doi.org/10.1007/s00421-018-3939-3',
   },
+  malisoux: {
+    key: 'Malisoux 2023',
+    text: 'Malisoux L, Napier C, Gette P, Delattre N, Theisen D. Reference Values and Determinants of Spatiotemporal and Kinetic Variables in Recreational Runners. Orthop J Sports Med 11(10):23259671231204629 (2023).',
+    url: 'https://doi.org/10.1177/23259671231204629',
+  },
   novacheck: {
     key: 'Novacheck 1998',
     text: 'Novacheck TF. The biomechanics of running. Gait & Posture 7(1):77–95 (1998).',
@@ -215,6 +220,9 @@ export function Theory() {
         <KneeChart />
         <Note>
           データにないもの：腕（脚と反対に振り、肘は90°前後とした）、上体の傾き（7°とした）、頭。股関節の角度は骨盤から見た太ももの角度なので、骨盤の前傾ぶん（データにない）を、接地中に膝が一番曲がった瞬間に足首が腰の真下に来るとして決めています。
+          走りの上下動（跳ね）は、市民ランナー860人の実測（7.7 ± 1.2cm）
+          <Cite id="malisoux" />
+          に合わせました。平面の骨格では骨盤や腕の動きがないぶん上下動が小さく出るため、アニメーションでは接地中の膝をデータの平均より少し深く（最大約51°）曲げています。
         </Note>
       </section>
 
