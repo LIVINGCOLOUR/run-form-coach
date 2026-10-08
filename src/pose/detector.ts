@@ -1,4 +1,5 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
+import { POWER } from '../core/params'
 import type { Frame } from '../core/types'
 import { OneEuro } from '../core/filter'
 
@@ -58,7 +59,7 @@ export interface PoseTick {
   height: number
 }
 
-const MAX_FPS = 15 // 骨格を取るのは毎秒15コマまで
+const MAX_FPS = POWER.maxFps // 骨格を取るのは毎秒15コマまで
 
 // video から骨格を取り続ける。stop() で止める
 // want(t) が false のコマは骨格を取らず、skipped として知らせるだけにする

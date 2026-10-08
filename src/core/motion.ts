@@ -1,4 +1,5 @@
 import type { Frame } from './types'
+import { RUNNING } from './params'
 import { L, HEAD_POINTS, KEY_PAIRS } from './landmarks'
 import { facing, legLength } from './geometry'
 
@@ -9,10 +10,10 @@ import { facing, legLength } from './geometry'
 //   参考：Zeni ら 2008、スマホ動画で2〜5コマの誤差（Automated Stride Detection from OpenPose Keypoints, 2023）
 // 検証用：その場で走るフリは脚が前後に動かず歩数が数えられないので、左右の膝と足首が上下に入れ替わる
 //   リズムでも走っているとする。トレッドミルで確かめられたら IN_PLACE_FOR_TESTING を false にして外す
-export const IN_PLACE_FOR_TESTING = true
+export const IN_PLACE_FOR_TESTING = RUNNING.inPlaceForTesting
 
-const RUN_SPM = 130 // 歩きはおよそ毎分100〜120歩、走りは150〜190歩
-const STEP_PROMINENCE = 0.1 // 足首の前後の振れ（脚の長さに対する割合）がこれだけ戻ったら山・谷とみなす
+const RUN_SPM = RUNNING.runSpm // 歩きはおよそ毎分100〜120歩、走りは150〜190歩
+const STEP_PROMINENCE = RUNNING.stepProminence // 足首の前後の振れ（脚の長さに対する割合）がこれだけ戻ったら山・谷とみなす
 const STEP_WINDOW = 4 // ピッチは直近4秒の接地から出す
 const MIN_SD = { x: 0.1, y: 0.04 } // 検証用：脚の長さに対する揺れの大きさ
 const MIN_STEPS_PER_SEC = 2

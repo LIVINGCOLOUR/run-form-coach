@@ -8,6 +8,8 @@
 - 記録：端末の中（IndexedDB）だけ
 - 画面：React + Vite + TypeScript
 
+判定の精度を上げるための検証データの集め方（水戸ランナー塾への相談を含む）は [docs/validation-plan.md](docs/validation-plan.md)。
+
 ## 開発
 
 ```sh

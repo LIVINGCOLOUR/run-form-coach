@@ -1,12 +1,8 @@
 import type { Category, ItemKey } from './types'
+import { LIMITS, SCORE } from './params'
 
-// 各項目の「満点の範囲」と「0点になる値」（度。腰は %）。仕様書の仮置きの値
-export const LIMITS: Record<ItemKey, { full: number; zero: number; cue: number }> = {
-  head: { full: 5, zero: 15, cue: 5 }, // 直立との差
-  trunk: { full: 10, zero: 20, cue: 15 }, // 体幹の前傾
-  body: { full: 5, zero: 12, cue: 8 }, // 体全体の前傾
-  hip: { full: 3, zero: 10, cue: 6 }, // 序盤の自分からの腰の下がり
-}
+// 各項目の線（満点の範囲・0点になる値・声をかける線）は params.ts
+export { LIMITS }
 
 export function itemScore(key: ItemKey, value: number): number {
   const { full, zero } = LIMITS[key]
@@ -21,8 +17,8 @@ export function postureScore(v: Record<ItemKey, number>): number {
 }
 
 export function category(score: number): Category {
-  if (score >= 80) return 'good'
-  if (score >= 50) return 'mid'
+  if (score >= SCORE.good) return 'good'
+  if (score >= SCORE.mid) return 'mid'
   return 'bad'
 }
 

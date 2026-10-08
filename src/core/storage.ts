@@ -1,4 +1,5 @@
 import type { Baseline, Session } from './types'
+import { BASELINE } from './params'
 import type { RunLog } from './log'
 import type { VoiceKind } from './voices'
 
@@ -91,7 +92,7 @@ export const loadBaselines = (): Baseline[] => read<Baseline[]>('rfc.baselines')
 export const saveBaseline = (b: Baseline) => write('rfc.baselines', [...loadBaselines(), b].slice(-5))
 
 // 猫背ぎみに立った日に基準が甘くならないよう、直近の基準の真ん中より5°以上悪い分は5°までに抑える
-export const BASELINE_SLACK = 5
+export const BASELINE_SLACK = BASELINE.slack
 export function capBaseline(neck: number, history: Baseline[]): number {
   if (!history.length) return neck
   const sorted = history.map((b) => b.neck).sort((a, b) => a - b)

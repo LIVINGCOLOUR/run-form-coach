@@ -1,6 +1,7 @@
 import type { Baseline, Category, CueLog, Frame, ItemKey, Measure, Sample, Session, Stride } from './types'
 import { category, itemScore, overCue, LIMITS, postureScore } from './scoring'
 import { CUE, RECOVER, SAY } from './phrases'
+import { ABSENCE, BREAKDOWN, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE, STRIDE } from './params'
 
 export type CoachState = 'waiting' | 'running' | 'paused' | 'ended'
 
@@ -15,28 +16,28 @@ export interface CoachInput {
 export type CoachEvent = { type: 'speak'; text: string } | { type: 'state'; state: CoachState }
 
 const ITEMS: ItemKey[] = ['head', 'trunk', 'body', 'hip']
-const START_AFTER = 2 // 走り出しを2秒続けて見たら始める
-const PAUSE_AFTER = 3 // 3秒止まったら一時停止
-const LOST_SAY = 5 // 走っている途中で5秒いなくなったら、戻るよう声をかける
-const LOST_END = 30 // それでも30秒戻らなければ終わり
-const STOP_END = 10 // 止まってから画面を出たときは、10秒で終わり
-const CUE_WINDOW = 6 // 6秒続いた崩れに声をかける
-const CUE_COOLDOWN = 30
-const CUE_GAP = 12
-const RECOVER_WITHIN = 25 // 声をかけてから25秒以内に直ればほめる（声そのものに5秒ほどかかる）
-const RECOVER_SEC = 3 // 声をかけたあと、3秒続けて線より内側に戻れば「直った」
-const HIP_REF_FROM = 30 // 腰の高さの基準は、走り始めて30秒〜3分の平均
-const HIP_REF_TO = 180
-const QUIET_FIRST = 300
-const QUIET_STEP = 150
-const QUIET_MAX = 900
-const STRIDE_FRAMES = 36 // 1.2秒を30コマにならして持つ
-const STRIDE_SEC = 1.2
-const STRIDE_EVERY = 20 // 20秒ごとに走り姿の候補を取る
-// 電池と発熱を抑えるため、安定して走れている間は10秒のうち3秒だけ骨格を取る（声なしの間は20秒のうち3秒）
-const LOOK_SEC = 3
-const LOOK_EVERY = 10
-const LOOK_EVERY_QUIET = 20
+// 数字はすべて params.ts（フォームの見方のページにも、そのまま表示している）
+const START_AFTER = RUNNING.startAfter
+const PAUSE_AFTER = RUNNING.pauseAfter
+const LOST_SAY = ABSENCE.lostSay
+const LOST_END = ABSENCE.lostEnd
+const STOP_END = ABSENCE.stopEnd
+const CUE_WINDOW = CUE_P.window
+const CUE_COOLDOWN = CUE_P.cooldown
+const CUE_GAP = CUE_P.gap
+const RECOVER_WITHIN = CUE_P.recoverWithin
+const RECOVER_SEC = CUE_P.recoverHold
+const HIP_REF_FROM = HIP_REF.from
+const HIP_REF_TO = HIP_REF.to
+const QUIET_FIRST = QUIET.first
+const QUIET_STEP = QUIET.step
+const QUIET_MAX = QUIET.max
+const STRIDE_FRAMES = STRIDE.frames
+const STRIDE_SEC = STRIDE.sec
+const STRIDE_EVERY = STRIDE.every
+const LOOK_SEC = POWER.lookSec
+const LOOK_EVERY = POWER.lookEvery
+const LOOK_EVERY_QUIET = POWER.lookEveryQuiet
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 
@@ -157,9 +158,9 @@ export class Coach {
   wantsDetail(): boolean {
     if (this.state !== 'running' || this.absentSince !== null || this.pending) return true
     const t = this.active
-    if (t < 10) return true
+    if (t < POWER.warmup) return true
     // 声をかける線を越えたら、点数がまだ高くても細かく見る（間引いたままだと記録が足りず、声がかからない）
-    if (this.samples.slice(-12).some((s) => s.t > t - 12 && (s.score < 80 || ITEMS.some((k) => overCue(k, this.value(s, k)))))) return true
+    if (this.samples.slice(-POWER.recentBad).some((s) => s.t > t - POWER.recentBad && (s.score < SCORE.good || ITEMS.some((k) => overCue(k, this.value(s, k)))))) return true
     const every = this.quiet ? LOOK_EVERY_QUIET : LOOK_EVERY
     return t % every < LOOK_SEC
   }
@@ -210,9 +211,9 @@ export class Coach {
     if (this.quiet) {
       // 間引いた分は、前の記録からの時間をこの記録の分として数える
       const prev = this.samples[this.samples.length - 2]
-      if (s.score >= 80) this.quietHeldSec += prev ? Math.min(LOOK_EVERY_QUIET, t - prev.t) : 1
-      const last30 = this.within(30)
-      if (last30.length >= 10 && mean(last30.map((x) => x.score)) < 50) {
+      if (s.score >= SCORE.good) this.quietHeldSec += prev ? Math.min(LOOK_EVERY_QUIET, t - prev.t) : 1
+      const lastFew = this.within(QUIET.failWindow)
+      if (lastFew.length >= QUIET.failMinSamples && mean(lastFew.map((x) => x.score)) < SCORE.mid) {
         this.quiet = false
         this.quietEnd = t
         this.quietLen = QUIET_FIRST
@@ -242,7 +243,7 @@ export class Coach {
 
     // 崩れていたら声をかける（優先順：頭 → 体幹 → 体全体 → 腰）
     const win = this.within(CUE_WINDOW)
-    if (win.length >= CUE_WINDOW * 0.6 && t - this.lastAnyCue >= CUE_GAP) {
+    if (win.length >= CUE_WINDOW * CUE_P.coverage && t - this.lastAnyCue >= CUE_GAP) {
       for (const k of ITEMS) {
         const avg = mean(win.map((x) => this.value(x, k)))
         if (overCue(k, avg) && t - (this.lastCue[k] ?? -1e9) >= CUE_COOLDOWN) {
@@ -256,21 +257,27 @@ export class Coach {
     }
 
     // 5分きれいに走れていたらほめる
-    const last300 = this.within(300)
-    if (t >= 300 && last300.length >= 60 && t - this.lastPraise >= 300 && mean(last300.map((x) => x.score)) >= 80 && t - this.lastAnyCue >= 60) {
+    const lastLong = this.within(PRAISE.window)
+    if (
+      t >= PRAISE.window &&
+      lastLong.length >= PRAISE.minSamples &&
+      t - this.lastPraise >= PRAISE.window &&
+      mean(lastLong.map((x) => x.score)) >= SCORE.good &&
+      t - this.lastAnyCue >= PRAISE.afterCue
+    ) {
       this.say(ev, t, 'praise', SAY.praise5)
       this.lastPraise = t
       return ev
     }
 
     // 安定していたら、声なしで確認する時間に入る
-    const last180 = this.within(180)
+    const lastMid = this.within(QUIET.enterWindow)
     if (
-      t >= 180 &&
-      last180.length >= 36 &&
-      mean(last180.map((x) => x.score)) >= 80 &&
-      t - this.lastAnyCue >= 180 &&
-      t - this.quietEnd >= 120
+      t >= QUIET.enterWindow &&
+      lastMid.length >= QUIET.enterMinSamples &&
+      mean(lastMid.map((x) => x.score)) >= SCORE.good &&
+      t - this.lastAnyCue >= QUIET.enterWindow &&
+      t - this.quietEnd >= QUIET.afterQuiet
     ) {
       this.quiet = true
       this.quietStart = t
@@ -327,16 +334,16 @@ export class Coach {
 // 崩れ始め：5分平均の姿勢スコアが、序盤の平均より15点以上下がった最初の時刻（分）
 export function breakdownMinute(samples: Sample[]): number | undefined {
   const last = samples.length ? samples[samples.length - 1].t : 0
-  if (last < 600) return undefined
+  if (last < BREAKDOWN.minRun) return undefined
   const early = samples.filter((s) => s.t >= 60 && s.t <= Math.max(600, last * 0.25))
   const base = mean(early.map((s) => s.score))
   let from = 0
   let sum = 0
   for (let i = 0; i < samples.length; i++) {
     sum += samples[i].score
-    while (samples[from].t <= samples[i].t - 300) sum -= samples[from++].score
+    while (samples[from].t <= samples[i].t - BREAKDOWN.window) sum -= samples[from++].score
     const n = i - from + 1
-    if (samples[i].t >= 300 && n >= 30 && sum / n < base - 15) return Math.round((samples[i].t - 150) / 60)
+    if (samples[i].t >= BREAKDOWN.window && n >= 30 && sum / n < base - BREAKDOWN.drop) return Math.round((samples[i].t - BREAKDOWN.window / 2) / 60)
   }
   return undefined
 }

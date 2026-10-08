@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Mannequin } from '../ui/Mannequin'
 import { demoStride, REFERENCE } from '../ui/figure'
+import { Logic } from './Logic'
 
 // フォームの見方：見本のフォームが何から作られているか、9つの観点それぞれの基準・ずれたときに何が起きるか・根拠
 // 見本の数字は src/core/reference.json（研究データから作ったもの）から出す
@@ -238,11 +239,13 @@ export function Theory() {
         </div>
       </section>
 
+      <Logic />
+
       <section style={SECTION}>
         <H2>このページの数字について</H2>
         <ul style={{ ...P, margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <li>研究の多くは、3Dモーションキャプチャなどの精密な装置で測ったものです。アプリはスマホ1台で真横から撮るので、同じ精度では測れません。特に膝や足首の角度は数度の誤差があり、奥側の脚は使えません。</li>
-          <li>声をかける線（5°・15°など）は、今は仮の値です。実際の記録を見ながら合わせていきます。</li>
+          <li>声をかける線（5°・15°など）や、判定のロジックの数字は、今は仮の値です。実際の記録を見ながら合わせていきます。</li>
           <li>研究で分かっているのは「その傾向がある」ということで、一人ひとりの最適なフォームは体格や走力で変わります。アプリが目指すのは、見本の方向に向かって、自分のベストを1つずつ更新することです。</li>
           <li>けがの診断や治療のためのものではありません。痛みがあるときは医療機関に相談してください。</li>
         </ul>

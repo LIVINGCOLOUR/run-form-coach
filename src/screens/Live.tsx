@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { BASELINE, RUNNING, SETUP } from '../core/params'
 import type { Baseline, Frame, ItemKey, Measure, Sample } from '../core/types'
 import { Coach, type CoachEvent, type CoachState } from '../core/coach'
 import { facing, measure, rotateFrame, sideOffDeg } from '../core/geometry'
@@ -30,7 +31,7 @@ interface Hud {
 }
 
 // 頭から足までが画面の高さの何割か。超広角で 1m 前後なら約6割、3m だと約2割
-const SPAN_MIN = 0.4
+const SPAN_MIN = SETUP.spanMin
 const bodySpan = (f: Frame, h: number) => (Math.max(f[L.leftAnkle].y, f[L.rightAnkle].y, f[L.leftHeel].y, f[L.rightHeel].y) - f[L.nose].y) / h
 
 const ITEM_TEXT: Record<ItemKey, string> = { head: '頭が前に出ています', trunk: '上体が倒れすぎています', body: '体が倒れすぎています', hip: '腰が落ちています' }
@@ -272,27 +273,27 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (phase === 'setup') {
         // 真横の判定は、骨格の推定で両肩・両腰が少し開いて見えるため、35°までは通す
         // 手に持っている間は判定しない（動く映像を人と見間違えることがある）。置いて1.5秒静止してから見る
-        const placed = !!file || phoneStillSec() > 1.5
+        const placed = !!file || phoneStillSec() > SETUP.phoneStill
         const seen = visible && placed
         seenHist.push({ t, seen })
-        seenHist = seenHist.filter((x) => t - x.t <= 2)
+        seenHist = seenHist.filter((x) => t - x.t <= SETUP.seenWindow)
         const ratio = seenHist.filter((x) => x.seen).length / seenHist.length
         // 9割以上のコマで2秒見えたら「映った」、3割を切ったら「映っていない」（間で行ったり来たりしない）
-        if (!present && t - seenHist[0].t >= 1.8 && ratio >= 0.9) present = true
-        else if (present && ratio < 0.3) {
+        if (!present && t - seenHist[0].t >= SETUP.seenWindow * 0.9 && ratio >= SETUP.seenOn) present = true
+        else if (present && ratio < SETUP.seenOff) {
           present = false
           bodyAnnounced = false
         }
-        const ready = present && visible && lastLight && sideDeg <= 35 && !!frame && bodySpan(frame, h) >= SPAN_MIN
+        const ready = present && visible && lastLight && sideDeg <= SETUP.sideMax && !!frame && bodySpan(frame, h) >= SPAN_MIN
         const hint = placed ? guide(present ? frame : null, w, h, sideDeg, lastLight) : null
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 開いてすぐは話さない（スマホを置いて離れるまでの間）
         setupAt ??= t
-        const talk = t - setupAt >= 2
+        const talk = t - setupAt >= SETUP.talkAfter
         if (ready) {
           notReadySince = null
           okSince ??= t
-          if (t - okSince > 1.5 && talk) {
+          if (t - okSince > SETUP.readyHold && talk) {
             // 次に何をすればいいかまで、続けて声で言う（画面は見えない前提）
             lastNextSay = t
             say(PHRASES.placeOk, t)
@@ -319,7 +320,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           // 同じ案内が1.2秒続いてから言う。変わったら言い直し、同じなら6秒ごとに繰り返す
           // 「置いてください」のあとの「まだ体が映っていません」は、同じ案内として扱う
           const same = msg === lastSaid || (msg === PHRASES.guideNone && lastSaid === PHRASES.placeStart)
-          if (talk && t - hintSince >= 1.2 && t - lastGuide > (same ? 6 : 1.5)) {
+          if (talk && t - hintSince >= SETUP.hintStable && t - lastGuide > (same ? SETUP.hintRepeat : 1.5)) {
             say(msg, t)
             lastGuide = t
             lastSaid = msg
@@ -335,24 +336,24 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         // 骨格の推定は止まっていても少し揺れるので、1秒続けて動いたときだけ数え直す
         if (moving) baseMovingSince ??= t
         else baseMovingSince = null
-        if (baseMovingSince !== null && t - baseMovingSince > 1) {
+        if (baseMovingSince !== null && t - baseMovingSince > BASELINE.movingTolerance) {
           stillSince = null
           baseNecks = []
           baseStands = []
         } else {
           stillSince ??= t
           const el = t - stillSince
-          if (el > 1) {
+          if (el > BASELINE.settle) {
             baseNecks.push(m.neck)
             baseStands.push({ head: m.neck + m.trunk, trunk: m.trunk })
           }
-          const left = Math.max(1, Math.ceil(4 - el))
+          const left = Math.max(1, Math.ceil(BASELINE.settle + BASELINE.collect - el))
           setHud((hh) => (hh.countdown === left ? hh : { ...hh, countdown: left }))
-          if (el > 4 && baseNecks.length > 10) {
+          if (el > BASELINE.settle + BASELINE.collect && baseNecks.length > 10) {
             // 猫背のチェック。崩れていたら1つだけ直し方を言って取り直す（2回まで。それでもだめならその姿勢で始める）
             const st = { head: median(baseStands.map((x) => x.head)), trunk: median(baseStands.map((x) => x.trunk)) }
             const issue = standingIssue(st)
-            if (issue && baseTries < 2) {
+            if (issue && baseTries < BASELINE.retries) {
               baseTries++
               say(issue === 'head' ? PHRASES.baseHead : PHRASES.baseBack, t)
               lastNextSay = t
@@ -374,7 +375,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       }
 
       // 基準がなかなか取れないときは、立ち方をもう一度言う
-      if (phase === 'baseline' && t - lastNextSay > 12) {
+      if (phase === 'baseline' && t - lastNextSay > BASELINE.repeat) {
         lastNextSay = t
         say(PHRASES.baseStand, t)
       }
@@ -394,10 +395,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             baseline = { neck: sorted[Math.floor(sorted.length * 0.25)], createdAt: Date.now() }
           }
         }
-        if (baseline && !coachRef.current) coachRef.current = new Coach(baseline, { pause: false }) // 検証中は一時停止を切る
+        if (baseline && !coachRef.current) coachRef.current = new Coach(baseline, { pause: RUNNING.pauseEnabled }) // 検証中は一時停止を切っている（params.ts）
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない
-        if (coach && coach.state === 'waiting' && t - lastNextSay > 15) {
+        if (coach && coach.state === 'waiting' && t - lastNextSay > RUNNING.waitRepeat) {
           lastNextSay = t
           say(PHRASES.waitRun, t)
         }
@@ -433,7 +434,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           last: lastSample,
           scores: coach ? coach.samples.slice(-600).map((s) => s.score) : [],
           caption: t - captionAt < 6 ? caption : '',
-          checks: { body: visible, side: sideDeg <= 35, sideDeg: Math.round(sideDeg), light: lastLight },
+          checks: { body: visible, side: sideDeg <= SETUP.sideMax, sideDeg: Math.round(sideDeg), light: lastLight },
           problem: lastProblem,
         }))
       }
