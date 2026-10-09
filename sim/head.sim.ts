@@ -188,3 +188,43 @@ it('頭が前に出た量の判定のずれ', () => {
   console.log(text)
   writeFileSync(process.env.SIM_OUT ?? 'sim/result-head.md', text + '\n')
 })
+
+// 最初から頭が前に出ている人を、決まった線で見つけられるか：走っているときの「肩→耳の前傾」（鉛直から。上体の傾きを引かない）を、
+// 人ごとの違いと、置き方によるずれの大きさで比べる
+it('頭の位置そのもの（肩→耳の前傾）', () => {
+  const people = load()
+  const p2 = (v: V3) => ({ x: v[0], y: -v[1], v: 1 })
+  const trueA = (b: Body) => leanFromVertical(p2(b.shR!), p2(b.earR!), 1)
+  const sd = (xs: number[]) => Math.sqrt(mean(xs.map((x) => (x - mean(xs)) ** 2)))
+  const run = people.map((p) => mean(Array.from({ length: REF * FPS }, (_, i) => trueA(at(p.run, i / FPS)))))
+  const stand = people.map((p) => mean(Array.from({ length: standSec(p.stand) * FPS }, (_, i) => trueA(at(p.stand, i / FPS)))))
+  const mr = mean(run)
+  const ms = mean(stand)
+  const corr = mean(run.map((r, k) => (r - mr) * (stand[k] - ms))) / (sd(run) * sd(stand))
+  const sorted = [...run].sort((a, b) => a - b)
+  let text =
+    `## 頭の位置そのもの（肩→耳の前傾、鉛直から）\n\n` +
+    `走り始め${REF}秒の本当の値（${people.length}人）：平均 ${mr.toFixed(1)}°、人によるばらつき ±${sd(run).toFixed(1)}°、` +
+    `小さい順 ${sorted.map((x) => x.toFixed(0)).join(' ')}\n` +
+    `立った姿勢：平均 ${ms.toFixed(1)}°（±${sd(stand).toFixed(1)}°）。立った姿勢と走っているときの相関 ${corr.toFixed(2)}\n\n` +
+    `| 置き方 | ずれの平均 | 人によるずれのばらつき |\n|---|---|---|\n`
+  for (const c of CASES) {
+    const pl = { ...BASE, ...c.pl }
+    const noise = { ...BASE_NOISE, ...c.noise }
+    const err = people.map((p, k) => {
+      const cam = makeCamera(pl, at(p.run, 0).pelvis)
+      const r = rng(60 + k)
+      const st = { ar: [] as number[], swap: 0 }
+      const xs: number[] = []
+      for (let i = 0; i < REF * FPS; i++) {
+        let f = toFrame(at(p.run, i / FPS), cam, noise, st, r, 1 / FPS)
+        if (pl.fix) f = levelFrame(rotateFrame(f, pl.roll, W / 2, H / 2), cam.pitch, pl.vfov, W, H)
+        xs.push(leanFromVertical(f[12], f[8], measure(f).dir))
+      }
+      return mean(xs) - run[k]
+    })
+    text += `| ${c.label} | ${mean(err) >= 0 ? '+' : ''}${mean(err).toFixed(1)}° | ±${sd(err).toFixed(1)}° |\n`
+  }
+  console.log(text)
+  writeFileSync((process.env.SIM_OUT ?? 'sim/result-head.md').replace(/\.md$/, '-abs.md'), text)
+})
