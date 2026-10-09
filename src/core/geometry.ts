@@ -91,16 +91,24 @@ export function measure(frame: Frame): Measure {
   const ear = side === 'left' ? frame[L.leftEar] : frame[L.rightEar]
   const shoulder = side === 'left' ? frame[L.leftShoulder] : frame[L.rightShoulder]
   const hip = side === 'left' ? frame[L.leftHip] : frame[L.rightHip]
-  // 接地している側の足首 = 画像で下にある方
+  // 接地している側の足首 = 画像で下にある方（腰の高さを測るのに使う）
   const la = frame[L.leftAnkle]
   const ra = frame[L.rightAnkle]
   const stance = la.y >= ra.y ? la : ra
-
-  const trunk = leanFromVertical(hip, shoulder, dir)
+  // 上体と体全体の傾きは、左右の真ん中を通る線で測る（腰の中心→肩の中心、足首の中心→肩の中心）。
+  // 手前側の腰→肩で測ると、斜めから撮ったときに肩と股関節の左右の張り出しの違いで線が傾き、
+  // 低いほうの足首を使うと、見下ろし気味に撮ったとき奥の足が高く映って選び違える
+  // （研究データの仮想実験で、体全体の傾きが +3.3° → +0.4°、後ろ側30°からの上体が +4.3° → −0.1° になった）
+  const hipC = mid(frame[L.leftHip], frame[L.rightHip])
+  const shC = mid(frame[L.leftShoulder], frame[L.rightShoulder])
+  const ankC = mid(la, ra)
+  const trunk = leanFromVertical(hipC, shC, dir)
+  const body = leanFromVertical(ankC, shC, dir)
+  // 頭は、手前側の肩→耳と手前側の腰→肩の差（走る前に測った直立の基準との差で見るので、同じ測り方のままにする）
   const neckLean = leanFromVertical(shoulder, ear, dir)
-  const body = leanFromVertical(stance, shoulder, dir)
+  const trunkNear = leanFromVertical(hip, shoulder, dir)
   const leg = legLength(frame)
   const hipRatio = leg > 0 ? (stance.y - mid(frame[L.leftHip], frame[L.rightHip]).y) / leg : 0
 
-  return { neck: neckLean - trunk, trunk, body, hipRatio, dir }
+  return { neck: neckLean - trunkNear, trunk, body, hipRatio, dir }
 }

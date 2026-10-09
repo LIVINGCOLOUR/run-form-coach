@@ -89,12 +89,14 @@ export const QUIET = {
 
 // 項目ごとの線（度。腰は %）。この値以下なら満点、zero 以上で0点、その間は比例。cue を越えたら声をかける
 //   head：走る前に測った直立の基準から、首の角度が前に出た量
-//   trunk：腰→肩の線の前傾。body：接地している足首→肩の線の前傾
+//   trunk：腰の中心→肩の中心の線の前傾。body：足首の中心→肩の中心の線の前傾（1秒の平均）
+//   body の線は、研究データ（Van Hooren 2024、10人）で、ふつうに走ると 7〜13°（平均10.5°）、
+//   わざと前に倒すと平均14.4° だったので、14° を越えたら声をかける
 //   hip：走り始め（30秒〜3分）の自分の腰の高さからの下がり（脚の長さに対する%）
 export const LIMITS: Record<'head' | 'trunk' | 'body' | 'hip', { full: number; zero: number; cue: number }> = {
   head: { full: 5, zero: 15, cue: 5 },
   trunk: { full: 10, zero: 20, cue: 15 },
-  body: { full: 5, zero: 12, cue: 8 },
+  body: { full: 11, zero: 18, cue: 14 },
   hip: { full: 3, zero: 10, cue: 6 },
 }
 

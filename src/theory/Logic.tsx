@@ -8,8 +8,8 @@ const ITEM_NAME = { head: '頭の位置', trunk: '上体の傾き', body: '体�
 const UNIT = { head: '°', trunk: '°', body: '°', hip: '%' } as const
 const ITEM_WHAT = {
   head: '走る前に測った直立の基準から、首の角度が前に出た量',
-  trunk: '腰→肩の線の前傾',
-  body: '接地している足首→肩の線の前傾',
+  trunk: '腰の中心→肩の中心の線の前傾',
+  body: '足首の中心→肩の中心の線の前傾（1秒の平均）',
   hip: `走り始め（${HIP_REF.from}秒〜${HIP_REF.to / 60}分）の自分の腰の高さからの下がり（脚の長さに対する割合）`,
 } as const
 

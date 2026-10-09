@@ -85,6 +85,11 @@ export interface Body {
   toeR: V3
   toeL: V3
   pelvis: V3
+  // 上体の印があるデータでは、肩と頭も渡す（ないときは骨盤から7°前傾の仮の上体を置く）
+  shR?: V3
+  shL?: V3
+  ear?: V3
+  nose?: V3
 }
 
 // 1コマ分の骨格を作る。上半身はデータにないので、骨盤から上へ（7°前傾）置いた仮のもの
@@ -92,14 +97,17 @@ export interface Body {
 export function toFrame(b: Body, project: ReturnType<typeof makeCamera>, noise: Noise, state: { ar: number[]; swap: number }, r: ReturnType<typeof rng>, dt: number): Frame {
   const lean = (7 * Math.PI) / 180
   const sh: V3 = [b.pelvis[0] + 500 * Math.sin(lean), b.pelvis[1] + 500 * Math.cos(lean), b.pelvis[2]]
-  const ear: V3 = [sh[0] + 20, sh[1] + 230, sh[2]]
-  const nose: V3 = [ear[0] + 100, ear[1] - 20, ear[2]]
+  const ear: V3 = b.ear ?? [sh[0] + 20, sh[1] + 230, sh[2]]
+  const nose: V3 = b.nose ?? [ear[0] + 100, ear[1] - 20, ear[2]]
+  const shR: V3 = b.shR ?? [sh[0], sh[1], sh[2] + 180]
+  const shL: V3 = b.shL ?? [sh[0], sh[1], sh[2] - 180]
+  const half = [(shR[0] - shL[0]) * 0.2, (shR[1] - shL[1]) * 0.2, (shR[2] - shL[2]) * 0.2]
   const pts: [number, V3, boolean][] = [
     [I.nose, nose, true],
-    [I.earL, [ear[0], ear[1], ear[2] - 70], false],
-    [I.earR, [ear[0], ear[1], ear[2] + 70], true],
-    [I.shL, [sh[0], sh[1], sh[2] - 180], false],
-    [I.shR, [sh[0], sh[1], sh[2] + 180], true],
+    [I.earL, [ear[0] - half[0], ear[1] - half[1], ear[2] - half[2]], false],
+    [I.earR, [ear[0] + half[0], ear[1] + half[1], ear[2] + half[2]], true],
+    [I.shL, shL, false],
+    [I.shR, shR, true],
     [I.hipL, b.hipL, false],
     [I.hipR, b.hipR, true],
     [I.kneeL, b.kneeL, false],
