@@ -104,11 +104,11 @@ export function measure(frame: Frame): Measure {
   const ankC = mid(la, ra)
   const trunk = leanFromVertical(hipC, shC, dir)
   const body = leanFromVertical(ankC, shC, dir)
-  // 頭は、手前側の肩→耳と手前側の腰→肩の差（走る前に測った直立の基準との差で見るので、同じ測り方のままにする）
+  // 頭は、手前側の肩→耳と手前側の腰→肩の差（走り始めの自分との差で見る）
   const neckLean = leanFromVertical(shoulder, ear, dir)
   const trunkNear = leanFromVertical(hip, shoulder, dir)
   const leg = legLength(frame)
   const hipRatio = leg > 0 ? (stance.y - mid(frame[L.leftHip], frame[L.rightHip]).y) / leg : 0
 
-  return { neck: neckLean - trunkNear, trunk, body, hipRatio, dir }
+  return { neck: neckLean - trunkNear, headLean: neckLean, yaw: yawSign(frame), trunk, body, hipRatio, dir }
 }

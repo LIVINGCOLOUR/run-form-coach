@@ -13,8 +13,12 @@ export type ItemKey = 'head' | 'trunk' | 'body' | 'hip'
 
 // 1コマから測った角度など
 export interface Measure {
-  // 首の傾き − 体幹の傾き（度）。直立との差で「頭が前に出た量」を見る
+  // 首の傾き − 体幹の傾き（度）。走り始めの自分との差で「頭が前に出た量」を見る
   neck: number
+  // 頭の位置そのもの：手前側の肩→耳の線の、鉛直からの前傾（度）
+  headLean: number
+  // スマホが体の前側から（正）か、後ろ側から（負）撮っているか（geometry の yawSign）
+  yaw: number
   // 体幹の前傾（腰→肩の線と鉛直の角度。前が正）
   trunk: number
   // 体全体の前傾（足首→肩の線と鉛直の角度。前が正）
@@ -36,7 +40,7 @@ export interface Baseline {
 // 1秒ごとの記録
 export interface Sample {
   t: number // 練習開始からの秒（一時停止中は進まない）
-  head: number // 直立との差（度）
+  head: number // 走り始めの自分の首の角度との差（度）。基準ができるまでは 0
   trunk: number
   body: number
   hipDrop: number // 序盤の自分の腰の高さからの下がり（%）
@@ -44,6 +48,7 @@ export interface Sample {
   quiet: boolean // 声なしで確認している時間か
   // 判定に使った値（上体と体全体は、走り始めの自分からの増え方を LIMITS の目盛りに直したもの）。ないときは trunk・body そのもの
   judge?: { trunk: number; body: number }
+  headLean?: number // 頭の位置そのもの（肩→耳の前傾、度）
 }
 
 export type Category = 'good' | 'mid' | 'bad'

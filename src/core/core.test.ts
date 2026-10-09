@@ -202,18 +202,19 @@ function feed(coach: Coach, from: number, sec: number, m: Measure, moving = true
   return speak
 }
 
-const good: Measure = { neck: 2, trunk: 7, body: 3, hipRatio: 0.9, dir: 1 }
+const good: Measure = { neck: 2, headLean: 12, yaw: 0, trunk: 7, body: 3, hipRatio: 0.9, dir: 1 }
+const bent: Measure = { ...good, trunk: 20 }
 const headDown: Measure = { ...good, neck: 14 }
 
 describe('コーチの流れ', () => {
   it('走り出しで始まり、崩れたら声をかけ、直ったらほめ、止まったら一時停止する', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
+    const coach = new Coach()
     const s1 = feed(coach, 0, 5, good)
     expect(coach.state).toBe('running')
     expect(s1[0]).toContain('始めます')
 
-    const s2 = feed(coach, 5, 13, headDown)
-    expect(s2.some((x) => x.includes('頭が前に出ています'))).toBe(true)
+    const s2 = feed(coach, 5, 13, bent)
+    expect(s2.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
 
     // 声をかけてから15秒以内に直れば、ほめる
     const s3 = feed(coach, 18, 10, good)
@@ -225,26 +226,27 @@ describe('コーチの流れ', () => {
   })
 
   it('安定していると、声なしで確認する時間に入り、保てたら伝える', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
-    const said = feed(coach, 0, 600, good)
+    const coach = new Coach()
+    const said = feed(coach, 0, 800, good)
     expect(said.some((x) => x.includes('声なしで確認'))).toBe(true)
+    expect(coach.cues.find((c) => c.text.includes('声なしで確認'))!.t).toBeGreaterThanOrEqual(360) // 走り始めの基準（3分）からさらに3分
     expect(said.some((x) => x.includes('声なしでも'))).toBe(true)
     expect(coach.quietHeldSec).toBeGreaterThan(250)
   })
 
   it('声なしの間に大きく崩れたら、確認をやめて声かけに戻る', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
-    feed(coach, 0, 200, good)
+    const coach = new Coach()
+    feed(coach, 0, 400, good)
     expect(coach.quiet).toBe(true)
-    const said = feed(coach, 200, 90, { ...good, neck: 30 })
+    const said = feed(coach, 400, 90, { ...good, neck: 30 })
     expect(coach.quiet).toBe(false)
     expect(said.some((x) => x.includes('頭が前に出ています'))).toBe(true)
   })
 
   it('終わったら割合と走り姿をまとめる', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
+    const coach = new Coach()
     feed(coach, 0, 120, good)
-    feed(coach, 120, 60, headDown)
+    feed(coach, 120, 60, bent)
     const s = coach.finish()
     expect(s.share.good + s.share.mid + s.share.bad).toBeCloseTo(1, 5)
     expect(s.share.good).toBeGreaterThan(0.5)
@@ -276,7 +278,7 @@ const absent = (coach: Coach, from: number, sec: number) => {
 
 describe('走り始めの自分との比べ', () => {
   it('もともと前傾が大きい人には、決まった線を越えていても、走り始めから変わらなければ声をかけない', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 }, { pause: false })
+    const coach = new Coach({ pause: false })
     const big: Measure = { ...good, trunk: 16, body: 15 } // 決まった線（上体15°・体全体14°）を越えている
     const said = feedSparse(coach, 0, 400, big).speak
     const after = coach.cues.filter((c) => c.t > 200 && (c.item === 'trunk' || c.item === 'body'))
@@ -284,16 +286,41 @@ describe('走り始めの自分との比べ', () => {
     expect(said.length).toBeGreaterThan(0) // 最初の3分は決まった線で見る
   })
   it('前傾が小さい人でも、走り始めより大きく倒れたら声をかける', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 }, { pause: false })
+    const coach = new Coach({ pause: false })
     feedSparse(coach, 0, 200, { ...good, trunk: 3 })
     const said = feedSparse(coach, 200, 30, { ...good, trunk: 10 }).speak // 決まった線（15°）には届かないが、走り始めより7°大きい
     expect(said.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
   })
 })
 
+describe('頭', () => {
+  it('走り始めの3分は頭で声をかけず、そのあとは走り始めの自分より前に出たら声をかける', () => {
+    const coach = new Coach({ pause: false })
+    const a = feedSparse(coach, 0, 100, { ...good, neck: 20 }).speak
+    expect(a.some((x) => x.includes('頭が前に出ています'))).toBe(false)
+    feedSparse(coach, 100, 100, good)
+    const b = feedSparse(coach, 200, 20, { ...good, neck: 20 }).speak // 走り始め（30秒〜3分）の平均より大きく前
+    expect(b.some((x) => x.includes('頭が前に出ています'))).toBe(true)
+  })
+  it('最初から頭が前に出ている人には、走り始めの基準ができたときに一度だけ声をかけ、戻せばほめる', () => {
+    const coach = new Coach({ pause: false })
+    const fwd: Measure = { ...good, headLean: 30 }
+    const a = feedSparse(coach, 0, 200, fwd).speak
+    expect(a.filter((x) => x.includes('頭が前に出ています')).length).toBe(1)
+    expect(coach.cues.find((c) => c.item === 'head')!.t).toBeGreaterThan(180)
+    const b = feedSparse(coach, 200, 15, { ...fwd, neck: -5, headLean: 23 }).speak
+    expect(b.some((x) => x.includes('いい感じです'))).toBe(true)
+  })
+  it('斜めから撮っているときは、頭の位置そのものでは声をかけない', () => {
+    const coach = new Coach({ pause: false })
+    const a = feedSparse(coach, 0, 230, { ...good, headLean: 30, yaw: 0.08 }).speak
+    expect(a.some((x) => x.includes('頭が前に出ています'))).toBe(false)
+  })
+})
+
 describe('前かがみ', () => {
   it('上体が倒れたら声をかけ、起こしたらほめる。一時停止を切っていれば、止まっても走り続ける扱い', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 }, { pause: false })
+    const coach = new Coach({ pause: false })
     feedSparse(coach, 0, 60, good)
     const a = feedSparse(coach, 60, 10, { ...good, trunk: 20 })
     expect(a.speak.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
@@ -306,23 +333,23 @@ describe('前かがみ', () => {
 
 describe('省電力（間引いて見る）', () => {
   it('安定している間は3割ほどしか骨格を取らず、それでも崩れたら声をかける', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
-    const a = feedSparse(coach, 0, 120, good)
+    const coach = new Coach()
+    const a = feedSparse(coach, 0, 200, good)
     expect(a.looked).toBeLessThan(0.4)
-    const b = feedSparse(coach, 120, 20, headDown)
+    const b = feedSparse(coach, 200, 20, headDown)
     expect(b.speak.some((x) => x.includes('頭が前に出ています'))).toBe(true)
     expect(b.looked).toBeGreaterThan(0.6)
   })
 
   it('点数はまだ高いが、声をかける線を少し越えた崩れでも、間引かずに見て声をかける', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
-    feedSparse(coach, 0, 120, good)
-    const b = feedSparse(coach, 120, 20, { ...good, neck: 8 }) // 頭 +6°：線（5°）は越えるが点数は90
+    const coach = new Coach()
+    feedSparse(coach, 0, 200, good)
+    const b = feedSparse(coach, 200, 20, { ...good, neck: 8 }) // 頭 +6°：線（5°）は越えるが点数は90
     expect(b.speak.some((x) => x.includes('頭が前に出ています'))).toBe(true)
   })
 
   it('間引いても、割合は時間どおりに数える', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
+    const coach = new Coach()
     feedSparse(coach, 0, 600, good)
     const s = coach.finish()
     expect(s.share.good).toBeGreaterThan(0.95)
@@ -332,7 +359,7 @@ describe('省電力（間引いて見る）', () => {
 
 describe('画面から外れたとき', () => {
   it('走っている途中なら5秒で戻るよう促し、30秒戻らなければ終わる', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
+    const coach = new Coach()
     feed(coach, 0, 20, good)
     const s1 = absent(coach, 20, 6)
     expect(s1.some((x) => x.includes('戻ってください'))).toBe(true)
@@ -343,7 +370,7 @@ describe('画面から外れたとき', () => {
   })
 
   it('戻ってくれば続ける', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
+    const coach = new Coach()
     feed(coach, 0, 20, good)
     absent(coach, 20, 10)
     feed(coach, 30, 5, good)
@@ -351,7 +378,7 @@ describe('画面から外れたとき', () => {
   })
 
   it('止まってから外れたなら、10秒でおつかれさまでした', () => {
-    const coach = new Coach({ neck: 2, createdAt: 0 })
+    const coach = new Coach()
     feed(coach, 0, 20, good)
     feed(coach, 20, 5, good, false)
     expect(coach.state).toBe('paused')
@@ -390,8 +417,8 @@ describe('調整用の記録', () => {
     const [a, b] = rec.log.rows
     expect(rec.log.rows.length).toBe(2)
     expect(a.slice(0, 6)).toEqual([1.23, 2, 1, 1, 1, 171])
-    expect(a.length).toBe(13 + LOG_POINTS.length * 3)
-    expect(b.length).toBe(13)
+    expect(a.length).toBe(15 + LOG_POINTS.length * 3)
+    expect(b.length).toBe(15)
     expect(b[11]).toBe(99)
     expect(rec.log.events).toEqual([[1.5, '始めます。']])
   })

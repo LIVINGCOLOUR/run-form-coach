@@ -7,7 +7,7 @@ export const LOG_POINTS = [
   L.nose, L.leftEar, L.rightEar, L.leftShoulder, L.rightShoulder, L.leftElbow, L.rightElbow, L.leftWrist, L.rightWrist,
   L.leftHip, L.rightHip, L.leftKnee, L.rightKnee, L.leftAnkle, L.rightAnkle, L.leftHeel, L.rightHeel, L.leftFoot, L.rightFoot,
 ]
-export const LOG_COLUMNS = ['t', 'phase', 'visible', 'moving', 'by', 'cadence', 'neck', 'trunk', 'body', 'hipRatio', 'sideDeg', 'still', 'pitch', '...points(x,y,v)']
+export const LOG_COLUMNS = ['t', 'phase', 'visible', 'moving', 'by', 'cadence', 'neck', 'trunk', 'body', 'hipRatio', 'sideDeg', 'still', 'pitch', 'yaw', 'headLean', '...points(x,y,v)']
 const PHASES = ['setup', 'baseline', 'run'] as const
 const BY = [null, 'steps', 'inPlace'] as const
 
@@ -50,6 +50,7 @@ export class LogRecorder {
     const row = [
       r2(t), p, o.visible ? 1 : 0, o.moving ? 1 : 0, BY.indexOf(o.by), o.cadence === null ? -1 : Math.round(o.cadence),
       m ? r1(m.neck) : -999, m ? r1(m.trunk) : -999, m ? r1(m.body) : -999, m ? r2(m.hipRatio) : -999, Math.round(o.sideDeg), Math.min(99, r1(o.still)), r1(o.pitch ?? 0),
+      m ? r2(m.yaw) : -999, m ? r1(m.headLean) : -999,
     ]
     if (frame) for (const i of LOG_POINTS) row.push(r1(frame[i].x), r1(frame[i].y), r2(frame[i].v))
     this.log.rows.push(row)

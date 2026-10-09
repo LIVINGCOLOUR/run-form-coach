@@ -9,8 +9,8 @@ import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadRiglet, placeLike, type Joint, type RigletTrial } from './riglet'
 import { makeCamera, toFrame, rng, W, H, type Placement, type Noise, type Body } from './camera'
-import { leanFromVertical, levelFrame, measure, rotateFrame } from '../src/core/geometry'
-import { LIMITS, BASELINE } from '../src/core/params'
+import { leanFromVertical, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../src/core/geometry'
+import { LIMITS, BASELINE, HEAD_ABS } from '../src/core/params'
 import type { V3 } from './rbds'
 
 const DIR = process.env.RIGLET_DIR!
@@ -227,4 +227,74 @@ it('頭の位置そのもの（肩→耳の前傾）', () => {
   }
   console.log(text)
   writeFileSync((process.env.SIM_OUT ?? 'sim/result-head.md').replace(/\.md$/, '-abs.md'), text)
+})
+
+// 真横からのずれを、画面の骨格からどれだけ見分けられるか（立った姿勢＝置き方を決めるとき、走り＝走り始めの3分）
+it('真横からのずれの見分け', () => {
+  const people = load()
+  const sd = (xs: number[]) => Math.sqrt(mean(xs.map((x) => (x - mean(xs)) ** 2)))
+  let text = `## 真横からのずれの見分け\n\n左右の腰と肩の見え方から出す値（yawSign、前側で正）と、見えている幅から出す角度（sideOffDeg）。人による平均（±人によるばらつき）。立った姿勢は2秒、走りは${REF}秒の平均\n\n| スマホの向き | 立った姿勢：yawSign | 走り：yawSign | 立った姿勢：sideOffDeg |\n|---|---|---|---|\n`
+  for (const yaw of [-30, -20, -10, -5, 0, 5, 10, 15, 20, 30]) {
+    const pl = { ...BASE, yaw }
+    const v = people.map((p, k) => {
+      const cam = makeCamera(pl, at(p.run, 0).pelvis)
+      const go = (tr: RigletTrial, sec: number, seed: number) => {
+        const r = rng(seed)
+        const st = { ar: [] as number[], swap: 0 }
+        const ys: number[] = []
+        const ss: number[] = []
+        for (let i = 0; i < sec * FPS; i++) {
+          const f = toFrame(at(tr, i / FPS), cam, BASE_NOISE, st, r, 1 / FPS)
+          ys.push(yawSign(f))
+          ss.push(sideOffDeg(f))
+        }
+        return { y: mean(ys), s: mean(ss) }
+      }
+      const a = go(p.stand, Math.min(2, standSec(p.stand)), 100 + k)
+      const b = go(p.run, REF, 200 + k)
+      return { ys: a.y, yr: b.y, ss: a.s }
+    })
+    const f = (xs: number[], d = 3) => `${mean(xs).toFixed(d)}（±${sd(xs).toFixed(d)}）`
+    text += `| ${yaw > 0 ? '前側' : yaw < 0 ? '後ろ側' : '真横'}${yaw ? Math.abs(yaw) + '°' : ''} | ${f(v.map((x) => x.ys))} | ${f(v.map((x) => x.yr))} | ${f(v.map((x) => x.ss), 1)} |\n`
+  }
+  console.log(text)
+  writeFileSync((process.env.SIM_OUT ?? 'sim/result-head.md').replace(/\.md$/, '-yaw.md'), text)
+})
+
+// 3分の時点の一度だけの確認（頭の位置そのものを HEAD_ABS.line と比べる）が、置き方によってどう働くか
+it('最初から頭が前に出ている人の確認', () => {
+  const people = load()
+  const p2 = (v: V3) => ({ x: v[0], y: -v[1], v: 1 })
+  const trueA = people.map((p) => mean(Array.from({ length: REF * FPS }, (_, i) => leanFromVertical(p2(at(p.run, i / FPS).shR!), p2(at(p.run, i / FPS).earR!), 1))))
+  let text =
+    `## 最初から頭が前に出ている人の確認（線 ${HEAD_ABS.line}°、真横から ±${HEAD_ABS.yawMax} 以内のときだけ）\n\n` +
+    `本当の頭の位置（肩→耳の前傾）：${[...trueA].sort((a, b) => a - b).map((x) => x.toFixed(0)).join(' ')}\n\n` +
+    `| 置き方 | 確認できた人 | 声がかかった人（本当の頭の位置） | 頭を${TILT}°前に回すと声がかかった人 |\n|---|---|---|---|\n`
+  for (const c of CASES) {
+    const pl = { ...BASE, ...c.pl }
+    const noise = { ...BASE_NOISE, ...c.noise }
+    const r = people.map((p, k) => {
+      const cam = makeCamera(pl, at(p.run, 0).pelvis)
+      const go = (tilt: number) => {
+        const rr = rng(300 + k)
+        const st = { ar: [] as number[], swap: 0 }
+        const hl: number[] = []
+        const yw: number[] = []
+        for (let i = 0; i < REF * FPS; i++) {
+          let f = toFrame(at(p.run, i / FPS, tilt), cam, noise, st, rr, 1 / FPS)
+          if (pl.fix) f = levelFrame(rotateFrame(f, pl.roll, W / 2, H / 2), cam.pitch, pl.vfov, W, H)
+          const m = measure(f)
+          hl.push(m.headLean)
+          yw.push(m.yaw)
+        }
+        const ok = Math.abs(mean(yw)) <= HEAD_ABS.yawMax
+        return { ok, cue: ok && mean(hl) > HEAD_ABS.line }
+      }
+      return { a: go(0), b: go(TILT), truth: trueA[k] }
+    })
+    const flagged = r.filter((x) => x.a.cue).map((x) => x.truth.toFixed(0))
+    text += `| ${c.label} | ${r.filter((x) => x.a.ok).length}/${r.length} | ${flagged.length}人（${flagged.join(' ') || 'なし'}） | ${r.filter((x) => x.b.cue).length}人 |\n`
+  }
+  console.log(text)
+  writeFileSync((process.env.SIM_OUT ?? 'sim/result-head.md').replace(/\.md$/, '-once.md'), text)
 })

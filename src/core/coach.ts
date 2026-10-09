@@ -1,7 +1,7 @@
-import type { Baseline, Category, CueLog, Frame, ItemKey, Measure, Sample, Session, Stride } from './types'
+import type { Category, CueLog, Frame, ItemKey, Measure, Sample, Session, Stride } from './types'
 import { category, itemScore, overCue, LIMITS, postureScore } from './scoring'
 import { CUE, RECOVER, SAY } from './phrases'
-import { ABSENCE, BREAKDOWN, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, STRIDE } from './params'
+import { ABSENCE, BREAKDOWN, CUE as CUE_P, HEAD_ABS, HIP_REF, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, STRIDE } from './params'
 
 export type CoachState = 'waiting' | 'running' | 'paused' | 'ended'
 
@@ -44,6 +44,7 @@ const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.l
 interface Pending {
   item: ItemKey
   t: number
+  abs?: boolean // 頭の位置そのもので声をかけた（直ったかは、走り始めより戻ったかで見る）
 }
 
 export class Coach {
@@ -65,9 +66,11 @@ export class Coach {
   private bucketStart = 0
   private hipRefs: number[] = []
   private hipRef: number | null = null
-  // 走り始めの自分の上体・体全体の傾き（HIP_REF の区間の平均）
-  private leanRefs: { trunk: number[]; body: number[] } = { trunk: [], body: [] }
-  leanRef: { trunk: number; body: number } | null = null
+  // 走り始めの自分の首の角度・上体・体全体の傾き、頭の位置そのもの、スマホの向き（HIP_REF の区間の平均）
+  private leanRefs: { neck: number[]; trunk: number[]; body: number[]; headLean: number[]; yaw: number[] } = { neck: [], trunk: [], body: [], headLean: [], yaw: [] }
+  leanRef: { neck: number; trunk: number; body: number; headLean: number; yaw: number } | null = null
+  private headAbsDue = false
+  private refAt: number | null = null // 走り始めの基準ができた時刻
 
   private lastCue: Partial<Record<ItemKey, number>> = {}
   private lastAnyCue = -1e9
@@ -82,11 +85,10 @@ export class Coach {
   private candidates: Record<Category, Stride[]> = { good: [], mid: [], bad: [] }
   private lastStrideAt = -1e9
 
-  private baseline: Baseline
   private pauseOn: boolean
-  // pause: 止まったら一時停止するか（検証中は切っておく）
-  constructor(baseline: Baseline, opts: { pause?: boolean } = {}) {
-    this.baseline = baseline
+  // pause: 止まったら一時停止するか（検証中は切っておく）。
+  // 走る前に立って測る基準は、猫背の確認にだけ使い、ここには渡さない（頭は走り始めの自分と比べる）
+  constructor(opts: { pause?: boolean } = {}) {
     this.pauseOn = opts.pause ?? true
   }
 
@@ -175,21 +177,33 @@ export class Coach {
     if (b.length < 3) return null
     const t = Math.floor(this.active)
     const neck = mean(b.map((m) => m.neck))
+    const headLean = mean(b.map((m) => m.headLean))
+    const yaw = mean(b.map((m) => m.yaw))
     const trunk = mean(b.map((m) => m.trunk))
     const body = mean(b.map((m) => m.body))
     const hipRatio = mean(b.map((m) => m.hipRatio))
     if (t >= HIP_REF_FROM && t <= HIP_REF_TO) {
       this.hipRefs.push(hipRatio)
+      this.leanRefs.neck.push(neck)
       this.leanRefs.trunk.push(trunk)
       this.leanRefs.body.push(body)
+      this.leanRefs.headLean.push(headLean)
+      this.leanRefs.yaw.push(yaw)
     }
     if (this.hipRef === null && t > HIP_REF_TO && this.hipRefs.length) this.hipRef = mean(this.hipRefs)
-    if (this.leanRef === null && t > HIP_REF_TO && this.leanRefs.trunk.length) this.leanRef = { trunk: mean(this.leanRefs.trunk), body: mean(this.leanRefs.body) }
+    if (this.leanRef === null && t > HIP_REF_TO && this.leanRefs.trunk.length) {
+      const r = this.leanRefs
+      this.refAt = t
+      this.leanRef = { neck: mean(r.neck), trunk: mean(r.trunk), body: mean(r.body), headLean: mean(r.headLean), yaw: mean(r.yaw) }
+      // 最初から頭が前に出ていないかを、一度だけ決まった線と比べる（真横に近く置けているときだけ）
+      this.headAbsDue = Math.abs(this.leanRef.yaw) <= HEAD_ABS.yawMax && this.leanRef.headLean > HEAD_ABS.line
+    }
     const hipDrop = this.hipRef ? Math.max(0, ((this.hipRef - hipRatio) / this.hipRef) * 100) : 0
-    const head = Math.max(0, neck - this.baseline.neck)
+    // 頭は、走り始めの自分との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
+    const head = this.leanRef ? neck - this.leanRef.neck : 0
     const judge = this.leanRef ? { trunk: toScale('trunk', trunk - this.leanRef.trunk), body: toScale('body', body - this.leanRef.body) } : undefined
     const v = { head, trunk: judge?.trunk ?? trunk, body: judge?.body ?? body, hip: hipDrop }
-    const sample: Sample = { t, head, trunk, body, hipDrop, score: postureScore(v), quiet: this.quiet, judge }
+    const sample: Sample = { t, head, trunk, body, hipDrop, score: postureScore(v), quiet: this.quiet, judge, headLean }
     this.samples.push(sample)
     this.maybeKeepStride(sample)
     return sample
@@ -241,7 +255,7 @@ export class Coach {
       // 直ったかの線は、満点の範囲と声をかける線の真ん中（満点まで戻らなくても、はっきり戻ればほめる）
       const p = this.pending
       const back = this.within(RECOVER_SEC).filter((x) => x.t > p.t)
-      const line = (LIMITS[p.item].full + LIMITS[p.item].cue) / 2
+      const line = p.abs ? -HEAD_ABS.recoverBack : (LIMITS[p.item].full + LIMITS[p.item].cue) / 2
       if (back.length >= 2 && t - p.t >= RECOVER_SEC && back.every((x) => this.value(x, p.item) <= line)) {
         this.say(ev, t, 'recover', RECOVER[this.cues.length % RECOVER.length])
         this.pending = null
@@ -249,6 +263,16 @@ export class Coach {
       }
     } else if (this.pending) {
       this.pending = null
+    }
+
+    // 最初から頭が前に出ている（走り始めの基準ができたときに一度だけ）
+    if (this.headAbsDue && t - this.lastAnyCue >= CUE_GAP) {
+      this.headAbsDue = false
+      this.say(ev, t, 'head', CUE.head)
+      this.lastCue.head = t
+      this.lastAnyCue = t
+      this.pending = { item: 'head', t, abs: true }
+      return ev
     }
 
     // 崩れていたら声をかける（優先順：頭 → 体幹 → 体全体 → 腰）
@@ -280,10 +304,12 @@ export class Coach {
       return ev
     }
 
-    // 安定していたら、声なしで確認する時間に入る
+    // 安定していたら、声なしで確認する時間に入る。走り始めの自分との比べ（3分から）で安定していたかを見たいので、
+    // 基準ができてから QUIET.enterWindow 経つまでは入らない
     const lastMid = this.within(QUIET.enterWindow)
     if (
-      t >= QUIET.enterWindow &&
+      this.refAt !== null &&
+      t - this.refAt >= QUIET.enterWindow &&
       lastMid.length >= QUIET.enterMinSamples &&
       mean(lastMid.map((x) => x.score)) >= SCORE.good &&
       t - this.lastAnyCue >= QUIET.enterWindow &&
@@ -306,7 +332,7 @@ export class Coach {
       frames: resample(r, STRIDE_FRAMES, STRIDE_SEC),
       dir: this.ring[this.ring.length - 1].dir,
       score: s.score,
-      avg: { head: s.head, trunk: s.trunk, body: s.body, hipDrop: s.hipDrop },
+      avg: { head: Math.max(0, s.head), trunk: s.trunk, body: s.body, hipDrop: s.hipDrop },
     }
     if (list.length < 60) list.push(stride)
     else list[Math.floor(Math.random() * list.length)] = stride

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HIP_REF, LIMITS, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
+import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HEAD_ABS, HIP_REF, LIMITS, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる
@@ -7,7 +7,7 @@ import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HIP_REF, LIMITS, POWER, PRA
 const ITEM_NAME = { head: '頭の位置', trunk: '上体の傾き', body: '体全体の傾き', hip: '腰の高さ' } as const
 const UNIT = { head: '°', trunk: '°', body: '°', hip: '%' } as const
 const ITEM_WHAT = {
-  head: '走る前に測った直立の基準から、首の角度が前に出た量',
+  head: `走り始め（${HIP_REF.from}秒〜${HIP_REF.to / 60}分）の自分から、首の角度（手前側の肩→耳の前傾 − 腰→肩の前傾）が前に出た量`,
   trunk: '腰の中心→肩の中心の線の前傾',
   body: '足首の中心→肩の中心の線の前傾（1秒の平均）',
   hip: `走り始め（${HIP_REF.from}秒〜${HIP_REF.to / 60}分）の自分の腰の高さからの下がり（脚の長さに対する割合）`,
@@ -32,21 +32,27 @@ export function Logic() {
         <Row>大きさ：頭から足までが画面の高さの{pct(SETUP.spanMin)}以上。足りなければ「近づいて」と言う。</Row>
         <Row>真横：真横からのずれが{SETUP.sideMax}°以内。</Row>
         <Row>
-          スマホの向きと高さ：下を向いている角度が{SETUP.pitchDownMax}°を超えたら「まっすぐ立てて」、まっすぐなのに腰が画面の高さの{pct(SETUP.hipLowMax)}より下に映ったら「腰の高さくらいまで下げて」、体の後ろ側から撮っていたら「真横か少し前側に」と言い、直るまで先に進まない。研究データの仮想実験で、スマホが高く見下ろしているときと、後ろ側から撮ったときに、着地の角度が大きくずれた（高さ160cmで約37°、後ろ側30°で約31°）ため。
+          スマホの向きと高さ：下を向いている角度が{SETUP.pitchDownMax}°を超えたら「まっすぐ立てて」、まっすぐなのに腰が画面の高さの{pct(SETUP.hipLowMax)}より下に映ったら「腰の高さくらいまで下げて」、{pct(SETUP.hipHighMin)}より上に映ったら「腰の高さくらいまで上げて」と言い、直るまで先に進まない。研究データの仮想実験で、スマホが高く見下ろしているときと、後ろ側から撮ったときに、着地の角度が大きくずれた（高さ160cmで約37°、後ろ側30°で約31°）ため。スマホが低すぎると、見上げる形で頭が前に出て測れる（高さ50cmで約+9°）。
+        </Row>
+        <Row>
+          真横に置けているか：左右の腰と肩の見え方（奥の腰・肩が手前より前に映れば前側から、後ろに映れば後ろ側から）を{SETUP.yawSmooth}秒ならし、脚の長さに対して+{SETUP.frontMax}を超えたら「走る向きと反対に少しずらして」、{SETUP.behindMax}未満なら「走る向きに少しずらして」と言い、直るまで先に進まない。真横から約8°以内にあたる。
+          頭の位置は、スマホが前側に15°ずれるだけで約11°ずれて測れる（研究データ Riglet 2024 の23人で仮想実験）ため。立った姿勢での見分けは、1人あたり約±3°の精度だった。
         </Row>
         <Row>
           そろった状態が{SETUP.readyHold}秒続いたら次へ。案内は、同じ状態が{SETUP.hintStable}秒続いてから言い、同じ案内は{SETUP.hintRepeat}秒おきに繰り返す。声は重ねず、話し終わって1秒あけてから次を話す。
         </Row>
       </Step>
 
-      <Step no="2" title="直立の基準（走るたびに取る）">
+      <Step no="2" title="立った姿勢の確認（走るたびに行う）">
         <Row>
-          止まってから{BASELINE.settle}秒待ち、そのあと{BASELINE.collect}秒の首の角度の中央値を基準にする。「動いた」が{BASELINE.movingTolerance}秒未満なら数え直さない。
+          止まってから{BASELINE.settle}秒待ち、そのあと{BASELINE.collect}秒の立ち姿勢を測る。「動いた」が{BASELINE.movingTolerance}秒未満なら数え直さない。
+        </Row>
+        <Row>
+          この立ち姿勢は、走っているときの頭の判定には使わない。走ると上体だけが前に傾くので、首の角度は立ったときより平均8.8°小さく、人によって−24〜+13°と違う（研究データ Riglet 2024、23人）。立った姿勢と比べると、頭を前に出しても2割しか気づけなかった。
         </Row>
         <Row>
           猫背のチェック：肩→耳の前傾が{BASELINE.standingHead}°以下、腰→肩の前傾が{BASELINE.standingTrunk}°以下。越えていたら、大きくずれている1つだけ直し方を言って測り直す（{BASELINE.retries}回まで）。
         </Row>
-        <Row>甘くなりすぎないよう、直近5回の基準の真ん中より{BASELINE.slack}°以上悪い分は{BASELINE.slack}°までに抑える。</Row>
       </Step>
 
       <Step no="3" title="走り出し・一時停止">
@@ -103,6 +109,15 @@ export function Logic() {
           研究データ（10人）で、ふつうに走ったときの上体の傾きは人により0.6〜8.8°とばらばらだが、わざと前に倒すとどの人も約6〜12°増えた。仮想実験で、決まった線だけだとふつうに走っている人の6秒平均の17%で声がかかったが、自分と比べると1%になり、前に倒したときに声がかかる割合は37%から59%に上がった。
         </Row>
         <Row>
+          頭は、走り始めて{HIP_REF.to / 60}分たつまで判定しない。そのあとは走り始めの自分の首の角度との差で、{CUE.window}秒の平均が+{LIMITS.head.cue}°を越えたら声をかける。1秒ごとに0で切らずに平均してから比べる（頭は走りながら1秒ごとに約±4°動くので、0で切ると前に出た側だけが残り、実際より大きく出る）。
+          研究データの仮想実験で、頭を10°前に出した走りに声がかかる割合は、立った基準と比べると21%、走り始めと比べると91%だった。
+        </Row>
+        <Row>
+          最初から頭が前に出ている人：走り始めの自分と比べるだけでは気づけないので、{HIP_REF.to / 60}分たって走り始めの基準ができたときに一度だけ、頭の位置そのもの（手前側の肩→耳の線の、鉛直からの前傾）を{HEAD_ABS.line}°の線と比べ、越えていたら声をかける。
+          頭の位置は人により1〜27°（平均14°）。斜めから撮ると大きくずれるので、走り始めの間の「前側から／後ろ側から」の値の平均が±{HEAD_ABS.yawMax}以内（真横から約8°以内）のときだけ見る。
+          声をかけたあとは、走り始めより{HEAD_ABS.recoverBack}°戻ったら「直った」とする。
+        </Row>
+        <Row>
           姿勢スコア{SCORE.good}点以上が「良い」、{SCORE.mid}点以上が「ふつう」、それ未満が「悪い」。
         </Row>
       </Step>
@@ -129,7 +144,7 @@ export function Logic() {
           直近{PRAISE.window / 60}分の平均が{SCORE.good}点以上で、声をかけてから{PRAISE.afterCue}秒以上たっていたら「きれいな姿勢が続いています」。{PRAISE.window / 60}分に1回まで。
         </Row>
         <Row>
-          直近{QUIET.enterWindow / 60}分の平均が{SCORE.good}点以上で、その間に声かけがなければ「ここからしばらく、声なしで確認します」。最初は{QUIET.first / 60}分、保てたら次は{QUIET.step / 60}分ずつ長くする（最長{QUIET.max / 60}分）。
+          走り始めの基準ができてから{QUIET.enterWindow / 60}分たち、直近{QUIET.enterWindow / 60}分の平均が{SCORE.good}点以上で、その間に声かけがなければ「ここからしばらく、声なしで確認します」（走り始めの自分と比べた判定で安定していたかを見るため、早くて{(HIP_REF.to + QUIET.enterWindow) / 60}分から）。最初は{QUIET.first / 60}分、保てたら次は{QUIET.step / 60}分ずつ長くする（最長{QUIET.max / 60}分）。
         </Row>
         <Row>
           声なしの間も見続けていて、直近{QUIET.failWindow}秒の平均が{SCORE.mid}点を切ったら、声かけに戻る。

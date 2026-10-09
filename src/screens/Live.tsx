@@ -85,6 +85,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let hintSince = 0
     // 「映っている」は、直近2秒のコマのうち見えていた割合で決める（一瞬の見間違いで切り替えない）
     let seenHist: { t: number; seen: boolean }[] = []
+    let yawHist: { t: number; v: number }[] = []
     let present = false
     let bodyAnnounced = false
     let firstSaid = false
@@ -143,7 +144,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     }
 
     // 置き方の案内。背面カメラでは画面が見えないので、本人がどう動けばいいかで言う
-    const guide = (frame: Frame | null, w: number, h: number, sideDeg: number, light: boolean): string | null => {
+    // yaw：スマホが体の前側から（正）か後ろ側から（負）撮っているか。1秒でならした値
+    const guide = (frame: Frame | null, w: number, h: number, sideDeg: number, yaw: number, light: boolean): string | null => {
       if (!light) return PHRASES.guideDark
       if (!frame) return PHRASES.guideNone
       const ys = [L.nose, L.leftAnkle, L.rightAnkle].map((i) => frame[i].y)
@@ -155,8 +157,12 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (pitch > SETUP.pitchDownMax) return PHRASES.guideTiltDown
       const hipY = (frame[L.leftHip].y + frame[L.rightHip].y) / 2 / h
       if (Math.abs(pitch) <= SETUP.pitchDownMax && hipY > SETUP.hipLowMax) return PHRASES.guideHigh
-      if (yawSign(frame) < SETUP.behindMax) return PHRASES.guideBehind
+      if (Math.abs(pitch) <= SETUP.pitchDownMax && hipY < SETUP.hipHighMin) return PHRASES.guideLow
+      // 体がスマホのほうを向いているときは、まず横を向いてもらう（前側・後ろ側の値は、横を向いていないと当てにならない）
       if (sideDeg > 20) return PHRASES.guideSide
+      // 真横から約8°以内に置いてもらう。頭の位置は、前側に15°ずれるだけで +11° ずれて測れる（params.ts の SETUP）
+      if (yaw < SETUP.behindMax) return PHRASES.guideBehind
+      if (yaw > SETUP.frontMax) return PHRASES.guideFront
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
       if (cx < w * 0.3 || cx > w * 0.7) {
@@ -296,8 +302,12 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           present = false
           bodyAnnounced = false
         }
-        const hint = placed ? guide(present ? frame : null, w, h, sideDeg, lastLight) : null
-        const blocking = hint === PHRASES.guideTiltDown || hint === PHRASES.guideHigh || hint === PHRASES.guideBehind || hint === PHRASES.guideNear
+        if (frame && visible) yawHist.push({ t, v: yawSign(frame) })
+        yawHist = yawHist.filter((x) => t - x.t <= SETUP.yawSmooth)
+        const yaw = yawHist.length ? yawHist.reduce((a, x) => a + x.v, 0) / yawHist.length : 0
+        const hint = placed ? guide(present ? frame : null, w, h, sideDeg, yaw, lastLight) : null
+        const blocking =
+          hint === PHRASES.guideTiltDown || hint === PHRASES.guideHigh || hint === PHRASES.guideLow || hint === PHRASES.guideBehind || hint === PHRASES.guideFront || hint === PHRASES.guideNear
         const ready = present && visible && lastLight && sideDeg <= SETUP.sideMax && !!frame && !blocking
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 開いてすぐは話さない（スマホを置いて離れるまでの間）
@@ -408,7 +418,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             baseline = { neck: sorted[Math.floor(sorted.length * 0.25)], createdAt: Date.now() }
           }
         }
-        if (baseline && !coachRef.current) coachRef.current = new Coach(baseline, { pause: RUNNING.pauseEnabled }) // 検証中は一時停止を切っている（params.ts）
+        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled }) // 検証中は一時停止を切っている（params.ts）
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない
         if (coach && coach.state === 'waiting' && t - lastNextSay > RUNNING.waitRepeat) {
