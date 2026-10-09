@@ -217,7 +217,7 @@ describe('コーチの流れ', () => {
     expect(s1[0]).toContain('始めます')
 
     const s2 = feed(coach, 5, 13, bent)
-    expect(s2.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
+    expect(s2.some((x) => x.includes('前かがみになっています'))).toBe(true)
 
     // 声をかけてから15秒以内に直れば、ほめる
     const s3 = feed(coach, 18, 10, good)
@@ -292,7 +292,7 @@ describe('走り始めの自分との比べ', () => {
     const coach = new Coach({ pause: false })
     feedSparse(coach, 0, 200, { ...good, trunk: 3 })
     const said = feedSparse(coach, 200, 30, { ...good, trunk: 10 }).speak // 決まった線（15°）には届かないが、走り始めより7°大きい
-    expect(said.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
+    expect(said.some((x) => x.includes('前かがみになっています'))).toBe(true)
   })
 })
 
@@ -326,7 +326,7 @@ describe('前かがみ', () => {
     const coach = new Coach({ pause: false })
     feedSparse(coach, 0, 60, good)
     const a = feedSparse(coach, 60, 10, { ...good, trunk: 20 })
-    expect(a.speak.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
+    expect(a.speak.some((x) => x.includes('前かがみになっています'))).toBe(true)
     const b = feedSparse(coach, 70, 12, { ...good, trunk: 11 })
     expect(b.speak.some((x) => x.includes('いい感じです'))).toBe(true)
     feed(coach, 82, 10, good, false)

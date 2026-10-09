@@ -14,7 +14,7 @@ export const LEVEL_NOTE: Record<Level, string> = {
 
 // 段階ごとに、新しく足す項目と、走り出す前に言うこと。最後の段階（STEPS.length）は「すべて」
 export const STEPS: { add: ItemKey[]; title: string; focus: string; up?: string }[] = [
-  { add: ['trunk', 'body'], title: '上から吊られるように', focus: PHRASES.focusUpright },
+  { add: ['trunk', 'body'], title: '胸のライトで前を照らす', focus: PHRASES.focusUpright },
   { add: ['hip'], title: '腰を高く保つ', focus: PHRASES.focusHip, up: PHRASES.stepHip },
   { add: ['head'], title: '耳を肩の真上に', focus: PHRASES.focusHead, up: PHRASES.stepHead },
 ]

@@ -77,7 +77,7 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
       }
     : next
       ? NEXT_TEXT[next.item]
-      : { title: '上から吊られるように', reason: best ? 'あなたのベストは、もう理想に近い姿勢です' : '最初の1回で、あなたの基準を作ります' }
+      : { title: '胸のライトで前を照らす', reason: best ? 'あなたのベストは、もう理想に近い姿勢です' : '最初の1回で、あなたの基準を作ります' }
   const chooseLevel = (level: Level) => {
     if (level === progress.level) return
     setProgress(setLevel(level))

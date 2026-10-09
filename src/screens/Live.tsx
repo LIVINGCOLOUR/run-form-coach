@@ -583,7 +583,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             <div style={{ position: 'absolute', left: 12, right: 12, top: 'max(70px, calc(env(safe-area-inset-top) + 60px))', padding: '12px 16px', borderRadius: 18, background: 'rgba(10,12,14,0.78)', display: 'flex', alignItems: 'center', gap: 16 }}>
               <div className="num" style={{ fontSize: 72, color: 'var(--accent)', width: 50, textAlign: 'center' }}>{Math.max(1, Math.min(3, hud.countdown ?? 3))}</div>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.4 }}>上から吊られるように、まっすぐ立って3秒止まる</div>
+                <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.4 }}>目線は正面に。上から吊られるように、まっすぐ立って3秒止まる</div>
                 <div style={{ fontSize: 12 }} className="muted">初回だけ。写真は残さず、骨格の角度だけを使います</div>
               </div>
             </div>

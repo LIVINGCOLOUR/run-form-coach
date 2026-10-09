@@ -5,7 +5,7 @@ export const IDEAL = { head: 0, trunk: 7, body: 3, hipDrop: 0 }
 
 export const NEXT_TEXT: Record<ItemKey, { title: string; reason: string }> = {
   head: { title: '顎を引いて、頭を肩の上に', reason: 'あなたのベストから、次は頭の位置だけを直します' },
-  trunk: { title: '骨盤を立てて、上体を起こす', reason: 'あなたのベストから、次は体幹だけを直します' },
+  trunk: { title: '胸のライトで前を照らす', reason: 'あなたのベストから、次は体幹だけを直します' },
   body: { title: '倒れすぎず、足首から少しだけ前へ', reason: 'あなたのベストから、次は体全体の傾きだけを直します' },
   hip: { title: '上から吊られるように、腰を高く', reason: 'あなたのベストから、次は腰の高さだけを直します' },
 }
