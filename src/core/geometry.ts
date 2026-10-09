@@ -22,6 +22,34 @@ export function rotateFrame(frame: Frame, rollDeg: number, cx: number, cy: numbe
   return frame.map((p) => ({ x: cx + (p.x - cx) * c - (p.y - cy) * s, y: cy + (p.x - cx) * s + (p.y - cy) * c, v: p.v }))
 }
 
+// スマホが下（または上）を向いていると、画面の縦の線は下（上）にすぼまって映る。スマホの上下の向き pitchDeg
+// （下向きが正）とレンズの縦の画角から、「スマホをまっすぐ立てて撮ったら」の位置に骨格の点を戻す。
+// 左右の傾き（rotateFrame）を直したあとに使う
+export function levelFrame(frame: Frame, pitchDeg: number, vfovDeg: number, w: number, h: number): Frame {
+  if (!pitchDeg) return frame
+  const f = h / 2 / Math.tan(vfovDeg / 2 / DEG)
+  const c = Math.cos(pitchDeg / DEG)
+  const s = Math.sin(pitchDeg / DEG)
+  return frame.map((p) => {
+    const u = (p.x - w / 2) / f
+    const v = (p.y - h / 2) / f // 下が正
+    const y = v * c + s
+    const z = -v * s + c
+    if (z <= 0.05) return p
+    return { x: w / 2 + (f * u) / z, y: h / 2 + (f * y) / z, v: p.v }
+  })
+}
+
+// スマホが体の前側から撮っているか、後ろ側から撮っているか。真横で0、前側で正、後ろ側で負（脚の長さに対する割合）
+// 前側から撮ると奥の腰・肩が手前の腰・肩より前に、後ろ側から撮ると後ろに映る（仮想実験で、30°後ろから約 −0.2）
+export function yawSign(frame: Frame): number {
+  const nearR = frame[L.rightHip].v + frame[L.rightShoulder].v >= frame[L.leftHip].v + frame[L.leftShoulder].v
+  const [nh, fh, ns, fs] = nearR ? [L.rightHip, L.leftHip, L.rightShoulder, L.leftShoulder] : [L.leftHip, L.rightHip, L.leftShoulder, L.rightShoulder]
+  const leg = legLength(frame)
+  if (!leg) return 0
+  return ((((frame[fh].x - frame[nh].x) + (frame[fs].x - frame[ns].x)) / 2) * facing(frame)) / leg
+}
+
 // カメラに近い側（よく見えている側）を選ぶ
 export function nearSide(frame: Frame): 'left' | 'right' {
   const l = frame[L.leftShoulder].v + frame[L.leftHip].v + frame[L.leftKnee].v + frame[L.leftEar].v

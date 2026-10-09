@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ABSENCE, BASELINE, BREAKDOWN, CUE, HIP_REF, LIMITS, POWER, PRAISE, QUIET, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
+import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HIP_REF, LIMITS, POWER, PRAISE, QUIET, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる
@@ -31,6 +31,9 @@ export function Logic() {
         <Row>全身：頭（鼻か耳）と、肩・腰・膝・足首の左右どちらかが見えていて、上から頭→肩→腰→膝→足首の順に並んでいること。</Row>
         <Row>大きさ：頭から足までが画面の高さの{pct(SETUP.spanMin)}以上。足りなければ「近づいて」と言う。</Row>
         <Row>真横：真横からのずれが{SETUP.sideMax}°以内。</Row>
+        <Row>
+          スマホの向きと高さ：下を向いている角度が{SETUP.pitchDownMax}°を超えたら「まっすぐ立てて」、まっすぐなのに腰が画面の高さの{pct(SETUP.hipLowMax)}より下に映ったら「腰の高さくらいまで下げて」、体の後ろ側から撮っていたら「真横か少し前側に」と言い、直るまで先に進まない。研究データの仮想実験で、スマホが高く見下ろしているときと、後ろ側から撮ったときに、着地の角度が大きくずれた（高さ160cmで約37°、後ろ側30°で約31°）ため。
+        </Row>
         <Row>
           そろった状態が{SETUP.readyHold}秒続いたら次へ。案内は、同じ状態が{SETUP.hintStable}秒続いてから言い、同じ案内は{SETUP.hintRepeat}秒おきに繰り返す。声は重ねず、話し終わって1秒あけてから次を話す。
         </Row>
@@ -136,7 +139,14 @@ export function Logic() {
         <Row>止まってから外れたら、{ABSENCE.stopEnd}秒で「おつかれさまでした」。</Row>
       </Step>
 
-      <Step no="8" title="いつ見ているか（電池と発熱のため）">
+      <Step no="8" title="スマホの傾きの補正">
+        <Row>傾きセンサーで、スマホの左右の傾きを戻してから骨格を測る。</Row>
+        <Row>
+          スマホが{CORRECT.pitchDownFrom}°を超えて下を向いているとき（または{-CORRECT.pitchUpFrom}°を超えて上を向いているとき）は、上下の向きとレンズの画角（超広角{CORRECT.vfovUltra}°・1倍{CORRECT.vfovNormal}°）から、「まっすぐ立てて撮ったら」の位置に骨格の点を戻す。仮想実験で、高さ120cmから見下ろしたときの着地のすねのずれが約17°から約7°に減った。少し上を向いているだけのときは、直すとかえって少しずれたので直さない。
+        </Row>
+      </Step>
+
+      <Step no="9" title="いつ見ているか（電池と発熱のため）">
         <Row>骨格を取るのは毎秒{POWER.maxFps}コマまで。画面は真っ暗にする。</Row>
         <Row>
           安定して走れている間は、{POWER.lookEvery}秒のうち{POWER.lookSec}秒だけ骨格を取る（声なしの確認の間は{POWER.lookEveryQuiet}秒のうち{POWER.lookSec}秒）。点数は時間で数えるので、間引いても割合は変わらない。
@@ -146,7 +156,7 @@ export function Logic() {
         </Row>
       </Step>
 
-      <Step no="9" title="結果画面">
+      <Step no="10" title="結果画面">
         <Row>良い・ふつう・悪いの割合：1秒ごとの記録を、次の記録までの時間で重みを付けて数える。</Row>
         <Row>
           崩れ始め：{BREAKDOWN.minRun / 60}分以上走ったとき、{BREAKDOWN.window / 60}分平均の姿勢スコアが序盤より{BREAKDOWN.drop}点以上下がった最初の時刻。
@@ -156,7 +166,7 @@ export function Logic() {
         </Row>
       </Step>
 
-      <Step no="10" title="スロー動画の分析（走ったあと）">
+      <Step no="11" title="スロー動画の分析（走ったあと）">
         <Row>動画を1コマずつ止めて骨格を取る。足の高さが上下するリズムから1歩の長さを出し、実際のピッチが毎分130〜230歩に入るようにスローの倍率を決める。</Row>
         <Row>2本の足を、動画の最初から最後まで追う。骨格の推定は左右の名前を取り違えることがあるので、名前ではなく、前のコマからの動きで予想した位置に近いほうを同じ足とする。</Row>
         <Row>地面の線は足ごとに引く。スマホが腰の高さから少し見下ろすと、奥の足は地面に着いていても手前の足より画面の上で高く映るため（研究データの仮想実験で約25画素）。スマホの傾きに合わせて斜めにも引く。</Row>

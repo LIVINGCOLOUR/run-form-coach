@@ -2,6 +2,7 @@
 // 返すのは「画面の真下」から重力の向きが何度回っているか（時計回りが正）。
 // 機種による符号の違いは、重力が画面の下向き寄りになる向きを選ぶことで吸収する
 let roll = 0
+let pitch = 0
 let available = false
 let motionSeen = false
 let lastShakeAt = -1e9 // スマホが最後に動いた時刻（ミリ秒）
@@ -15,6 +16,10 @@ export function phoneStillSec(): number {
 
 export function gravityRoll(): number {
   return available ? roll : 0
+}
+// スマホの上下の向き（度）。背面カメラが下を向くほど正
+export function gravityPitch(): number {
+  return available ? pitch : 0
 }
 export function gravityAvailable(): boolean {
   return available
@@ -49,13 +54,19 @@ export async function startGravity(): Promise<boolean> {
     const sy = -dx * Math.sin(angle) + dy * Math.cos(angle)
     dx = sx
     dy = sy
+    let sign = 1
     if (dy < 0) {
       dx = -dx
       dy = -dy
+      sign = -1
     }
     const r = (Math.atan2(dx, dy) * 180) / Math.PI
     if (Math.abs(r) > 25) return // 大きく傾いているときは使わない
     roll = roll * 0.9 + r * 0.1
+    // 上下の向き：端末の z は画面から手前向き。背面カメラが下を向くと、重力は端末の後ろ（−z）側に寄る
+    // （機種による符号の違いは、左右と同じ sign でそろえる）
+    const gz = sign * (g.z ?? 0)
+    pitch = pitch * 0.9 + ((Math.atan2(-gz, Math.hypot(dx, dy)) * 180) / Math.PI) * 0.1
     available = true
   })
   return true

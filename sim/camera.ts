@@ -9,6 +9,7 @@ export interface Placement {
   roll: number // スマホの左右の傾き（度）。アプリは傾きセンサーで直すが、動画の分析では直さない
   vfov: number // 縦の画角（度）。超広角（0.5倍）は約106°、1倍は約67°
   k1: number // レンズのたる型のゆがみ（負でたる型）
+  fix?: boolean // アプリと同じく、傾きセンサーの値で左右の傾きと上下の向きを直してから分析する
 }
 
 export const W = 480
@@ -37,7 +38,9 @@ export function makeCamera(pl: Placement, target: V3) {
     [u[0] * c - r[0] * s, u[1] * c - r[1] * s, u[2] * c - r[2] * s],
   ]
   const focal = H / 2 / Math.tan(R(pl.vfov) / 2)
-  return (p: V3): { x: number; y: number } => {
+  // スマホの上下の向き（下向きが正）：傾きセンサーで測れる値
+  const pitch = (Math.asin(-f[1]) * 180) / Math.PI
+  const project = (p: V3): { x: number; y: number } => {
     const d = sub(p, C)
     const z = dot(d, f)
     let x = dot(d, r) / z
@@ -48,6 +51,7 @@ export function makeCamera(pl: Placement, target: V3) {
     y *= 1 + pl.k1 * k
     return { x: W / 2 + focal * x, y: H / 2 - focal * y }
   }
+  return Object.assign(project, { pitch })
 }
 
 export interface Noise {

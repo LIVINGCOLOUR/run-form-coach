@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { measure, rotateFrame, sideOffDeg } from './geometry'
+import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
 import { category, itemScore, postureScore } from './scoring'
 import { Coach, breakdownMinute } from './coach'
 import { nextItem } from './nextStep'
@@ -373,8 +373,8 @@ describe('調整用の記録', () => {
     const [a, b] = rec.log.rows
     expect(rec.log.rows.length).toBe(2)
     expect(a.slice(0, 6)).toEqual([1.23, 2, 1, 1, 1, 171])
-    expect(a.length).toBe(12 + LOG_POINTS.length * 3)
-    expect(b.length).toBe(12)
+    expect(a.length).toBe(13 + LOG_POINTS.length * 3)
+    expect(b.length).toBe(13)
     expect(b[11]).toBe(99)
     expect(rec.log.events).toEqual([[1.5, '始めます。']])
   })
@@ -420,6 +420,31 @@ describe('スロー動画の分析', () => {
   })
   it('オーバーストライドの走りは、着地のすねが大きく出る', () => {
     expect(analyzeRun(clip(1, 1))!.shankAtContact).toBeGreaterThan(analyzeRun(clip(1))!.shankAtContact + 10)
+  })
+})
+
+describe('見下ろしの補正', () => {
+  it('下を向いたスマホで撮った線の傾きを、まっすぐ立てて撮ったときの傾きに戻す', () => {
+    // 縦640画素・縦の画角106°のカメラを、下に20°向けて、前に10°倒れた線を撮る
+    const H = 640
+    const W = 480
+    const f = H / 2 / Math.tan((53 * Math.PI) / 180)
+    const pitch = (20 * Math.PI) / 180
+    const shot = (X: number, Y: number, Z: number) => {
+      // カメラ座標（x 右・y 下・z 前）。下に向けた分だけ回す
+      const y = Y * Math.cos(pitch) - Z * Math.sin(pitch)
+      const z = Y * Math.sin(pitch) + Z * Math.cos(pitch)
+      return { x: W / 2 + (f * X) / z, y: H / 2 + (f * y) / z, v: 1 }
+    }
+    const top = shot(0.2, 0.3, 1.5)
+    const bottom = shot(0.2 + 0.4 * Math.tan((10 * Math.PI) / 180), 0.7, 1.5)
+    const fr = Array.from({ length: 33 }, () => ({ x: 0, y: 0, v: 0 }))
+    fr[0] = top
+    fr[1] = bottom
+    const lv = levelFrame(fr, 20, 106, W, H)
+    const ang = (a: { x: number; y: number }, b: { x: number; y: number }) => (Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI
+    expect(Math.abs(ang(top, bottom) - 10)).toBeGreaterThan(1) // そのままだとずれる
+    expect(ang(lv[0], lv[1])).toBeCloseTo(10, 1)
   })
 })
 

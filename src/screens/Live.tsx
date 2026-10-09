@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { BASELINE, RUNNING, SETUP } from '../core/params'
+import { BASELINE, CORRECT, RUNNING, SETUP } from '../core/params'
 import type { Baseline, Frame, ItemKey, Measure, Sample } from '../core/types'
 import { Coach, type CoachEvent, type CoachState } from '../core/coach'
-import { facing, measure, rotateFrame, sideOffDeg } from '../core/geometry'
+import { facing, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../core/geometry'
 import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
 import { overCue } from '../core/scoring'
-import { gravityAvailable, gravityRoll, phoneStillSec } from '../core/gravity'
+import { gravityAvailable, gravityPitch, gravityRoll, phoneStillSec } from '../core/gravity'
 import { capBaseline, loadBaselines, loadSettings, saveBaseline, saveLog, saveSession } from '../core/storage'
 import { LogRecorder } from '../core/log'
 import { preloadVoice, speak, stopVoice } from '../core/voice'
@@ -150,6 +150,12 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       if (Math.min(...ys) < h * 0.04 || Math.max(...ys) > h * 0.98 || !bodyVisible(frame)) return PHRASES.guideFar
       // 小さく映っていると膝や足首の点がぶれて、走り出しや角度が取れない。画面の高さの4割はほしい
       if (bodySpan(frame, h) < SPAN_MIN) return PHRASES.guideNear
+      // スマホが下を向いている・高すぎる・体の後ろ側から撮っている：着地の角度などが大きくずれるので直してもらう
+      const pitch = !file && gravityAvailable() ? gravityPitch() : 0
+      if (pitch > SETUP.pitchDownMax) return PHRASES.guideTiltDown
+      const hipY = (frame[L.leftHip].y + frame[L.rightHip].y) / 2 / h
+      if (Math.abs(pitch) <= SETUP.pitchDownMax && hipY > SETUP.hipLowMax) return PHRASES.guideHigh
+      if (yawSign(frame) < SETUP.behindMax) return PHRASES.guideBehind
       if (sideDeg > 20) return PHRASES.guideSide
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
@@ -259,7 +265,13 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     const onTick = (raw: Frame | null, t: number, w: number, h: number) => {
       nowT = t
       tickMoving = false
-      const frame = raw && !file && gravityAvailable() ? rotateFrame(raw, gravityRoll(), w / 2, h / 2) : raw
+      // スマホの傾きを直す：左右の傾きを戻し、下を向いているとき（または大きく上を向いているとき）は上下の向きも戻す
+      let frame = raw
+      if (raw && !file && gravityAvailable()) {
+        frame = rotateFrame(raw, gravityRoll(), w / 2, h / 2)
+        const pitch = gravityPitch()
+        if (pitch > CORRECT.pitchDownFrom || pitch < CORRECT.pitchUpFrom) frame = levelFrame(frame, pitch, cameraLens === 'ultra' ? CORRECT.vfovUltra : CORRECT.vfovNormal, w, h)
+      }
       const visible = !!frame && bodyVisible(frame, 0.5, h)
       const m: Measure | undefined = visible ? measure(frame!) : undefined
       const sideDeg = frame ? sideOffDeg(frame) : 90
@@ -284,8 +296,9 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           present = false
           bodyAnnounced = false
         }
-        const ready = present && visible && lastLight && sideDeg <= SETUP.sideMax && !!frame && bodySpan(frame, h) >= SPAN_MIN
         const hint = placed ? guide(present ? frame : null, w, h, sideDeg, lastLight) : null
+        const blocking = hint === PHRASES.guideTiltDown || hint === PHRASES.guideHigh || hint === PHRASES.guideBehind || hint === PHRASES.guideNear
+        const ready = present && visible && lastLight && sideDeg <= SETUP.sideMax && !!frame && !blocking
         lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 開いてすぐは話さない（スマホを置いて離れるまでの間）
         setupAt ??= t
@@ -417,7 +430,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       else draw(null, w, h, hot)
 
       if (rec.log.rows.length < 80000) {
-        rec.frame(t, phase, w, h, frame, { visible, moving: tickMoving, by: motion.by, cadence: motion.cadence, m, sideDeg, still: phoneStillSec() })
+        rec.frame(t, phase, w, h, frame, { visible, moving: tickMoving, by: motion.by, cadence: motion.cadence, m, sideDeg, still: phoneStillSec(), pitch: gravityPitch() })
       }
       updateHud(t, visible, sideDeg)
     }

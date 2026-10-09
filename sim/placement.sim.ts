@@ -7,7 +7,8 @@ import { loadTrial, type Trial, type V3, type JointName } from './rbds'
 import { makeCamera, toFrame, rng, type Placement, type Noise, type Body } from './camera'
 import { analyzeRun, type TimedFrame } from '../src/core/slowmo'
 import { MotionDetector } from '../src/core/motion'
-import { measure } from '../src/core/geometry'
+import { levelFrame, measure, rotateFrame } from '../src/core/geometry'
+import { W, H } from './camera'
 
 const DIR = process.env.RBDS_DIR!
 const SUBJECTS = Array.from({ length: 12 }, (_, i) => `RBDS${String(i + 1).padStart(3, '0')}`)
@@ -29,6 +30,11 @@ const CASES: { group: string; label: string; pl: Partial<Placement>; noise?: Par
   { group: 'スマホの高さ', label: '50cm', pl: { height: 0.5 } },
   { group: 'スマホの高さ', label: '120cm', pl: { height: 1.2 } },
   { group: 'スマホの高さ', label: '160cm（見下ろし）', pl: { height: 1.6 } },
+  { group: '見下ろしの補正', label: '120cm＋補正', pl: { height: 1.2, fix: true } },
+  { group: '見下ろしの補正', label: '160cm＋補正', pl: { height: 1.6, fix: true } },
+  { group: '見下ろしの補正', label: '20cm（見上げ）＋補正', pl: { height: 0.2, fix: true } },
+  { group: '見下ろしの補正', label: '傾き6°＋補正', pl: { roll: 6, fix: true } },
+  { group: '見下ろしの補正', label: '基準＋補正', pl: { fix: true } },
   { group: '距離', label: '0.9m', pl: { dist: 0.9 } },
   { group: '距離', label: '2.0m', pl: { dist: 2.0 } },
   { group: '距離', label: '3.0m', pl: { dist: 3.0 } },
@@ -99,7 +105,10 @@ function film(trial: Trial, pl: Placement, noise: Noise, fps: number, t0: number
   const out: TimedFrame[] = []
   for (let i = 0; i < sec * fps; i++) {
     const t = t0 + i / fps
-    out.push({ t: i / fps, f: toFrame(at(trial, t), project, noise, state, r, 1 / fps) })
+    let f = toFrame(at(trial, t), project, noise, state, r, 1 / fps)
+    // アプリと同じ直し方：左右の傾きを戻してから、上下の向きを戻す
+    if (pl.fix) f = levelFrame(rotateFrame(f, pl.roll, W / 2, H / 2), project.pitch, pl.vfov, W, H)
+    out.push({ t: i / fps, f })
   }
   return out
 }
