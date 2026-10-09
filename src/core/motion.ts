@@ -83,10 +83,14 @@ export class MotionDetector {
     while (this.xs.length && t - this.xs[0].t > this.windowSec) this.xs.shift()
 
     // ピッチは、片脚ごとの接地の間隔（1歩きの周期）から出す。左右の接地をまとめて数えると、窓の端でずれる
+    // 片脚の接地の間隔（1周の長さ）の中央値。左右の名前の取り違えで生まれる、ありえない短い・長い間隔は除く
+    // （1周 0.45〜1.4秒 ＝ 毎分86〜266歩）
     const periods = this.legs
       .filter((l) => l.strikes.length >= 2 && t - l.strikes[l.strikes.length - 1] < 1.5)
-      .map((l) => (l.strikes[l.strikes.length - 1] - l.strikes[0]) / (l.strikes.length - 1))
-    this.cadence = periods.length ? 120 / (periods.reduce((a, b) => a + b, 0) / periods.length) : null
+      .flatMap((l) => l.strikes.slice(1).map((x, i) => x - l.strikes[i]))
+      .filter((p) => p >= 0.45 && p <= 1.4)
+      .sort((a, b) => a - b)
+    this.cadence = periods.length ? 120 / periods[Math.floor(periods.length / 2)] : null
     if (this.cadence !== null && this.cadence >= RUN_SPM) {
       this.by = 'steps'
       return true
