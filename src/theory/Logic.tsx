@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HEAD_ABS, HIP_REF, LIMITS, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
+import { LEVEL_LABEL, STEPS } from '../core/level'
+import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HEAD_ABS, HIP_REF, LEVEL, LIMITS, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる
@@ -131,6 +132,11 @@ export function Logic() {
           途切れの吸収：前かがみのまま走っていても、上体の角度は1歩ごとに前後に揺れ、骨格の推定もぶれるので、1秒ごとに見ると「線を越えた・戻った」が途切れ途切れになる。そこで、(1) 1秒の中の十数コマ（約3歩）を平均して1歩の中の揺れをならし、(2) 「{CUE.window}秒ずっと越えている」ではなく「{CUE.window}秒の平均が越えている」で決め（途中で1〜2秒戻っても数え直さない）、(3) 骨格が取れなかった秒があっても、{pct(CUE.coverage)}以上の秒に記録があれば判断する。
         </Row>
         <Row>優先順は、頭 → 上体 → 体全体 → 腰。一度に言うのは1つだけ。</Row>
+        <Row>
+          ランナーのレベル：{LEVEL_LABEL.beginner}は、注意する項目を1つずつ足していく（{STEPS.map((x) => x.title).join(' → ')} → すべて）。{LEVEL_LABEL.intermediate}は2つ目から、{LEVEL_LABEL.advanced}は最初からすべて見る。
+          走り出す前の立ち姿勢の確認のあとに、今日意識することを1つだけ言う。いま足した項目で声がかからない走り（{Math.round(LEVEL.minRunSec / 60)}分以上）が{LEVEL.advanceAfter}回続いたら、次の項目を足し、次の走り出しでそれを伝える。
+          まだ注意していない項目も測って記録し、大きく崩れたとき（その項目の点数が{SCORE.mid}点未満）だけ声をかける。一度に意識できるのは1つなので、全部を言うと、どれも残らないため。
+        </Row>
         <Row>
           声をかけたら、どの項目でも{CUE.gap}秒はあける。同じ項目は{CUE.cooldown}秒あける。
         </Row>

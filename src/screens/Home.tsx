@@ -3,7 +3,9 @@ import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
 import { bestSession, nextItem, NEXT_TEXT } from '../core/nextStep'
-import { loadSettings, saveSettings, type Settings } from '../core/storage'
+import { loadProgress, loadSettings, saveSettings, setLevel, type Settings } from '../core/storage'
+import { ALL, LEVEL_LABEL, LEVEL_NOTE, STEPS, type Level, type Progress } from '../core/level'
+import { LEVEL } from '../core/params'
 import { Mannequin } from '../ui/Mannequin'
 import { preloadVoice, speak, unlockVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
@@ -36,6 +38,7 @@ function useMorph(on: boolean) {
 
 export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) => void }) {
   const [settings, setSettings] = useState<Settings>(loadSettings)
+  const [progress, setProgress] = useState<Progress>(loadProgress)
   const [ideal, setIdeal] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const slowRef = useRef<HTMLInputElement>(null)
@@ -65,7 +68,20 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
   }, [best, next])
 
   const shown = k > 0 ? base.map((f, i) => lerpFrame(f, idealFrames[i % idealFrames.length], k)) : base
-  const focus = next ? NEXT_TEXT[next.item] : { title: '上から吊られるように', reason: best ? 'あなたのベストは、もう理想に近い姿勢です' : '最初の1回で、あなたの基準を作ります' }
+  // 今日の意識：注意する項目を広げている途中なら、その段階のこと。すべて見る段階なら、ベストと理想の差から
+  const stepping = progress.step < ALL
+  const focus = stepping
+    ? {
+        title: STEPS[progress.step].title,
+        reason: `${Math.round(LEVEL.minRunSec / 60)}分以上の走りで、これについて声がかからない走りが${LEVEL.advanceAfter}回続いたら、次へ進みます（いま ${progress.clean}/${LEVEL.advanceAfter}回）`,
+      }
+    : next
+      ? NEXT_TEXT[next.item]
+      : { title: '上から吊られるように', reason: best ? 'あなたのベストは、もう理想に近い姿勢です' : '最初の1回で、あなたの基準を作ります' }
+  const chooseLevel = (level: Level) => {
+    if (level === progress.level) return
+    setProgress(setLevel(level))
+  }
 
   const setVoice = async (voice: VoiceKind) => {
     const s = { ...settings, voice }
@@ -155,6 +171,21 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
         <div style={{ fontSize: 12 }} className="muted">今日の意識</div>
         <div style={{ fontSize: 22, fontWeight: 900 }}>{focus.title}</div>
         <div style={{ fontSize: 12 }} className="muted">{focus.reason}</div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontSize: 13 }} className="muted">あなたのレベル</div>
+        <div className="seg" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          {(['beginner', 'intermediate', 'advanced'] as Level[]).map((lv) => (
+            <button key={lv} aria-pressed={progress.level === lv} onClick={() => chooseLevel(lv)}>
+              {LEVEL_LABEL[lv]}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12 }} className="muted">
+          {LEVEL_NOTE[progress.level]}
+          {progress.level !== 'advanced' && (progress.step >= ALL ? '（すべての項目を見ています）' : `（${progress.step + 1}/${ALL}段階目）`)}
+        </div>
       </div>
 
       {last && goodPct !== null && (

@@ -12,7 +12,8 @@ let fallbackEl: HTMLAudioElement | null = null
 // 声は重ねない。話している間に来た言葉は最新の1つだけ取っておき、言い終わって1秒あけてから話す
 const GAP_MS = 1000
 let busyUntil = 0
-let queued: { text: string; k: VoiceKind } | null = null
+// 話している間に来た言葉は順に待たせる（同じ言葉は重ねない。古い案内が溜まらないよう3つまで）
+let queued: { text: string; k: VoiceKind }[] = []
 let timer: ReturnType<typeof setTimeout> | null = null
 
 const url = (k: VoiceKind, id: PhraseId) => `${import.meta.env.BASE_URL}voices/${k}/${id}.m4a`
@@ -87,7 +88,7 @@ function fallback(text: string) {
 export function speak(text: string, k: VoiceKind = kind) {
   const now = performance.now()
   if (now < busyUntil) {
-    queued = { text, k }
+    if (!queued.some((q) => q.text === text)) queued = [...queued, { text, k }].slice(-3)
     timer ??= setTimeout(flush, busyUntil - now)
     return
   }
@@ -97,9 +98,9 @@ export function speak(text: string, k: VoiceKind = kind) {
 
 function flush() {
   timer = null
-  const q = queued
-  queued = null
+  const q = queued.shift()
   if (q) speak(q.text, q.k)
+  if (queued.length) timer ??= setTimeout(flush, Math.max(0, busyUntil - performance.now()))
 }
 
 // 話し始めて、話し終わるまでのおよその秒数を返す
@@ -149,7 +150,7 @@ function play(buf: AudioBuffer) {
 }
 
 export function stopVoice() {
-  queued = null
+  queued = []
   if (timer) clearTimeout(timer)
   timer = null
   busyUntil = 0

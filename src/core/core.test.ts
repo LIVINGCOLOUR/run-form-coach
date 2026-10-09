@@ -1,3 +1,6 @@
+import { activeItems, afterRun, startPhrase, startProgress } from './level'
+import { PHRASES } from './phrases'
+import { LEVEL } from './params'
 import { describe, expect, it } from 'vitest'
 import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
 import { category, itemScore, postureScore } from './scoring'
@@ -9,7 +12,7 @@ import { LogRecorder, LOG_POINTS } from './log'
 import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, bodyVisible } from './motion'
 import { demoStride, strideStats, DEMO_SPM, REFERENCE } from '../ui/figure'
-import type { Frame, Measure, Sample, Session } from './types'
+import type { Frame, ItemKey, Measure, Sample, Session } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
 
@@ -509,5 +512,57 @@ describe('次の一歩', () => {
   it('理想との差が一番大きい項目を1つだけ選ぶ', () => {
     const s = { strides: { good: { frames: [], dir: 1, score: 90, avg: { head: 2, trunk: 12, body: 4, hipDrop: 1 } } } } as unknown as Session
     expect(nextItem(s)?.item).toBe('trunk')
+  })
+})
+
+describe('ランナーのレベル', () => {
+  const run = (sec: number, items: ItemKey[] = []): Session =>
+    ({ id: 'x', startedAt: 0, durationSec: sec, samples: [], cues: items.map((item, i) => ({ t: i, item, text: '' })), strides: {}, share: { good: 1, mid: 0, bad: 0 }, quietHeldSec: 0 }) as Session
+
+  it('初心者は前かがみから始め、声がかからない走りが2回続くと腰を足し、次の走り出しで伝える', () => {
+    let p = startProgress('beginner')
+    expect(activeItems(p.step)).toEqual(['trunk', 'body'])
+    expect(startPhrase(p)).toBe(PHRASES.focusUpright)
+    p = afterRun(p, run(900))
+    expect(p.step).toBe(0)
+    p = afterRun(p, run(900, ['trunk'])) // 声がかかったら数え直し
+    expect(p.clean).toBe(0)
+    p = afterRun(p, run(900, ['head'])) // まだ見ていない項目の声かけは数えない
+    p = afterRun(p, run(900))
+    expect(p.step).toBe(1)
+    expect(activeItems(p.step)).toEqual(['trunk', 'body', 'hip'])
+    expect(startPhrase(p)).toBe(PHRASES.stepHip)
+    p = afterRun(p, run(900, ['hip']))
+    expect(startPhrase(p)).toBe(PHRASES.focusHip)
+  })
+
+  it('短い走りと動画で試した走りは数えない', () => {
+    let p = startProgress('beginner')
+    p = afterRun(p, run(LEVEL.minRunSec - 1))
+    p = afterRun(p, { ...run(900), provisionalBaseline: true })
+    expect(p.clean).toBe(0)
+  })
+
+  it('中級は腰から、上級は最初からすべて見る', () => {
+    expect(activeItems(startProgress('intermediate').step)).toEqual(['trunk', 'body', 'hip'])
+    const adv = startProgress('advanced')
+    expect(activeItems(adv.step)).toEqual(['trunk', 'body', 'hip', 'head'])
+    expect(startPhrase(adv)).toBe(PHRASES.focusAll)
+    expect(afterRun(adv, run(900)).step).toBe(adv.step)
+  })
+
+  it('注意していない項目は、少しの崩れでは声をかけず、大きく崩れたら声をかける', () => {
+    const coach = new Coach({ pause: false, items: ['trunk', 'body'] })
+    feedSparse(coach, 0, 200, good)
+    const small = feedSparse(coach, 200, 20, { ...good, neck: 9 }).speak // 頭 +7°：線（5°）は越えるが点数は80
+    expect(small.some((x) => x.includes('頭が前に出ています'))).toBe(false)
+    const big = feedSparse(coach, 220, 30, { ...good, neck: 15 }).speak // 頭 +13°：点数20
+    expect(big.some((x) => x.includes('頭が前に出ています'))).toBe(true)
+  })
+
+  it('頭を見ていない段階では、最初から頭が前に出ていても3分の時点で声をかけない', () => {
+    const coach = new Coach({ pause: false, items: ['trunk', 'body'] })
+    const said = feedSparse(coach, 0, 230, { ...good, headLean: 30 }).speak
+    expect(said.some((x) => x.includes('頭が前に出ています'))).toBe(false)
   })
 })

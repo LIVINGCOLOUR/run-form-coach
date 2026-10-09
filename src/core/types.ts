@@ -82,4 +82,5 @@ export interface Session {
   provisionalBaseline?: boolean // 動画で試したときの仮の基準
   logId?: string // 調整用の記録
   standing?: { head: number; trunk: number; issue: 'head' | 'back' | null } // 走る前の立ち姿勢（猫背のチェック）
+  focus?: { level: 'beginner' | 'intermediate' | 'advanced'; step: number } // この走りのレベルと、注意した項目の段階（level.ts）
 }

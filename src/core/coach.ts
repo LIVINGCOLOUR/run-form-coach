@@ -86,10 +86,13 @@ export class Coach {
   private lastStrideAt = -1e9
 
   private pauseOn: boolean
+  private active_: ItemKey[]
   // pause: 止まったら一時停止するか（検証中は切っておく）。
+  // items: 声をかける項目（ランナーのレベルで決まる。ほかの項目は大きく崩れたときだけ）。なければすべて
   // 走る前に立って測る基準は、猫背の確認にだけ使い、ここには渡さない（頭は走り始めの自分と比べる）
-  constructor(opts: { pause?: boolean } = {}) {
+  constructor(opts: { pause?: boolean; items?: ItemKey[] } = {}) {
     this.pauseOn = opts.pause ?? true
+    this.active_ = opts.items ?? ITEMS
   }
 
   update(inp: CoachInput): CoachEvent[] {
@@ -196,7 +199,7 @@ export class Coach {
       this.refAt = t
       this.leanRef = { neck: mean(r.neck), trunk: mean(r.trunk), body: mean(r.body), headLean: mean(r.headLean), yaw: mean(r.yaw) }
       // 最初から頭が前に出ていないかを、一度だけ決まった線と比べる（真横に近く置けているときだけ）
-      this.headAbsDue = Math.abs(this.leanRef.yaw) <= HEAD_ABS.yawMax && this.leanRef.headLean > HEAD_ABS.line
+      this.headAbsDue = this.active_.includes('head') && Math.abs(this.leanRef.yaw) <= HEAD_ABS.yawMax && this.leanRef.headLean > HEAD_ABS.line
     }
     const hipDrop = this.hipRef ? Math.max(0, ((this.hipRef - hipRatio) / this.hipRef) * 100) : 0
     // 頭は、走り始めの自分との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
@@ -280,7 +283,9 @@ export class Coach {
     if (win.length >= CUE_WINDOW * CUE_P.coverage && t - this.lastAnyCue >= CUE_GAP) {
       for (const k of ITEMS) {
         const avg = mean(win.map((x) => this.value(x, k)))
-        if (overCue(k, avg) && t - (this.lastCue[k] ?? -1e9) >= CUE_COOLDOWN) {
+        // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ
+        const over = this.active_.includes(k) ? overCue(k, avg) : itemScore(k, avg) < SCORE.mid
+        if (over && t - (this.lastCue[k] ?? -1e9) >= CUE_COOLDOWN) {
           this.say(ev, t, k, CUE[k])
           this.lastCue[k] = t
           this.lastAnyCue = t

@@ -7,7 +7,8 @@ import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
 import { overCue } from '../core/scoring'
 import { gravityAvailable, gravityPitch, gravityRoll, phoneStillSec } from '../core/gravity'
-import { capBaseline, loadBaselines, loadSettings, saveBaseline, saveLog, saveSession } from '../core/storage'
+import { capBaseline, loadBaselines, loadProgress, loadSettings, saveBaseline, saveLog, saveProgress, saveSession } from '../core/storage'
+import { activeItems, afterRun, startPhrase } from '../core/level'
 import { LogRecorder } from '../core/log'
 import { preloadVoice, speak, stopVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
@@ -108,6 +109,9 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       captionAt = t
     }
 
+    // ランナーのレベルと、今日注意する項目（走り終わったら、続いて声がかからなかったかで次の段階へ）
+    const progress = loadProgress()
+
     const finish = async () => {
       if (finished) return
       finished = true
@@ -118,8 +122,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         s.provisionalBaseline = !!file
         s.standing = standing
         s.logId = rec.log.id
+        s.focus = { level: progress.level, step: progress.step }
         rec.log.sessionId = s.id
         await saveSession(s)
+        saveProgress(afterRun(progress, s))
         await saveLog(rec.log).catch(() => {})
         onDone(s.id)
       } else {
@@ -390,6 +396,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
               saveBaseline({ neck: today, createdAt, ...st })
               standing = { ...st, issue }
               say(!issue ? PHRASES.baseGood : issue === 'head' ? PHRASES.baseHeadLeft : PHRASES.baseBackLeft, t)
+              say(startPhrase(progress), t) // 今日意識すること（前の言葉のあとに続けて話す）
               lastNextSay = t
               setPhase('run')
             }
@@ -418,7 +425,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             baseline = { neck: sorted[Math.floor(sorted.length * 0.25)], createdAt: Date.now() }
           }
         }
-        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled }) // 検証中は一時停止を切っている（params.ts）
+        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step) }) // 検証中は一時停止を切っている（params.ts）
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない
         if (coach && coach.state === 'waiting' && t - lastNextSay > RUNNING.waitRepeat) {
