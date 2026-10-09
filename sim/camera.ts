@@ -90,6 +90,9 @@ export interface Body {
   shL?: V3
   ear?: V3
   nose?: V3
+  // 左右の耳がそれぞれ測れているデータ（Riglet）では、耳の真ん中からの作りものの代わりにこれを使う
+  earR?: V3
+  earL?: V3
 }
 
 // 1コマ分の骨格を作る。上半身はデータにないので、骨盤から上へ（7°前傾）置いた仮のもの
@@ -104,8 +107,8 @@ export function toFrame(b: Body, project: ReturnType<typeof makeCamera>, noise: 
   const half = [(shR[0] - shL[0]) * 0.2, (shR[1] - shL[1]) * 0.2, (shR[2] - shL[2]) * 0.2]
   const pts: [number, V3, boolean][] = [
     [I.nose, nose, true],
-    [I.earL, [ear[0] - half[0], ear[1] - half[1], ear[2] - half[2]], false],
-    [I.earR, [ear[0] + half[0], ear[1] + half[1], ear[2] + half[2]], true],
+    [I.earL, b.earL ?? [ear[0] - half[0], ear[1] - half[1], ear[2] - half[2]], false],
+    [I.earR, b.earR ?? [ear[0] + half[0], ear[1] + half[1], ear[2] + half[2]], true],
     [I.shL, shL, false],
     [I.shR, shR, true],
     [I.hipL, b.hipL, false],
