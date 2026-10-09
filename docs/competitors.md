@@ -1,0 +1,81 @@
+# 競合の調査
+
+定期的に調べ直し、下の「調べた記録」に追記する。調べ方は最後の「次に調べるとき」にそろえる。
+
+## このアプリの売り（比べる軸）
+
+- スマホのカメラ1台で、**走っている最中に見続け**、姿勢の崩れを**その場で声で直す**
+- 体の全体（首・上体・体全体の傾き・腰の落ち込み）が見える
+- 機器を買わなくてよい。インストールも要らない（ウェブ）。日本語
+- 映像は端末の外に出さない
+- 弱み：トレッドミルの上でしか使えない
+
+## 地図（2026-10-09 時点）
+
+### 1. カメラ × 走っている最中に声で直す（このアプリと同じ席）
+
+| 名前 | 中身 | 見立て |
+|---|---|---|
+| [RunForm AI - Running Coach](https://apps.apple.com/app/id6763226958) | 中国系の個人開発（Zhang Wei）。トレッドミルの横に iPhone を置き、走りながら声で指導、13項目とうたう。月 $2.99〜3.99 | 評価数が表示されない。宣伝文だけで、ライバル未満 |
+| [running-form-analyzer](https://github.com/henryczup/running-form-analyzer)、[RunTrack](https://github.com/DrDraesel/runtrack) | GitHub の個人の試作。カメラ＋骨格推定＋その場の表示や音声 | 製品ではない |
+
+**ちゃんとした製品はまだない。空いている席。**
+
+### 2. カメラ × 撮ってから解析（混み合っている）
+
+| 名前 | 中身 | 見立て |
+|---|---|---|
+| [Ochy](https://apps.apple.com/jp/app/running-gait-analysis-ochy/id1531481638)（フランス） | 短い動画から解析。トレッドミル用の設定あり（v19.2.0）。月1,500円、年5,000円。英語のみ。評価58件・平均4.5 | **一番手強い**。[170万ドルの資金、adidas adiClub と連携](https://www.businesswire.com/news/home/20250219340484/en/AI-Running-Gait-Platform-Ochy-Secures-1.7M-Pre-Seed-Funding-and-Announces-Integration-within-adidas-adiClub-Program/)、[イギリス陸連と提携](https://www.englandathletics.org/about-us/our-partners/ochy/)。その場で見るモードを足してくる可能性が一番高い |
+| [RUN!](https://prtimes.jp/main/html/rd/p/000000005.000166599.html)（TNQ Tech、国内） | 3D姿勢解析、床反力の推定、点数化、ストレッチの提案。2025-10 発表 | 撮った後に解析 |
+| [Form Atlas](https://note.com/runner_vision/n/nd39424678c15)、[AI陸上トレーナー](https://play.google.com/store/apps/details?id=com.harutowatanabe.mealier&listing=track-and-field&hl=ja)、[Run Pose Pro](https://apps.apple.com/jp/app/run-pose-pro/id6748298583)、[AIスポーツトレーナー](https://ai-sportstrainer.com/columns/track-and-field-app-comparison)（国内） | 個人や小さな会社。動画から解析 | 撮った後に解析 |
+| [RunForm AI: Running Gait](https://apps.apple.com/us/app/runform-ai-running-gait/id6753753064)（PacoStudio） | 動画を上げると横・後ろから20以上の項目。クレジット制。評価5件・平均3.4 | 撮った後に解析 |
+| Run AiK、StrideIQ | 30秒の動画から解析 | 撮った後に解析 |
+
+### 3. 体に付けるセンサー × その場で声（カメラなし）
+
+| 名前 | 中身 | 見立て |
+|---|---|---|
+| [StrideCoach](https://apps.apple.com/jp/app/id6746169274)（Beflex、国内） | **AirPods の動きのセンサー**で、走りながら声で指導。ピッチ・接地時間・上下動・衝撃・**頭の角度**・左右差など8項目。月800円、年5,000円。評価16件・平均4.9 | **一番近い対抗馬**。外でも使え、機器も要らない。ただし頭しか見えず、上体・体全体・腰は見えない |
+| [Runmetrix](https://runmetrix.casio.com/jp/application/)（カシオ・アシックス） | 腰のセンサー（14,080円）。トレッドミル対応。声はペース・ピッチ・ストライドが中心 | 姿勢を声で直すかは未確認 |
+| [Lumo Run](https://lumobodytech.com/lumo-run) | 腰のセンサーで、その場で声でフォーム指導していた | **販売終了**。その場のフォーム指導に払い続けてもらう難しさの前例 |
+| NURVV Run（中敷き）、STRIV（中敷き） | 足裏のセンサーで、その場の指導 | 今の状態は未確認 |
+
+### 4. ジム・医療向けの機器やサービス
+
+| 名前 | 中身 |
+|---|---|
+| [Visbody Creator600](https://visbody.com/visbody-creator600/) | 視覚センサー付きのAIトレッドミル。ジム・リハビリ施設・チーム向け。見積もり制。**トレッドミルごと買い替え**が要る |
+| [Runeasi](https://runeasi.ai/)、[DorsaVI](https://dorsavi.com/ai-motion-analysis/) | 理学療法士向け。センサーや動画AI |
+| [LEOMO Performance Center Tokyo](https://jp.leomo.io/pages/lpco) | センサーを5か所に付ける対面の有料診断 |
+| [ジー・サーチ ランニングフォーム診断](https://kyodonewsprwire.jp/index.php/release/202510297997) | 富士通の骨格認識。法人向け |
+| Peloton | カメラでのフォーム指導はあるが、筋トレ向け。走りに使えるかは未確認 |
+
+## 見立て（2026-10-09）
+
+1. カメラで見続けて、その場で声で直す席は空いている。これが売り。
+2. 一番近いのは StrideCoach（AirPods だけ、外でも使える）。手軽さは向こうが上。こちらの差は**全身の姿勢が見える**こと。
+3. Lumo Run が販売終了していることから、個人に月額で払い続けてもらうのは難しい。
+4. 後から入ってくるなら Ochy。今は英語のみなので、日本では時間がある。
+5. ジム・コーチ向けでは強みがある。Visbody はトレッドミルごと買い替えさせるが、こちらは**今あるトレッドミルにスマホを置くだけ**。
+
+## 調べた記録
+
+### 2026-10-09（初回）
+
+- 上の地図を作った。
+- 前回の見立てで「大手がすでにやっている」と書いたのは誤り。その場で声をかけるとうたうのは RunForm AI（個人開発）だけだった。
+- どのアプリも実際には使っていない。宣伝文とストアのページでの確認。
+
+## 次に調べるとき
+
+前回からの**変化**を中心に見て、上の「調べた記録」に日付を付けて追記する。地図と見立ても書き換える。
+
+1. **同じ席への新顔**：カメラで走りを見続けて、その場で声で直すアプリが出ていないか
+   - 検索例：`real-time running form feedback app camera voice`、`ランニングフォーム リアルタイム 音声 カメラ`
+   - App Store・Google Play で「running form」「ランニングフォーム」の新着
+2. **Ochy**：その場で見るモード、音声、日本語対応が入っていないか。ストアの更新履歴と ochy.io のブログ
+3. **StrideCoach**：評価数の伸び、上体や腰まで測るようになっていないか、トレッドミル対応
+4. **RunForm AI - Running Coach**：評価が付き始めたか（実際に動くかの手がかり）
+5. **RUN!**・国内の個人開発：その場で見る機能が足されていないか
+6. **ジム向け**：トレッドミルのメーカー（Technogym・Life Fitness・国内のジムチェーン）がカメラでのフォーム指導を入れていないか
+7. 料金の変化（月額の相場）
