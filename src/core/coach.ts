@@ -1,7 +1,7 @@
 import type { Baseline, Category, CueLog, Frame, ItemKey, Measure, Sample, Session, Stride } from './types'
 import { category, itemScore, overCue, LIMITS, postureScore } from './scoring'
 import { CUE, RECOVER, SAY } from './phrases'
-import { ABSENCE, BREAKDOWN, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE, STRIDE } from './params'
+import { ABSENCE, BREAKDOWN, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, STRIDE } from './params'
 
 export type CoachState = 'waiting' | 'running' | 'paused' | 'ended'
 
@@ -65,6 +65,9 @@ export class Coach {
   private bucketStart = 0
   private hipRefs: number[] = []
   private hipRef: number | null = null
+  // 走り始めの自分の上体・体全体の傾き（HIP_REF の区間の平均）
+  private leanRefs: { trunk: number[]; body: number[] } = { trunk: [], body: [] }
+  leanRef: { trunk: number; body: number } | null = null
 
   private lastCue: Partial<Record<ItemKey, number>> = {}
   private lastAnyCue = -1e9
@@ -175,12 +178,18 @@ export class Coach {
     const trunk = mean(b.map((m) => m.trunk))
     const body = mean(b.map((m) => m.body))
     const hipRatio = mean(b.map((m) => m.hipRatio))
-    if (t >= HIP_REF_FROM && t <= HIP_REF_TO) this.hipRefs.push(hipRatio)
+    if (t >= HIP_REF_FROM && t <= HIP_REF_TO) {
+      this.hipRefs.push(hipRatio)
+      this.leanRefs.trunk.push(trunk)
+      this.leanRefs.body.push(body)
+    }
     if (this.hipRef === null && t > HIP_REF_TO && this.hipRefs.length) this.hipRef = mean(this.hipRefs)
+    if (this.leanRef === null && t > HIP_REF_TO && this.leanRefs.trunk.length) this.leanRef = { trunk: mean(this.leanRefs.trunk), body: mean(this.leanRefs.body) }
     const hipDrop = this.hipRef ? Math.max(0, ((this.hipRef - hipRatio) / this.hipRef) * 100) : 0
     const head = Math.max(0, neck - this.baseline.neck)
-    const v = { head, trunk, body, hip: hipDrop }
-    const sample: Sample = { t, head, trunk, body, hipDrop, score: postureScore(v), quiet: this.quiet }
+    const judge = this.leanRef ? { trunk: toScale('trunk', trunk - this.leanRef.trunk), body: toScale('body', body - this.leanRef.body) } : undefined
+    const v = { head, trunk: judge?.trunk ?? trunk, body: judge?.body ?? body, hip: hipDrop }
+    const sample: Sample = { t, head, trunk, body, hipDrop, score: postureScore(v), quiet: this.quiet, judge }
     this.samples.push(sample)
     this.maybeKeepStride(sample)
     return sample
@@ -195,8 +204,9 @@ export class Coach {
   }
 
   private value(s: Sample, k: ItemKey) {
-    return k === 'hip' ? s.hipDrop : s[k]
+    return judged(s, k)
   }
+
 
   private say(ev: CoachEvent[], t: number, item: CueLog['item'], text: string) {
     ev.push({ type: 'speak', text })
@@ -365,3 +375,19 @@ function resample(ring: { frame: Frame; t: number }[], n: number, sec: number): 
 }
 
 export { itemScore }
+
+// 判定に使う値。上体と体全体は、走り始めの自分の基準ができていれば、その増え方（LIMITS の目盛りに直したもの）
+export function judged(s: Sample, k: ItemKey): number {
+  if (k === 'hip') return s.hipDrop
+  if (k === 'head') return s.head
+  return s.judge?.[k] ?? s[k]
+}
+
+// 増え方を、決まった線（LIMITS）の目盛りに直す：増え方の満点・声をかける線・0点が、LIMITS のそれぞれに重なるように
+export function toScale(k: 'trunk' | 'body', delta: number): number {
+  const a = REL_LIMITS[k]
+  const b = LIMITS[k]
+  if (delta <= a.full) return b.full - (a.full - delta)
+  if (delta <= a.cue) return b.full + ((delta - a.full) * (b.cue - b.full)) / (a.cue - a.full)
+  return b.cue + ((delta - a.cue) * (b.zero - b.cue)) / (a.zero - a.cue)
+}

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HIP_REF, LIMITS, POWER, PRAISE, QUIET, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
+import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HIP_REF, LIMITS, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる
@@ -98,6 +98,10 @@ export function Logic() {
             ))}
           </tbody>
         </table>
+        <Row>
+          上体と体全体は、走り始めて{HIP_REF.to / 60}分たつと、走り始め（{HIP_REF.from}秒〜{HIP_REF.to / 60}分）の自分の平均からの増え方で判定に切り替える。上体は+{REL_LIMITS.trunk.cue}°、体全体は+{REL_LIMITS.body.cue}°を越えたら声をかける（満点は+{REL_LIMITS.trunk.full}°・+{REL_LIMITS.body.full}°まで、0点は+{REL_LIMITS.trunk.zero}°・+{REL_LIMITS.body.zero}°）。上の表の線は、最初の{HIP_REF.to / 60}分だけ使う。
+          研究データ（10人）で、ふつうに走ったときの上体の傾きは人により0.6〜8.8°とばらばらだが、わざと前に倒すとどの人も約6〜12°増えた。仮想実験で、決まった線だけだとふつうに走っている人の6秒平均の17%で声がかかったが、自分と比べると1%になり、前に倒したときに声がかかる割合は37%から59%に上がった。
+        </Row>
         <Row>
           姿勢スコア{SCORE.good}点以上が「良い」、{SCORE.mid}点以上が「ふつう」、それ未満が「悪い」。
         </Row>

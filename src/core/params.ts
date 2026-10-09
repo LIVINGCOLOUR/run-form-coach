@@ -100,6 +100,15 @@ export const LIMITS: Record<'head' | 'trunk' | 'body' | 'hip', { full: number; z
   hip: { full: 3, zero: 10, cue: 6 },
 }
 
+// 上体と体全体は、走り始め（HIP_REF の区間）の自分の平均からの増え方で判定する（それまでは LIMITS の決まった線）。
+// 研究データ（Van Hooren 2024、10人）で、ふつうに走ったときの傾きは人により 0.6〜8.8°（上体）とばらばらだが、
+// わざと前に倒すと、上体はどの人も約6〜12°、体全体は約4°増えた。決まった線だけでは、もともと前傾の大きい人に
+// 声がかかりすぎ、小さい人の崩れを見逃す
+export const REL_LIMITS: Record<'trunk' | 'body', { full: number; zero: number; cue: number }> = {
+  trunk: { full: 2, zero: 10, cue: 5 },
+  body: { full: 1.5, zero: 7, cue: 3.5 },
+}
+
 // 点数
 export const SCORE = {
   good: 80, // これ以上が「良い」

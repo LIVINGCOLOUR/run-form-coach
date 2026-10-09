@@ -274,6 +274,23 @@ const absent = (coach: Coach, from: number, sec: number) => {
   return speak
 }
 
+describe('走り始めの自分との比べ', () => {
+  it('もともと前傾が大きい人には、決まった線を越えていても、走り始めから変わらなければ声をかけない', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 }, { pause: false })
+    const big: Measure = { ...good, trunk: 16, body: 15 } // 決まった線（上体15°・体全体14°）を越えている
+    const said = feedSparse(coach, 0, 400, big).speak
+    const after = coach.cues.filter((c) => c.t > 200 && (c.item === 'trunk' || c.item === 'body'))
+    expect(after.length).toBe(0)
+    expect(said.length).toBeGreaterThan(0) // 最初の3分は決まった線で見る
+  })
+  it('前傾が小さい人でも、走り始めより大きく倒れたら声をかける', () => {
+    const coach = new Coach({ neck: 2, createdAt: 0 }, { pause: false })
+    feedSparse(coach, 0, 200, { ...good, trunk: 3 })
+    const said = feedSparse(coach, 200, 30, { ...good, trunk: 10 }).speak // 決まった線（15°）には届かないが、走り始めより7°大きい
+    expect(said.some((x) => x.includes('上体が前に倒れすぎています'))).toBe(true)
+  })
+})
+
 describe('前かがみ', () => {
   it('上体が倒れたら声をかけ、起こしたらほめる。一時停止を切っていれば、止まっても走り続ける扱い', () => {
     const coach = new Coach({ neck: 2, createdAt: 0 }, { pause: false })

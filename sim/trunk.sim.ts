@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { loadUpper, type UpperTrial } from './vanhooren'
 import { makeCamera, toFrame, rng, W, H, type Placement, type Noise, type Body } from './camera'
 import { levelFrame, measure, rotateFrame } from '../src/core/geometry'
-import { LIMITS } from '../src/core/params'
+import { LIMITS, REL_LIMITS } from '../src/core/params'
 import type { V3 } from './rbds'
 
 const DIR = process.env.VH_DIR!
@@ -117,4 +117,64 @@ it('上体の傾きの判定のずれ', () => {
   const text = `${head}\n${rows.join('\n')}`
   console.log(text)
   writeFileSync(process.env.SIM_OUT ?? 'sim/result-trunk.md', text + '\n')
+})
+
+// 走り始めの自分との比べ：ふつうに走った最初の60秒を基準にし、そのあとの60秒（ふつう）と、前に倒して走った30秒で、
+// 6秒平均が声をかける線を越えた割合を、決まった線と比べる
+function perSecond(tr: UpperTrial, pl: Placement, noise: Noise, seed: number, from: number, sec: number) {
+  const cam = makeCamera(pl, at(tr, from).pelvis)
+  const r = rng(seed)
+  const st = { ar: [] as number[], swap: 0 }
+  const out: { trunk: number; body: number }[] = []
+  let acc: { trunk: number[]; body: number[] } = { trunk: [], body: [] }
+  for (let i = 0; i < sec * FPS; i++) {
+    let f = toFrame(at(tr, from + i / FPS), cam, noise, st, r, 1 / FPS)
+    if (pl.fix) f = levelFrame(rotateFrame(f, pl.roll, W / 2, H / 2), cam.pitch, pl.vfov, W, H)
+    const m = measure(f)
+    acc.trunk.push(m.trunk)
+    acc.body.push(m.body)
+    if ((i + 1) % FPS === 0) {
+      out.push({ trunk: mean(acc.trunk), body: mean(acc.body) })
+      acc = { trunk: [], body: [] }
+    }
+  }
+  return out
+}
+function share(per: { trunk: number; body: number }[], over: (w: { trunk: number; body: number }) => boolean) {
+  let n = 0
+  let c = 0
+  for (let s = 0; s + 6 <= per.length; s++, n++) {
+    const w = { trunk: mean(per.slice(s, s + 6).map((x) => x.trunk)), body: mean(per.slice(s, s + 6).map((x) => x.body)) }
+    if (over(w)) c++
+  }
+  return c / n
+}
+
+it('走り始めの自分との比べ', () => {
+  const files = readdirSync(DIR)
+  const subjects = [...new Set(files.filter((f) => /^Sub_\d+_trunklean\.c3d$/i.test(f)).map((f) => f.slice(0, 6)))]
+  const pairs = subjects.flatMap((s) => {
+    const lean = files.find((f) => f.toLowerCase() === `${s.toLowerCase()}_trunklean.c3d`)
+    const norm = files.find((f) => f === `${s}_333ms.c3d` || f === `${s}_333.c3d`)
+    return lean && norm ? [{ lean: loadUpper(join(DIR, lean), s), norm: loadUpper(join(DIR, norm), s) }] : []
+  })
+  const rows = CASES.map((c) => {
+    const pl = { ...BASE, ...c.pl }
+    const noise = { ...BASE_NOISE, ...c.noise }
+    const r = pairs.map((p, k) => {
+      const ref = perSecond(p.norm, pl, noise, 70 + k, 20, 60)
+      const later = perSecond(p.norm, pl, noise, 80 + k, 80, 60)
+      const lean = perSecond(p.lean, pl, noise, 90 + k, 5, 30)
+      const rt = mean(ref.map((x) => x.trunk))
+      const rb = mean(ref.map((x) => x.body))
+      const abs = (w: { trunk: number; body: number }) => w.trunk > LIMITS.trunk.cue || w.body > LIMITS.body.cue
+      const rel = (w: { trunk: number; body: number }) => w.trunk - rt > REL_LIMITS.trunk.cue || w.body - rb > REL_LIMITS.body.cue
+      return { absN: share(later, abs), absL: share(lean, abs), relN: share(later, rel), relL: share(lean, rel) }
+    })
+    const pc = (xs: number[]) => `${Math.round(mean(xs) * 100)}%`
+    return `| ${c.label} | ${pc(r.map((x) => x.absN))} | ${pc(r.map((x) => x.absL))} | ${pc(r.map((x) => x.relN))} | ${pc(r.map((x) => x.relL))} |`
+  })
+  const text = `| 置き方 | 決まった線：ふつう | 決まった線：前に倒す | 自分と比べる：ふつう | 自分と比べる：前に倒す |\n|---|---|---|---|---|\n${rows.join('\n')}`
+  console.log(text)
+  writeFileSync((process.env.SIM_OUT ?? 'sim/result-trunk.md').replace(/\.md$/, '-rel.md'), text + '\n')
 })

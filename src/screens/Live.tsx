@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { BASELINE, CORRECT, RUNNING, SETUP } from '../core/params'
 import type { Baseline, Frame, ItemKey, Measure, Sample } from '../core/types'
-import { Coach, type CoachEvent, type CoachState } from '../core/coach'
+import { Coach, judged, type CoachEvent, type CoachState } from '../core/coach'
 import { facing, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../core/geometry'
 import { MotionDetector, bodyVisible } from '../core/motion'
 import { L } from '../core/landmarks'
@@ -420,8 +420,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           lastSample = coach.samples[coach.samples.length - 1]
           if (lastSample && !coach.quiet) {
             if (overCue('head', lastSample.head)) hot.add('head')
-            if (overCue('trunk', lastSample.trunk)) hot.add('trunk')
-            if (overCue('body', lastSample.body)) hot.add('body')
+            if (overCue('trunk', judged(lastSample, 'trunk'))) hot.add('trunk')
+            if (overCue('body', judged(lastSample, 'body'))) hot.add('body')
           }
         }
       }
@@ -520,8 +520,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
               {(
                 [
                   ['頭と背中', last.head, overCue('head', last.head)],
-                  ['体幹の前傾', last.trunk, overCue('trunk', last.trunk)],
-                  ['体全体の前傾', last.body, overCue('body', last.body)],
+                  ['体幹の前傾', last.trunk, overCue('trunk', judged(last, 'trunk'))],
+                  ['体全体の前傾', last.body, overCue('body', judged(last, 'body'))],
                 ] as [string, number, boolean][]
               ).map(([label, v, bad]) => (
                 <div key={label} style={{ background: 'rgba(10,12,14,0.78)', border: `1px solid ${bad ? 'var(--warn)' : 'var(--line)'}`, borderRadius: 12, padding: '8px 12px' }}>
@@ -600,10 +600,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             </div>
           )}
 
-          {last && hud.phase === 'run' && !hud.quiet && (['head', 'trunk', 'body', 'hip'] as ItemKey[]).some((k) => overCue(k, k === 'hip' ? last.hipDrop : last[k])) && (
+          {last && hud.phase === 'run' && !hud.quiet && (['head', 'trunk', 'body', 'hip'] as ItemKey[]).some((k) => overCue(k, judged(last, k))) && (
             <div style={{ position: 'absolute', right: 16, top: 110 }}>
               <div style={{ padding: '8px 14px', borderRadius: 20, background: 'var(--warn)', color: '#0A0C0E', fontSize: 14, fontWeight: 900 }}>
-                {ITEM_TEXT[(['head', 'trunk', 'body', 'hip'] as ItemKey[]).find((k) => overCue(k, k === 'hip' ? last.hipDrop : last[k]))!]}
+                {ITEM_TEXT[(['head', 'trunk', 'body', 'hip'] as ItemKey[]).find((k) => overCue(k, judged(last, k)))!]}
               </div>
             </div>
           )}

@@ -42,6 +42,8 @@ export interface Sample {
   hipDrop: number // 序盤の自分の腰の高さからの下がり（%）
   score: number // 姿勢スコア 0〜100
   quiet: boolean // 声なしで確認している時間か
+  // 判定に使った値（上体と体全体は、走り始めの自分からの増え方を LIMITS の目盛りに直したもの）。ないときは trunk・body そのもの
+  judge?: { trunk: number; body: number }
 }
 
 export type Category = 'good' | 'mid' | 'bad'
