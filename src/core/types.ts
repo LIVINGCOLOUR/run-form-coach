@@ -79,4 +79,8 @@ export interface RunLog {
   rows: number[][]
   events: [number, string][] // [t, 話した言葉や段階の切り替え]
   sessionId?: string
+  // 同じ瞬間の performance.now()（ms）と Date.now()（ms）。t が performance.now() の秒のとき（カメラで撮ったとき）だけある。
+  // 別の端末の記録（スマホ版）と時刻を合わせるのに使う：ふつうの時刻（ms） = epochMs + (t × 1000 − perfMs)
+  // 動画で試したときの t は動画の中の秒なので、付けない
+  clock?: { perfMs: number; epochMs: number }
 }

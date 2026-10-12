@@ -96,7 +96,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     let lastMoving = false
     let lastNextSay = 0 // 次に何をすればいいかを最後に言った時刻
 
-    const rec = new LogRecorder() // 調整用の記録（骨格の点と判定の数字）
+    // 調整用の記録（骨格の点と判定の数字）。カメラで撮るときは、スマホ版の記録と時刻を合わせられるよう、時計の対応を残す
+    const rec = new LogRecorder(file ? undefined : { perfMs: performance.now(), epochMs: Date.now() })
     let nowT = 0
     let tickMoving = false
     const setPhase = (p: Phase) => {

@@ -18,8 +18,9 @@
 - 付け方の確認（`mount.ts`）：腰以外（腕・手・ポケット）・ゆるい・途中でずれた、を見分けて1回だけ知らせ、その走りでは判定を止めて記録に印。主な手がかりはジャイロ。線（`MOUNT`）は模擬データだけで決めた仮の値
 - 線（`PHONE_LIMITS`）は、ピッチの5%（Heiderscheit 2011）以外は根拠のない仮の値
 - 角速度は rad/s で受け取る。Web の DeviceMotion の rotationRate は deg/s なので、`sensor.ts` の `toMeasure` で直す（alpha→z、beta→x、gamma→y）。加速度は accelerationIncludingGravity をそのまま渡す（3つの軸の符号がそろって逆の機種でも、見る役の値は変わらない）
-- 画面（ウェブ）：ホームの「スマホ版をはじめる」で、動きのセンサーの許可と画面が消えない仕組み（Wake Lock）を求め、`screens/PhoneLive.tsx` で測って声をかける。結果は `screens/PhoneResult.tsx`（カメラ版の結果とは別）。1回の走りの中身は画面から切り離した `session.ts` の `PhoneRun`。声にする項目はピッチだけ（`PHONE_VOICED`）だが、しくみは大きく崩れた項目にも声をかけるので、ブレーキ・上下動の声が出ることはある
+- 画面（ウェブ）：ホームの「スマホ版をはじめる」で、動きのセンサーの許可と画面が消えない仕組み（Wake Lock）を求め、`screens/PhoneLive.tsx` で測って声をかける。結果は `screens/PhoneResult.tsx`（カメラ版の結果とは別）。1回の走りの中身は画面から切り離した `session.ts` の `PhoneRun`。声にする項目はピッチだけ（`PHONE_VOICED`）。ブレーキ・上下動は、大きく崩れても声をかけない（しくみの `muteOthers`）。付け方の確認の声は別にかかる
 - 記録：`log.ts`。生の値（届いたコマすべて：t・ふつうの時刻 wallMs・加速度・角速度・しくみの状態）と1秒ごとの判定の値（測った値・線と比べた値・付け方の手がかり）を残し、`storage.ts` の `exportPhoneLog` でカメラ版と同じ形（`{ log, session }`）に書き出す。列の意味はファイルの `units` に入る
+- カメラ版と比べる道具：`compare.ts`（`npm run compare -- <スマホ版の書き出し> <カメラ版の書き出し>`、`scripts/compare-runs.mjs`）。2つの記録をふつうの時刻に直し、動きの強さ（加速度・腰の高さの揺れ）の相関で2台の時計のずれを直して、区間ごとにピッチ・上下動・ブレーキ・付け方の確認を並べる。カメラ版の記録には、performance.now() とふつうの時刻の対応（`clock`）が入る。手順は `docs/phone-test1.md`。確かめたのは模擬データだけ
 - 「模擬データで試す」：`simulate.ts` の `demoRun` を10倍の速さでセンサーの代わりに流し込む（ブラウザで画面と記録を確かめるため）
 
 ## 実機で確かめること

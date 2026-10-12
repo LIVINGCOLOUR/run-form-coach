@@ -12,7 +12,8 @@
     "test": "vitest run",
     "lint": "oxlint",
     "preview": "vite preview",
-    "voices": "node scripts/gen-voices.mjs"
+    "voices": "node scripts/gen-voices.mjs",
+    "compare": "node scripts/compare-runs.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",

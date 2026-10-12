@@ -510,3 +510,12 @@ describe('ランナーのレベル', () => {
     expect(said.some((x) => x.includes('頭が前に出ています'))).toBe(false)
   })
 })
+
+describe('調整用の記録の時計', () => {
+  it('カメラで撮るときは performance.now() とふつうの時刻の対応を残し、動画のときは残さない', () => {
+    const live = new LogRecorder({ perfMs: 12345, epochMs: 1_760_000_000_000 })
+    expect(live.log.clock).toEqual({ perfMs: 12345, epochMs: 1_760_000_000_000 })
+    expect(live.log.startedAt).toBe(1_760_000_000_000)
+    expect(new LogRecorder().log.clock).toBeUndefined()
+  })
+})

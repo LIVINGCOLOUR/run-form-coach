@@ -17,9 +17,12 @@ const r2 = (x: number) => Math.round(x * 100) / 100
 
 export class LogRecorder {
   log: RunLog
-  constructor() {
-    const now = Date.now()
+  // clock：t が performance.now() の秒のとき（カメラで撮るとき）に、同じ瞬間の performance.now() と Date.now() を渡す。
+  //   スマホ版の記録と時刻を合わせるため（scripts/compare-runs.mjs）。動画で試すときは渡さない
+  constructor(clock?: { perfMs: number; epochMs: number }) {
+    const now = clock?.epochMs ?? Date.now()
     this.log = { id: `log-${now}`, startedAt: now, width: 0, height: 0, columns: LOG_COLUMNS, points: LOG_POINTS, phases: PHASES, rows: [], events: [] }
+    if (clock) this.log.clock = clock
   }
 
   frame(

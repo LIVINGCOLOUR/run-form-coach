@@ -14,7 +14,8 @@ import type { PhoneMeasure } from './signal'
 //   終えるとき：run.finish() → 結果（短すぎれば null）と記録
 
 // 声にする項目。ブレーキ・上下動だけの声は、トレッドミルでカメラ版と比べて確かめるまで出さない（docs/phone-spec.md）。
-// しくみは、声にしない項目でも大きく崩れたときは声をかけるので、ブレーキ・上下動の声が出ることはある
+// ほかの項目は、大きく崩れても声をかけない（しくみの muteOthers）。測って記録し、結果の画面に出すだけ。
+// 付け方の確認の声（mount・place）は、見る役の「一度だけかける声」なので、これとは別にかかる
 export const PHONE_VOICED: PhoneItem[] = ['cadence']
 
 export interface PhoneSession {
@@ -44,7 +45,7 @@ const MIN_SAMPLES = 30
 
 export class PhoneRun {
   readonly analyzer = new PhoneAnalyzer()
-  readonly coach = new PhoneCoach(this.analyzer, { pause: true, items: PHONE_VOICED })
+  readonly coach = new PhoneCoach(this.analyzer, { pause: true, items: PHONE_VOICED, muteOthers: true })
   readonly rec: PhoneLogRecorder
   private seen = 0
   private lastState = this.coach.state

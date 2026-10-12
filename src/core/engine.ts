@@ -133,16 +133,20 @@ export class CueEngine<M, S, K extends string> {
   private readonly order: K[]
   private readonly pauseOn: boolean
   protected readonly activeItems: K[]
+  private readonly muteOthers: boolean
   private readonly said: EngineSay
 
   // pause: 止まったら一時停止するか（検証中は切っておく）
   // items: 声をかける項目（ランナーのレベルで決まる。ほかの項目は大きく崩れたときだけ）。なければすべて
-  constructor(analyzer: ModeAnalyzer<M, S, K>, opts: { pause?: boolean; items?: K[] } = {}) {
+  // muteOthers: items のほかの項目は、大きく崩れても声をかけない（測って記録するだけ。精度を確かめていない項目のある入り口で使う）。
+  //   一度だけかける声（見る役の once）は、これとは別にかける
+  constructor(analyzer: ModeAnalyzer<M, S, K>, opts: { pause?: boolean; items?: K[]; muteOthers?: boolean } = {}) {
     this.analyzer = analyzer
     this.order = analyzer.items.map((s) => s.key)
     this.specs = Object.fromEntries(analyzer.items.map((s) => [s.key, s])) as Record<K, ItemSpec<K>>
     this.pauseOn = opts.pause ?? true
     this.activeItems = opts.items ?? this.order
+    this.muteOthers = opts.muteOthers ?? false
     this.said = { ...SAY, ...analyzer.say }
   }
 
@@ -324,8 +328,8 @@ export class CueEngine<M, S, K extends string> {
         if (vs.length < CUE_P.window * CUE_P.coverage) continue
         const avg = mean(vs)
         const lim = this.specs[k].limits
-        // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ
-        const over = this.activeItems.includes(k) ? this.over(k, avg) : scoreOf(lim, avg) < SCORE.mid
+        // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ。muteOthers なら声をかけない
+        const over = this.activeItems.includes(k) ? this.over(k, avg) : !this.muteOthers && scoreOf(lim, avg) < SCORE.mid
         if (over && t - (this.lastCue[k] ?? -1e9) >= CUE_P.cooldown) {
           // 直ったかの線は、満点の範囲と声をかける線の真ん中（満点まで戻らなくても、はっきり戻ればほめる）
           this.cue(ev, t, k, (lim.full + lim.cue) / 2)

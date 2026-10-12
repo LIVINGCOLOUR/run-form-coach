@@ -26,3 +26,6 @@ public/mediapipe/
 .env.local
 .env*.local
 .gcp-key.json
+
+# スマホ版とカメラ版の比べ（scripts/compare-runs.mjs）の結果
+compare-out/

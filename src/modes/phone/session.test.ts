@@ -132,3 +132,20 @@ describe('スマホ：1回の走りと記録', () => {
     expect(log.rows.length).toBe(60 * 20)
   })
 })
+
+describe('スマホ：声にするのはピッチだけ', () => {
+  it('上下動とブレーキが大きく崩れても、ピッチが落ちていなければ声をかけない（確かめるまで出さない）', () => {
+    const o: [number, number, number] = [90, 0, 0]
+    const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, orientation: o }
+    const data = [
+      ...simulateRun({ ...real, cadence: 172, bounceCm: 8, brakingMs: 0.3, seconds: 240, seed: 21 }),
+      ...simulateRun({ ...real, cadence: 172, bounceCm: 12, brakingMs: 0.6, seconds: 90, seed: 22, t0: 240 }),
+    ]
+    const { run, said } = feedAll(data)
+    // 崩れは測れている（判定の値が線を大きく越えている）
+    const last = run.coach.samples.slice(-30)
+    expect(Math.min(...last.map((s) => s.values.bounce ?? 0))).toBeGreaterThan(3)
+    expect(said.map((s) => s.text)).not.toContain(PHONE_CUE.bounce)
+    expect(said.map((s) => s.text)).not.toContain(PHONE_CUE.braking)
+  })
+})

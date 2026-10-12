@@ -108,3 +108,17 @@ describe('判定しない秒', () => {
     expect(e.quietHeldSec).toBe(before)
   })
 })
+
+describe('声をかける項目', () => {
+  it('注意していない項目も、大きく崩れたら声をかける（ふつう）', () => {
+    const e = new Toy(new ToyAnalyzer(), { items: ['a'] })
+    const said = run(e, 0, 40, { a: 0, b: 9 })
+    expect(said).toContain('b が崩れています。')
+  })
+
+  it('muteOthers なら、注意していない項目は大きく崩れても声をかけない。注意している項目には声をかける', () => {
+    const e = new Toy(new ToyAnalyzer(), { items: ['a'], muteOthers: true })
+    expect(run(e, 0, 40, { a: 0, b: 9 }).some((x) => x.includes('b が'))).toBe(false)
+    expect(run(e, 40, 20, { a: 8, b: 9 })).toContain('a が崩れています。')
+  })
+})
