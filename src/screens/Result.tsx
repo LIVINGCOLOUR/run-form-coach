@@ -3,6 +3,7 @@ import type { ItemKey, Session } from '../core/types'
 import { ShareBar } from '../ui/ShareBar'
 import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
+import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
 
 const ITEMS: ItemKey[] = ['head', 'trunk', 'body', 'hip']
 
@@ -12,6 +13,10 @@ export function Result({ session: s, sessions, go }: { session: Session; session
   const good = Math.round(s.share.good * 100)
   const delta = prev ? Math.round((s.share.good - prev.share.good) * 100) : null
   const goodMin = Math.round((s.share.good * s.durationSec) / 60)
+  // 主役：声なしで保てた時間
+  const held = splitMinSec(s.quietHeldSec)
+  const heldAny = held.min > 0 || held.sec > 0
+  const heldDelta = quietDelta(s.quietHeldSec, prev?.quietHeldSec)
   const cues = s.cues.filter((c) => ITEMS.includes(c.item as ItemKey))
   const recovers = s.cues.filter((c) => c.item === 'recover').length
   const half = s.durationSec / 2
@@ -40,14 +45,47 @@ export function Result({ session: s, sessions, go }: { session: Session; session
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontSize: 14 }} className="muted">声なしで保てた時間</div>
+        {heldAny ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '6px 12px' }}>
+            <div className="num" style={{ fontSize: 104, lineHeight: 0.82, color: 'var(--accent)', whiteSpace: 'nowrap' }}>
+              {held.min > 0 && (
+                <>
+                  {held.min}
+                  <span style={{ fontSize: 40 }}>分</span>
+                </>
+              )}
+              {(held.sec > 0 || held.min === 0) && (
+                <>
+                  {held.sec}
+                  <span style={{ fontSize: 40 }}>秒</span>
+                </>
+              )}
+            </div>
+            {heldDelta !== null && heldDelta !== 0 && (
+              <div style={{ fontSize: 13, paddingBottom: 8, color: heldDelta > 0 ? 'var(--accent)' : 'var(--warn)' }}>
+                {heldDelta > 0 ? '▲' : '▼'} {fmtMinSec(Math.abs(heldDelta))}　前回より
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 22, fontWeight: 900, lineHeight: 1.4, color: 'var(--accent)' }}>{QUIET_NONE.title}</div>
+            <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">{QUIET_NONE.how}</div>
+          </div>
+        )}
+        {heldAny && <div style={{ fontSize: 12 }} className="muted">声をかけずに見守る間、良い姿勢で走れた時間 · {Math.round(s.durationSec / 60)}分のうち</div>}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ fontSize: 14 }} className="muted">良い姿勢で走れた時間</div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
-          <div className="num" style={{ fontSize: 120, lineHeight: 0.82, color: 'var(--accent)' }}>
+          <div className="num" style={{ fontSize: 72, lineHeight: 0.85 }}>
             {good}
-            <span style={{ fontSize: 56 }}>%</span>
+            <span style={{ fontSize: 36 }}>%</span>
           </div>
           {delta !== null && (
-            <div style={{ fontSize: 13, paddingBottom: 10, color: delta >= 0 ? 'var(--accent)' : 'var(--warn)' }}>
+            <div style={{ fontSize: 13, paddingBottom: 6, color: delta >= 0 ? 'var(--accent)' : 'var(--warn)' }}>
               {delta >= 0 ? '▲' : '▼'} {Math.abs(delta)}%　前回より
             </div>
           )}
@@ -92,7 +130,6 @@ export function Result({ session: s, sessions, go }: { session: Session; session
       <div style={{ borderTop: '1px solid var(--line)' }}>
         <Stat label="崩れ始め" value={s.breakdownMin !== undefined ? `${s.breakdownMin}分` : 'なし'} note={prev?.breakdownMin !== undefined && s.breakdownMin !== undefined ? `前回 ${prev.breakdownMin}分` : undefined} />
         <Stat label="声をかけた回数" value={`${cues.length}`} note={`前半 ${firstHalf} · 後半 ${cues.length - firstHalf}`} />
-        <Stat label="声なしで保てた時間" value={`${Math.round(s.quietHeldSec / 60)}分`} note={`${Math.round(s.durationSec / 60)}分のうち`} />
         {taps.length > 0 && <Stat label="「今悪い」との一致" value={`${Math.round((matched / taps.length) * 100)}%`} note={`${taps.length}回のうち ${matched}回`} />}
       </div>
 
