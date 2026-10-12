@@ -1,4 +1,4 @@
-import { ABSENCE, BREAKDOWN, CUE as CUE_P, POWER, PRAISE, QUIET, RUNNING, SCORE } from './params'
+import { ABSENCE, BREAKDOWN, CUE as CUE_P, POWER, PRAISE, QUIET, RUNNING, SCORE, TONE } from './params'
 import { RECOVER, SAY } from './phrases'
 import { category } from './scoring'
 
@@ -10,7 +10,13 @@ import { category } from './scoring'
 
 export type CoachState = 'waiting' | 'running' | 'paused' | 'ended'
 
-export type CoachEvent = { type: 'speak'; text: string } | { type: 'state'; state: CoachState }
+// tone：音で知らせる項目（ItemSpec.tone）の音を鳴らす（on）・止める（off）。bars は鳴らす長さの上限（小節）。
+//   テンポなど音の中身は入り口が決める（スマホ：走り始めの自分のピッチのメトロノーム）。音を使わない入り口は無視してよい
+export type CoachEvent =
+  | { type: 'speak'; text: string }
+  | { type: 'state'; state: CoachState }
+  | { type: 'tone'; on: true; item: string; bars: number }
+  | { type: 'tone'; on: false; item: string }
 
 export interface EngineInput<M> {
   t: number // 実時間（秒）
@@ -30,13 +36,20 @@ export interface ItemSpec<K extends string> {
   key: K
   limits: Limits
   cue: string // 崩れたときにかける言葉
+  // 言葉は初めだけ（TONE.words 回まで）で、あとは音で知らせる。戻ったら音を止め、ほめる言葉も言わない。
+  // くり返すほど次の知らせまでの間をあける（TONE.fadeFrom〜）。なければ毎回言葉（カメラ版）
+  tone?: boolean
 }
 
 export interface CueRecord<K extends string> {
   t: number
   item: K | 'praise' | 'recover'
   text: string
+  tone?: boolean // 言葉ではなく音で知らせた（text は TONE_TEXT）
 }
+
+// 音だけで知らせたときの、記録の文
+export const TONE_TEXT = '（メトロノーム）'
 
 // 1秒の判定の値。その秒に判定しない項目は入れない（0 を入れると「崩れていない」と数えてしまう）
 export type Values<K extends string> = Partial<Record<K, number>>
@@ -121,6 +134,8 @@ export class CueEngine<M, S, K extends string> {
   private onceDue: { item: K; back: number } | null = null
 
   private lastCue: Partial<Record<K, number>> = {}
+  private cueCount: Partial<Record<K, number>> = {} // 項目ごとの、この走りで知らせた回数
+  private toneOn: K | null = null // 音を鳴らしている項目
   private lastAnyCue = -1e9
   private lastPraise = 0
   private pending: Pending<K> | null = null
@@ -174,6 +189,7 @@ export class CueEngine<M, S, K extends string> {
       if (this.state === 'running') {
         if (gone >= ABSENCE.lostSay && !this.lostSaid) {
           this.lostSaid = true
+          this.stopTone(ev)
           ev.push({ type: 'speak', text: this.said.lost })
         }
         if (gone >= ABSENCE.lostEnd) this.end(ev, this.said.giveUp)
@@ -200,6 +216,7 @@ export class CueEngine<M, S, K extends string> {
     } else if (this.pauseOn && this.state === 'running' && this.stillSince !== null && inp.t - this.stillSince >= RUNNING.pauseAfter) {
       this.state = 'paused'
       this.bucket = []
+      this.stopTone(ev)
       ev.push({ type: 'state', state: 'paused' }, { type: 'speak', text: this.said.pause })
     }
     if (this.state !== 'running') return ev
@@ -217,6 +234,7 @@ export class CueEngine<M, S, K extends string> {
   }
 
   private end(ev: CoachEvent[], text: string) {
+    this.stopTone(ev)
     this.state = 'ended'
     ev.push({ type: 'state', state: 'ended' }, { type: 'speak', text })
   }
@@ -266,10 +284,33 @@ export class CueEngine<M, S, K extends string> {
   }
 
   private cue(ev: CoachEvent[], t: number, k: K, back: number) {
-    this.say(ev, t, k, this.specs[k].cue)
+    const n = (this.cueCount[k] ?? 0) + 1
+    this.cueCount[k] = n
+    if (!this.specs[k].tone) this.say(ev, t, k, this.specs[k].cue)
+    else {
+      // 初めは言葉で言い、続けて音を鳴らす（音は入り口が、言葉を言い終えてから鳴らす）。あとは音だけ
+      if (n <= TONE.words) this.say(ev, t, k, this.specs[k].cue)
+      else this.cues.push({ t, item: k, text: TONE_TEXT, tone: true })
+      this.stopTone(ev)
+      ev.push({ type: 'tone', on: true, item: k, bars: TONE.bars })
+      this.toneOn = k
+    }
     this.lastCue[k] = t
     this.lastAnyCue = t
     this.pending = { item: k, t, back }
+  }
+
+  private stopTone(ev: CoachEvent[]) {
+    if (this.toneOn === null) return
+    ev.push({ type: 'tone', on: false, item: this.toneOn })
+    this.toneOn = null
+  }
+
+  // 同じ項目の次の知らせまでの間。音で知らせる項目は、くり返すほどのばす（だんだん減らす）
+  private cooldown(k: K): number {
+    const next = (this.cueCount[k] ?? 0) + 1
+    if (!this.specs[k].tone || next <= TONE.fadeFrom) return CUE_P.cooldown
+    return Math.min(TONE.fadeMax, CUE_P.cooldown + (next - TONE.fadeFrom) * TONE.fadeStep)
   }
 
   private decide(r: Record_<K>): CoachEvent[] {
@@ -304,12 +345,15 @@ export class CueEngine<M, S, K extends string> {
       // 判定しなかった秒は飛ばして、判定した秒だけで見る
       const back = valuesOf(this.within(CUE_P.recoverHold).filter((x) => x.t > p.t), p.item)
       if (back.length >= 2 && t - p.t >= CUE_P.recoverHold && back.every((v) => v <= p.back)) {
-        this.say(ev, t, 'recover', RECOVER[this.cues.length % RECOVER.length])
+        // 音で知らせた項目は、音を止めるだけ（止まることが「戻った」の知らせ。言葉をくり返さない）
+        if (this.specs[p.item].tone) this.stopTone(ev)
+        else this.say(ev, t, 'recover', RECOVER[this.cues.length % RECOVER.length])
         this.pending = null
         return ev
       }
     } else if (this.pending) {
       this.pending = null
+      this.stopTone(ev)
     }
 
     // 一度だけかける声（カメラ：最初から頭が前に出ている）
@@ -330,7 +374,7 @@ export class CueEngine<M, S, K extends string> {
         const lim = this.specs[k].limits
         // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ。muteOthers なら声をかけない
         const over = this.activeItems.includes(k) ? this.over(k, avg) : !this.muteOthers && scoreOf(lim, avg) < SCORE.mid
-        if (over && t - (this.lastCue[k] ?? -1e9) >= CUE_P.cooldown) {
+        if (over && t - (this.lastCue[k] ?? -1e9) >= this.cooldown(k)) {
           // 直ったかの線は、満点の範囲と声をかける線の真ん中（満点まで戻らなくても、はっきり戻ればほめる）
           this.cue(ev, t, k, (lim.full + lim.cue) / 2)
           return ev

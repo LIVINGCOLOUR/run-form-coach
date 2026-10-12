@@ -16,6 +16,11 @@ let busyUntil = 0
 let queued: { text: string; k: VoiceKind }[] = []
 let timer: ReturnType<typeof setTimeout> | null = null
 
+// メトロノーム（metronome.ts）と同じ音の仕組みを使う。声の間は鳴らさないよう、話しているかも渡す
+export const audioContext = () => ctx
+// 声を話している間（言い終えて GAP_MS たつまで）か
+export const voiceBusy = () => performance.now() < busyUntil
+
 const url = (k: VoiceKind, id: PhraseId) => `${import.meta.env.BASE_URL}voices/${k}/${id}.m4a`
 
 export function unlockVoice() {

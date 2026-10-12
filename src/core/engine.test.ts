@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { CueEngine, type EngineSay, type ItemSpec, type ModeAnalyzer, type SecondContext, type Values } from './engine'
-import { SAY } from './phrases'
-import { HIP_REF } from './params'
+import { CueEngine, TONE_TEXT, type CoachEvent, type EngineSay, type ItemSpec, type ModeAnalyzer, type SecondContext, type Values } from './engine'
+import { RECOVER, SAY } from './phrases'
+import { CUE, HIP_REF, TONE } from './params'
 
 // しくみだけを確かめるための、作りものの入り口。1コマの測定は「項目 a の値」で、null ならその秒は判定しない
 type Item = 'a' | 'b'
@@ -120,5 +120,78 @@ describe('声をかける項目', () => {
     const e = new Toy(new ToyAnalyzer(), { items: ['a'], muteOthers: true })
     expect(run(e, 0, 40, { a: 0, b: 9 }).some((x) => x.includes('b が'))).toBe(false)
     expect(run(e, 40, 20, { a: 8, b: 9 })).toContain('a が崩れています。')
+  })
+})
+
+describe('音で知らせる項目（tone）', () => {
+  const TONE_ITEMS: ItemSpec<Item>[] = [{ ...ITEMS[0], tone: true }, ITEMS[1]]
+  class ToneAnalyzer extends ToyAnalyzer {
+    items = TONE_ITEMS
+  }
+  type Ev = { t: number; ev: CoachEvent }
+  function events(e: Toy, from: number, sec: number, m: M): Ev[] {
+    const out: Ev[] = []
+    for (let i = 0; i < sec * 10; i++) {
+      const t = from + i / 10
+      for (const ev of e.update({ t, present: true, moving: true, m })) out.push({ t, ev })
+    }
+    return out
+  }
+  const speaks = (xs: Ev[]) => xs.flatMap((x) => (x.ev.type === 'speak' ? [x.ev.text] : []))
+  const tones = (xs: Ev[]) => xs.flatMap((x) => (x.ev.type === 'tone' ? [{ t: x.t, on: x.ev.on }] : []))
+
+  it('初めは言葉と音、戻ったら音を止めてほめる言葉は言わない。2回目からは音だけ', () => {
+    const e = new Toy(new ToneAnalyzer())
+    events(e, 0, 20, { a: 0 })
+    const first = events(e, 20, 20, { a: 8 })
+    expect(speaks(first)).toEqual(['a が崩れています。'])
+    const on1 = first.findIndex((x) => x.ev.type === 'tone' && x.ev.on)
+    expect(on1).toBeGreaterThanOrEqual(0)
+    expect(first[on1].ev).toEqual({ type: 'tone', on: true, item: 'a', bars: TONE.bars })
+    const back = events(e, 40, 15, { a: 0 })
+    expect(tones(back).map((x) => x.on)).toEqual([false])
+    expect(speaks(back)).toEqual([]) // 「いい感じです」も言わない
+    const second = events(e, 55, 30, { a: 8 })
+    expect(speaks(second)).toEqual([])
+    expect(tones(second)[0].on).toBe(true)
+    expect(e.cues.filter((c) => c.item === 'a').map((c) => c.tone ?? false)).toEqual([false, true])
+    expect(e.cues[1].text).toBe(TONE_TEXT)
+  })
+
+  it('外れたままなら、くり返すほど間をあける（TONE.fadeFrom 回目まではふつうの間）', () => {
+    const e = new Toy(new ToneAnalyzer())
+    events(e, 0, 20, { a: 0 })
+    const xs = events(e, 20, 1200, { a: 8 })
+    const ons = tones(xs).filter((x) => x.on).map((x) => x.t)
+    const gaps = ons.slice(1).map((t, i) => Math.round(t - ons[i]))
+    const want = gaps.map((_, i) => {
+      const n = i + 2 // 何回目の知らせか
+      return n <= TONE.fadeFrom ? CUE.cooldown : Math.min(TONE.fadeMax, CUE.cooldown + (n - TONE.fadeFrom) * TONE.fadeStep)
+    })
+    expect(gaps.length).toBeGreaterThan(5)
+    expect(gaps).toEqual(want)
+    expect(gaps[gaps.length - 1]).toBe(TONE.fadeMax)
+    expect(speaks(xs)).toEqual(['a が崩れています。']) // 言葉は初めの1回だけ
+    // 鳴らしたまま次を鳴らさない：on と off が交互
+    const seq = tones(xs).map((x) => x.on)
+    seq.forEach((on, i) => expect(on).toBe(i % 2 === 0))
+  })
+
+  it('止まったら音も止める', () => {
+    const e = new Toy(new ToneAnalyzer(), { pause: true })
+    events(e, 0, 20, { a: 0 })
+    events(e, 20, 10, { a: 8 })
+    const stop: Ev[] = []
+    for (let i = 0; i < 50; i++) for (const ev of e.update({ t: 30 + i / 10, present: true, moving: false, m: { a: 8 } })) stop.push({ t: 30 + i / 10, ev })
+    expect(tones(stop).map((x) => x.on)).toEqual([false])
+  })
+
+  it('tone のない項目（カメラ版）は、これまでどおり毎回言葉で、音の知らせは出さない', () => {
+    const e = new Toy(new ToyAnalyzer())
+    events(e, 0, 20, { a: 0 })
+    const xs = [...events(e, 20, 20, { a: 8 }), ...events(e, 40, 15, { a: 0 }), ...events(e, 55, 30, { a: 8 })]
+    expect(tones(xs)).toEqual([])
+    expect(speaks(xs).filter((x) => x === 'a が崩れています。').length).toBe(2)
+    expect(speaks(xs).some((x) => (RECOVER as readonly string[]).includes(x))).toBe(true)
   })
 })

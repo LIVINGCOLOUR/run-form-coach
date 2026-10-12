@@ -21,6 +21,7 @@
 | スマホ版の仕様 | `docs/phone-spec.md` |
 | 判定の精度の確かめ方 | `docs/validation-plan.md` |
 | スマホ版の実機テスト①の手順と比べ方 | `docs/phone-test1.md` |
+| スマホ版の実機テスト②（ピッチの声とメトロノーム）の手順 | `docs/phone-test2.md` |
 | センサーモードの仕様 | `docs/sensor-mode.md` |
 | 競合 | `docs/competitors.md` |
 | 判定のロジックの全体（人向け） | `src/theory/`（公開先の /theory/） |

@@ -50,6 +50,7 @@ const UNITS = {
   'vCadence,vBounce,vBraking': '線と比べた値（走り始めからのピッチの下がり %・上下動の増え cm・ブレーキの増え m/s）。判定しない秒は null',
   mount: `付け方の問題（${PHONE_MOUNTS.map((s, i) => `${i}=${s ?? 'なし'}`).join('、')}）`,
   'stepHz,gravity,gyroSwing,gyroHf,upX,upY,upZ': '付け方の確認の手がかり（mount.ts の MountFeatures）',
+  events: '話した言葉、state:状態（しくみの状態の切り替え）、tone:on:項目:テンポ（歩/分）・tone:off:項目（メトロノームを鳴らす・止める）、ref:later:ピッチ（基準を5〜12分の平均に置き換えた）',
 }
 
 const r = (x: number, k: number) => Math.round(x * k) / k

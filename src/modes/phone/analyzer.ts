@@ -2,7 +2,7 @@ import type { EngineSay, ItemSpec, ModeAnalyzer, SecondContext, SecondOut, Value
 import { HIP_REF, RUNNING } from '../../core/params'
 import { PHRASES } from '../../core/phrases'
 import { MountCheck, mountFeatures, offWaistRunning, type MountFeatures, type MountIssue } from './mount'
-import { PHONE, PHONE_LIMITS } from './params'
+import { PHONE, PHONE_LIMITS, PHONE_REF } from './params'
 import { estimate, isRunning, type Estimate, type PhoneMeasure } from './signal'
 
 // スマホ1台（腰のベルト）の入り口の「見る役」。engine.ts の CueEngine に渡す
@@ -49,9 +49,9 @@ export const PHONE_SAY: Partial<EngineSay> = {
 // 付け方の知らせは、しくみの「一度だけかける声」（once）で出す。値は渡さないので、線と比べて声をかけることはない
 const NEVER = { full: 0, zero: 1, cue: 1 }
 
-// 並び順が、声をかける優先順
+// 並び順が、声をかける優先順。ピッチは、言葉は初めの1回だけで、あとは走り始めのテンポのメトロノームで知らせる（tone）
 export const PHONE_ITEMS: ItemSpec<PhoneItem>[] = [
-  { key: 'cadence', limits: PHONE_LIMITS.cadence, cue: PHONE_CUE.cadence },
+  { key: 'cadence', limits: PHONE_LIMITS.cadence, cue: PHONE_CUE.cadence, tone: true },
   { key: 'braking', limits: PHONE_LIMITS.braking, cue: PHONE_CUE.braking },
   { key: 'bounce', limits: PHONE_LIMITS.bounce, cue: PHONE_CUE.bounce },
   { key: 'mount', limits: NEVER, cue: PHONE_CUE.mount },
@@ -72,6 +72,10 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
   private lastFedAt: number | null = null // 最後に値が来た時刻
   private refs: { cadence: number[]; bounceCm: number[]; brakingMs: number[] } = { cadence: [], bounceCm: [], brakingMs: [] }
   ref: { cadence: number; bounceCm: number; brakingMs: number } | null = null
+  refLater = false // 5〜12分の平均（PHONE_REF）に置き換えた。false のうちは仮の基準（30秒〜3分）
+  refLaterAt: number | null = null // 置き換えた秒
+  // 5〜12分の値。置き換えるか決めたら null（測れた秒が足りなければ、その走りは仮の基準のまま）
+  private laters: { cadence: number[]; bounceCm: number[]; brakingMs: number[] } | null = { cadence: [], bounceCm: [], brakingMs: [] }
   // 直近の1秒で使った、測った値と付け方の手がかり（記録の書き出しで使う）。走っていない秒は est が null
   lastSecond: { est: Estimate | null; mount: MountFeatures | null } | null = null
 
@@ -124,6 +128,22 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
         const r = this.refs
         this.ref = { cadence: mean(r.cadence), bounceCm: mean(r.bounceCm), brakingMs: mean(r.brakingMs) }
         ready = true
+      }
+      // 5〜12分の平均ができたら、基準を置き換える（仮の基準から声をかける線より下がった秒は入れない）
+      const early = this.ref
+      const l = this.laters
+      if (early && l && t >= PHONE_REF.laterFrom && t <= PHONE_REF.laterTo && ((early.cadence - e.cadence) / early.cadence) * 100 <= PHONE_LIMITS.cadence.cue) {
+        l.cadence.push(e.cadence)
+        l.bounceCm.push(e.bounceCm)
+        l.brakingMs.push(e.brakingMs)
+      }
+      if (early && l && t > PHONE_REF.laterTo) {
+        if (l.cadence.length >= (PHONE_REF.laterTo - PHONE_REF.laterFrom) * PHONE_REF.coverage) {
+          this.ref = { cadence: mean(l.cadence), bounceCm: mean(l.bounceCm), brakingMs: mean(l.brakingMs) }
+          this.refLater = true
+          this.refLaterAt = t
+        }
+        this.laters = null
       }
       // 基準ができるまでは判定しない（values に入れない。0 を入れると「良い」を水増しする）。
       // 1秒ごとに0で切らず、平均してから線と比べられるよう差のまま渡す

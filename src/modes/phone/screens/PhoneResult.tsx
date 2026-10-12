@@ -104,13 +104,13 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
         <Stat label="上下動" value={bounce !== null ? bounce.toFixed(1) : '—'} note={s.ref ? `基準 ${s.ref.bounceCm.toFixed(1)} cm` : 'cm'} />
         <Stat label="着地のブレーキ" value={braking !== null ? braking.toFixed(2) : '—'} note={s.ref ? `基準 ${s.ref.brakingMs.toFixed(2)} m/s` : 'm/s'} />
         <Stat label="崩れ始め" value={s.breakdownMin !== undefined ? `${s.breakdownMin}分` : 'なし'} />
-        <Stat label="声をかけた回数" value={`${cues.length}`} />
+        <Stat label="知らせた回数" value={`${cues.length}`} note={`声 ${cues.filter((c) => !c.tone).length} · メトロノーム ${cues.filter((c) => c.tone).length}`} />
       </div>
       <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">上下動とブレーキは、腰のスマホで測った目安です。カメラ版と比べて確かめるまでは、自分の基準との差だけを見てください。</div>
 
       {s.cues.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ fontSize: 13 }} className="muted">最近の声</div>
+          <div style={{ fontSize: 13 }} className="muted">最近の知らせ</div>
           {s.cues.slice(-4).map((c, i) => (
             <div key={i} style={{ display: 'flex', gap: 12, fontSize: 14, lineHeight: 1.5 }}>
               <span className="num muted" style={{ width: 44, flexShrink: 0, fontSize: 15, fontWeight: 500 }}>

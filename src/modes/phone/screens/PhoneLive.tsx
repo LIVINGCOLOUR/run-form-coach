@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CoachState } from '../../../core/engine'
 import { RUNNING } from '../../../core/params'
 import { PHRASES } from '../../../core/phrases'
+import { metronome } from '../../../core/metronome'
 import { loadSettings } from '../../../core/storage'
 import { preloadVoice, speak, stopVoice } from '../../../core/voice'
 import type { MountIssue } from '../mount'
@@ -12,6 +13,7 @@ import { savePhoneLog, savePhoneSession } from '../storage'
 
 // スマホ版の走る画面（ウェブ）。スマホを腰のベルトに付けて走る。画面はつけたまま使う（消えないようにしておく）
 // 声は共通のしくみ（engine.ts）が決め、言葉と音声は phrases.ts のものを使う
+// ピッチの知らせは、初めだけ言葉で、あとは走り始めのテンポのメトロノーム（core/metronome.ts）。声の間は鳴らさない
 // sim：模擬データをセンサーの代わりに流し込む速さ（倍）。ブラウザで画面と記録を試すため
 
 interface Hud {
@@ -21,6 +23,8 @@ interface Hud {
   caption: string
   cadence: number | null // 直近の1秒のピッチ
   refCadence: number | null
+  refLater: boolean // 基準を5〜12分の平均に置き換えた
+  tone: boolean // メトロノームを鳴らしている
   bounceCm: number | null
   brakingMs: number | null
   cadences: (number | null)[]
@@ -43,7 +47,7 @@ const DEG = 180 / Math.PI
 export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string) => void }) {
   const finishRef = useRef<() => void>(() => {})
   const [hud, setHud] = useState<Hud>({
-    state: 'waiting', elapsed: 0, quiet: false, caption: '', cadence: null, refCadence: null, bounceCm: null, brakingMs: null, cadences: [], mount: null, hz: 0, gyro: false, wake: false, noData: false,
+    state: 'waiting', elapsed: 0, quiet: false, caption: '', cadence: null, refCadence: null, refLater: false, tone: false, bounceCm: null, brakingMs: null, cadences: [], mount: null, hz: 0, gyro: false, wake: false, noData: false,
   })
 
   useEffect(() => {
@@ -68,6 +72,7 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
     const finish = async () => {
       if (finished) return
       finished = true
+      metronome.stop()
       const { session, log } = run.finish()
       if (session) await savePhoneSession(session).catch(() => {})
       // 走りが始まらなかったときこそ調整に使うので、記録は残す
@@ -79,6 +84,11 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
     const handle = (ev: ReturnType<PhoneRun['feed']>, t: number) => {
       for (const e of ev) {
         if (e.type === 'speak') say(e.text, t)
+        if (e.type === 'tone') {
+          const bpm = run.tempo()
+          if (e.on && bpm) metronome.start(bpm, e.bars)
+          else metronome.stop()
+        }
         if (e.type === 'state' && e.state === 'ended') finish()
       }
     }
@@ -141,6 +151,8 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
         caption: t - captionAt < 6 ? caption : '',
         cadence: last?.cadence ?? (run.analyzer.moving ? run.analyzer.last?.cadence ?? null : null),
         refCadence: run.analyzer.ref?.cadence ?? null,
+        refLater: run.analyzer.refLater,
+        tone: metronome.playing,
         bounceCm: last?.bounceCm ?? null,
         brakingMs: last?.brakingMs ?? null,
         cadences: ss.slice(-600).map((s) => s.cadence),
@@ -158,6 +170,7 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
       if (simTimer) clearInterval(simTimer)
       clearInterval(timer)
       stopAwake()
+      metronome.stop()
       // 終わりの言葉（おつかれさまでした）は最後まで言わせる
       if (!finished) {
         stopVoice()
@@ -192,7 +205,7 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div className="row">
           <div style={{ fontSize: 13 }} className="muted">ピッチ</div>
-          <div style={{ fontSize: 12 }} className="muted">{hud.refCadence !== null ? `基準 ${Math.round(hud.refCadence)} 歩/分` : '基準はまだ'}</div>
+          <div style={{ fontSize: 12 }} className="muted">{hud.tone ? `♪ メトロノーム ${Math.round(hud.refCadence ?? 0)}` : hud.refCadence !== null ? `基準 ${Math.round(hud.refCadence)} 歩/分${hud.refLater ? '' : '（仮）'}` : '基準はまだ'}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
           <div className="num" style={{ fontSize: 96, lineHeight: 0.85, color: 'var(--accent)' }}>{hud.cadence !== null ? Math.round(hud.cadence) : '—'}</div>

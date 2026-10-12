@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { CUE, TONE } from '../../core/params'
+import { RECOVER } from '../../core/phrases'
 import { PHONE_CUE, PHONE_SAY } from './analyzer'
+import { PHONE_REF } from './params'
 import { PHONE_RAW_COLUMNS, PHONE_SECOND_COLUMNS, PHONE_STATES } from './log'
 import { toMeasure, type MotionLike } from './sensor'
 import { PhoneRun } from './session'
@@ -44,11 +47,15 @@ describe('スマホ：センサーの値の直し方', () => {
 function feedAll(data: PhoneMeasure[], base = 1000) {
   const run = new PhoneRun({ perfMs: base * 1000, epochMs: 1_760_000_000_000 }, { userAgent: 'test', intervalMs: 16.7 })
   const said: { t: number; text: string }[] = []
+  const tones: { t: number; on: boolean; bars?: number }[] = []
   for (const d of data) {
     const t = base + d.t
-    for (const e of run.feed(toMeasure(asMotion(d), t)!)) if (e.type === 'speak') said.push({ t, text: e.text })
+    for (const e of run.feed(toMeasure(asMotion(d), t)!)) {
+      if (e.type === 'speak') said.push({ t, text: e.text })
+      if (e.type === 'tone') tones.push(e.on ? { t, on: true, bars: e.bars } : { t, on: false })
+    }
   }
-  return { run, said, end: base + data[data.length - 1].t }
+  return { run, said, tones, end: base + data[data.length - 1].t }
 }
 
 describe('スマホ：1回の走りと記録', () => {
@@ -147,5 +154,78 @@ describe('スマホ：声にするのはピッチだけ', () => {
     expect(Math.min(...last.map((s) => s.values.bounce ?? 0))).toBeGreaterThan(3)
     expect(said.map((s) => s.text)).not.toContain(PHONE_CUE.bounce)
     expect(said.map((s) => s.text)).not.toContain(PHONE_CUE.braking)
+  })
+})
+
+describe('スマホ：ピッチの声とメトロノーム', () => {
+  // demoRun：172 で4分 → 158（約8%下がる）で15秒 → 172 に戻して45秒 → また 158 で1分（t は 1000 から）
+  const { run, said, tones } = feedAll(demoRun())
+  const cadenceSaid = said.filter((s) => s.text === PHONE_CUE.cadence)
+  const ons = tones.filter((x) => x.on)
+  const offs = tones.filter((x) => !x.on)
+
+  it('ピッチが落ちたら、初めの1回だけ言葉で言い、同時にメトロノームを鳴らす（音は言い終えてから）', () => {
+    expect(cadenceSaid.length).toBe(1)
+    expect(cadenceSaid[0].t).toBeGreaterThan(1245)
+    expect(ons[0].t).toBe(cadenceSaid[0].t)
+    expect(ons[0].bars).toBe(TONE.bars)
+    expect(run.tempo()).toBeCloseTo(172, 0) // テンポは走り始めの自分のピッチ
+  })
+
+  it('くり返しでは言葉を言わず、メトロノームだけを鳴らす', () => {
+    expect(ons.length).toBeGreaterThanOrEqual(3)
+    // 2回目の落ち込み（305秒から）でも鳴る
+    expect(ons.some((x) => x.t > 1305)).toBe(true)
+    expect(said.filter((s) => Object.values(PHONE_CUE).includes(s.text)).length).toBe(1)
+    const tc = run.coach.cues.filter((c) => c.item === 'cadence')
+    expect(tc.map((c) => c.tone ?? false)).toEqual([false, ...ons.slice(1).map(() => true)])
+  })
+
+  it('ピッチが戻ったら、メトロノームを止める（ほめる言葉も言わない）', () => {
+    // 172 に戻した区間（260〜305秒）の中で止まる
+    const backOff = offs.filter((x) => x.t > 1260 && x.t < 1305)
+    expect(backOff.length).toBe(1)
+    expect(backOff[0].t - 1260).toBeLessThan(15)
+    const onBefore = ons.filter((x) => x.t < backOff[0].t).pop()!
+    expect(backOff[0].t - onBefore.t).toBeLessThan(CUE.recoverWithin)
+    expect(said.some((s) => (RECOVER as readonly string[]).includes(s.text))).toBe(false)
+    // 鳴らしたまま次を鳴らさない：on と off が交互
+    tones.forEach((x, i) => expect(x.on).toBe(i % 2 === 0))
+  })
+
+  it('鳴らした・止めたを、テンポつきで記録に残す', () => {
+    const ev = run.log.events.map((e) => e[1])
+    expect(ev.filter((x) => x.startsWith('tone:on:cadence:17')).length).toBe(ons.length)
+    expect(ev.filter((x) => x === 'tone:off:cadence').length).toBe(offs.length)
+  })
+})
+
+describe('スマホ：走り始めの基準を後ろへ置き換える', () => {
+  it('仮の基準（30秒〜3分）で始め、5〜12分の平均ができたら置き換える。その間の崩れた秒は入れない', () => {
+    const o: [number, number, number] = [90, 0, 0]
+    const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, bounceCm: 8, brakingMs: 0.3, orientation: o }
+    const data = [
+      // 走り出しは少し速いピッチ。5分からは落ち着いた 168、途中でわざと 155 に落とす（入れない）
+      ...simulateRun({ ...real, cadence: 174, seconds: 300, seed: 31 }),
+      ...simulateRun({ ...real, cadence: 168, seconds: 150, seed: 32, t0: 300 }),
+      ...simulateRun({ ...real, cadence: 155, seconds: 60, seed: 33, t0: 450 }),
+      ...simulateRun({ ...real, cadence: 168, seconds: 250, seed: 34, t0: 510 }),
+    ]
+    const { run } = feedAll(data)
+    const a = run.analyzer
+    expect(a.refLater).toBe(true)
+    expect(a.refLaterAt).toBeGreaterThan(PHONE_REF.laterTo)
+    expect(a.ref!.cadence).toBeCloseTo(168, 0)
+    expect(run.tempo()).toBeCloseTo(168, 0)
+    const later = run.log.events.find((e) => e[1].startsWith('ref:later:'))!
+    expect(Number(later[1].split(':')[2])).toBeCloseTo(168, 0)
+    const { session } = run.finish()
+    expect(session!.refLater).toBe(true)
+  })
+
+  it('12分まで走らなければ、仮の基準のまま', () => {
+    const { run } = feedAll(demoRun())
+    expect(run.analyzer.refLater).toBe(false)
+    expect(run.analyzer.ref).not.toBeNull()
   })
 })
