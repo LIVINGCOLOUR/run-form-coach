@@ -7,8 +7,8 @@ import { readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadUpper, type UpperTrial } from './vanhooren'
 import { makeCamera, toFrame, rng, W, H, type Placement, type Noise, type Body } from './camera'
-import { levelFrame, measure, rotateFrame } from '../src/core/geometry'
-import { LIMITS, REL_LIMITS } from '../src/core/params'
+import { levelFrame, measure, rotateFrame } from '../src/modes/camera/geometry'
+import { LIMITS, REL_LIMITS } from '../src/modes/camera/params'
 import type { V3 } from './rbds'
 
 const DIR = process.env.VH_DIR!

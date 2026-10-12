@@ -1,5 +1,5 @@
-import type { Frame } from '../core/types'
-import { L } from '../core/landmarks'
+import type { Frame } from '../../../core/types'
+import { L } from '../landmarks'
 import { nearIsLeft } from './figure'
 
 // 1歩の始まりを「近い側の足が一番前に出た瞬間」にそろえる。別々の1歩を同じタイミングで重ねるため

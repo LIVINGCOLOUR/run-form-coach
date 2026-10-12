@@ -1,4 +1,4 @@
-import type { Frame } from './types'
+import type { Frame } from '../../core/types'
 import { L } from './landmarks'
 import { facing, leanFromVertical, legLength, mid } from './geometry'
 

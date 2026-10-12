@@ -1,15 +1,18 @@
-import type { Category, Frame, ItemKey, Measure, Sample, Session, Stride } from './types'
-import { category, itemScore, LIMITS } from './scoring'
-import { CUE } from './phrases'
-import { HEAD_ABS, HIP_REF, REL_LIMITS, STRIDE } from './params'
-import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from './engine'
+import type { Category, Frame, ItemKey, Sample, Session, Stride } from '../../core/types'
+import type { Measure } from './types'
+import { category } from '../../core/scoring'
+import { itemScore, LIMITS } from './scoring'
+import { CUE } from '../../core/phrases'
+import { HIP_REF } from '../../core/params'
+import { HEAD_ABS, REL_LIMITS, STRIDE } from './params'
+import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from '../../core/engine'
 
 // カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体・腰を見る。
 // 声かけのしくみ（いつ声をかけ、ほめ、黙って見守るか）は engine.ts で、どのモードでも共通。
 // ここにあるのは、カメラの測定から1秒ごとの判定の値を作る「見る役」と、走り姿のアニメーションの記録だけ
 
-export type { CoachEvent, CoachState } from './engine'
-export { breakdownMinute } from './engine'
+export type { CoachEvent, CoachState } from '../../core/engine'
+export { breakdownMinute } from '../../core/engine'
 
 export interface CoachInput extends EngineInput<Measure> {
   frame?: Frame // 鉛直をそろえたピクセル座標（走り姿のアニメーション用）

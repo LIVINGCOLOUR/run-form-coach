@@ -4,9 +4,9 @@ import { category } from './scoring'
 
 // 声かけのしくみ（どのモードでも共通）。いつ声をかけ、いつほめ、いつ黙って見守るかを決める。
 // 何を測るか（1秒ごとの判定の値）は、モードごとの「見る役」（ModeAnalyzer）が作る。
-//   カメラ：coach.ts の CameraAnalyzer（頭・体幹・体全体・腰）
+//   カメラ：src/modes/camera/coach.ts の CameraAnalyzer（頭・体幹・体全体・腰）
 //   スマホ・センサー：それぞれの入り口が、自分の項目と見る役を用意して、このしくみに渡す
-// 数字はすべて params.ts（フォームの見方のページにも、そのまま表示している）
+// 数字はすべて同じフォルダの params.ts（フォームの見方のページにも、そのまま表示している）
 
 export type CoachState = 'waiting' | 'running' | 'paused' | 'ended'
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Frame } from '../core/types'
+import type { Frame } from '../../../core/types'
 import { nearIsLeft, paths } from './figure'
 
 interface Props {

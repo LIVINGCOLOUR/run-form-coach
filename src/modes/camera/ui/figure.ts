@@ -1,7 +1,7 @@
-import type { Frame, ItemKey, Pt, Stride } from '../core/types'
-import { L } from '../core/landmarks'
-import { legLength, mid } from '../core/geometry'
-import reference from '../core/reference.json'
+import type { Frame, ItemKey, Pt, Stride } from '../../../core/types'
+import { L } from '../landmarks'
+import { legLength, mid } from '../geometry'
+import reference from '../reference.json'
 
 // 描画用の座標系：腰の平均が (170, 262)、脚の長さが 164、右向き
 const CX = 170
@@ -107,7 +107,7 @@ export function paths(f: Frame, nearLeft: boolean): Paths {
 //
 // 関節の角度は、市民ランナーをトレッドミルで測った公開データ（Fukuchi ら 2017、CC BY 4.0）のうち、
 // 着地のすねが鉛直に近い上位4分の1の脚の平均の曲線を使う
-// （scripts/build-reference.mjs で src/core/reference.json を作る。秒速4.0m＝キロ4分10秒、サブ3のペース）
+// （scripts/build-reference.mjs で src/modes/camera/reference.json を作る。秒速4.0m＝キロ4分10秒、サブ3のペース）
 //   股関節・膝・足首の前後の角度、接地の長さ（1周の割合）、ピッチ はデータどおり
 //   股関節の角度は骨盤から見た太ももの角度なので、骨盤の前傾ぶんを引いて鉛直からの角度にする。
 //     前傾の大きさはデータにないので、接地中に膝が一番曲がる瞬間に足首が腰の真下に来るように決める

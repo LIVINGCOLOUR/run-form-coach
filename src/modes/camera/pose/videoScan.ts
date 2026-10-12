@@ -1,6 +1,6 @@
 import type { PoseLandmarker } from '@mediapipe/tasks-vision'
-import type { Frame } from '../core/types'
-import type { TimedFrame } from '../core/slowmo'
+import type { Frame } from '../../../core/types'
+import type { TimedFrame } from '../slowmo'
 import { largest, nextTs } from './detector'
 
 // 撮った動画を1コマずつ止めて骨格を取る（その場の速さは要らないので、全部のコマを見る）

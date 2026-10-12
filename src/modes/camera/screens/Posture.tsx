@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
-import type { Screen } from '../App'
-import type { Category, ItemKey, Session } from '../core/types'
-import { bestSession, nextItem, NEXT_TEXT } from '../core/nextStep'
+import type { Screen } from '../../../App'
+import type { Category, ItemKey, Session } from '../../../core/types'
+import { bestSession, nextItem, NEXT_TEXT } from '../nextStep'
 import { Mannequin } from '../ui/Mannequin'
 import { nextStepFrame, normalizeStride } from '../ui/figure'
 import { alignStride } from '../ui/align'
-import { ShareBar } from '../ui/ShareBar'
+import { ShareBar } from '../../../ui/ShareBar'
 
 const CAT_LABEL: Record<Category, string> = { good: '良い', mid: 'ふつう', bad: '悪い' }
 const CAT_COLOR: Record<Category, string> = { good: '#7C8A4A', mid: '#C98A5A', bad: '#FF8A3D' }

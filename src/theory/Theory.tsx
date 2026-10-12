@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
-import { Mannequin } from '../ui/Mannequin'
-import { demoStride, REFERENCE } from '../ui/figure'
+import { Mannequin } from '../modes/camera/ui/Mannequin'
+import { demoStride, REFERENCE } from '../modes/camera/ui/figure'
 import { Logic } from './Logic'
 
 // フォームの見方：見本のフォームが何から作られているか、9つの観点それぞれの基準・ずれたときに何が起きるか・根拠
-// 見本の数字は src/core/reference.json（研究データから作ったもの）から出す
+// 見本の数字は src/modes/camera/reference.json（研究データから作ったもの）から出す
 
 const ideal = REFERENCE.ideal
 const normal = REFERENCE.normal

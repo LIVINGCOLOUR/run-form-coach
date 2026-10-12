@@ -1,6 +1,6 @@
 import React from 'react'
 import { useMemo } from 'react'
-import { demoStride, lerpFrame, paths } from '../../src/ui/figure'
+import { demoStride, lerpFrame, paths } from '../../src/modes/camera/ui/figure'
 import { C, jp } from './theme'
 
 // アプリと同じ描き方の、走る骨格。描画座標（350×470）を transform で置く

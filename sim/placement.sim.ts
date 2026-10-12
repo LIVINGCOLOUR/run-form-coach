@@ -5,9 +5,9 @@ import { it as itAll } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { loadTrial, type Trial, type V3, type JointName } from './rbds'
 import { makeCamera, toFrame, rng, type Placement, type Noise, type Body } from './camera'
-import { analyzeRun, type TimedFrame } from '../src/core/slowmo'
-import { MotionDetector } from '../src/core/motion'
-import { levelFrame, measure, rotateFrame } from '../src/core/geometry'
+import { analyzeRun, type TimedFrame } from '../src/modes/camera/slowmo'
+import { MotionDetector } from '../src/modes/camera/motion'
+import { levelFrame, measure, rotateFrame } from '../src/modes/camera/geometry'
 import { W, H } from './camera'
 
 const DIR = process.env.RBDS_DIR!

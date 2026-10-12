@@ -1,5 +1,5 @@
-import type { Frame } from './types'
-import { RUNNING } from './params'
+import type { Frame } from '../../core/types'
+import { RUNNING } from '../../core/params'
 import { L, HEAD_POINTS, KEY_PAIRS } from './landmarks'
 import { facing, legLength } from './geometry'
 

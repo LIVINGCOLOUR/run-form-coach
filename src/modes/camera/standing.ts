@@ -1,3 +1,4 @@
+import type { Baseline } from '../../core/types'
 import { BASELINE } from './params'
 
 // 直立の基準を取るときの、立ち姿勢（猫背）のチェック
@@ -26,4 +27,12 @@ export function standingIssue(s: Standing): StandingIssue | null {
 export const median = (xs: number[]) => {
   const s = xs.slice().sort((a, b) => a - b)
   return s[Math.floor(s.length / 2)]
+}
+
+// 猫背ぎみに立った日に基準が甘くならないよう、直近の基準の真ん中より5°以上悪い分は5°までに抑える
+export const BASELINE_SLACK = BASELINE.slack
+export function capBaseline(neck: number, history: Baseline[]): number {
+  if (!history.length) return neck
+  const sorted = history.map((b) => b.neck).sort((a, b) => a - b)
+  return Math.min(neck, sorted[Math.floor(sorted.length / 2)] + BASELINE_SLACK)
 }

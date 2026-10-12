@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { LEVEL_LABEL, STEPS } from '../core/level'
-import { ABSENCE, BASELINE, BREAKDOWN, CORRECT, CUE, HEAD_ABS, HIP_REF, LEVEL, LIMITS, POWER, PRAISE, QUIET, REL_LIMITS, RUNNING, SCORE, SETUP, STRIDE } from '../core/params'
+import { ABSENCE, BREAKDOWN, CUE, HIP_REF, LEVEL, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../core/params'
+import { BASELINE, CORRECT, HEAD_ABS, LIMITS, REL_LIMITS, SETUP, STRIDE } from '../modes/camera/params'
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる

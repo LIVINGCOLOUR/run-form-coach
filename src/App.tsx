@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session } from './core/types'
 import { loadSessions } from './core/storage'
 import { Home } from './screens/Home'
-import { Live } from './screens/Live'
+import { Live } from './modes/camera/screens/Live'
 import { Result } from './screens/Result'
-import { Posture } from './screens/Posture'
-import { Slow } from './screens/Slow'
+import { Posture } from './modes/camera/screens/Posture'
+import { Slow } from './modes/camera/screens/Slow'
 
 export type Screen = { name: 'home' } | { name: 'live'; video?: File } | { name: 'result'; id: string } | { name: 'posture'; id: string } | { name: 'slow'; video: File }
 

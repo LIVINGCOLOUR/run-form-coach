@@ -80,5 +80,5 @@ const out = {
   ideal,
   normal,
 }
-writeFileSync(join(root, 'src/core/reference.json'), JSON.stringify(out))
+writeFileSync(join(root, 'src/modes/camera/reference.json'), JSON.stringify(out))
 console.log(`cadence ${out.cadence} | ideal: ${ideal.limbs} limbs / ${ideal.runners} runners, stance ${ideal.stancePct}%, shank ${ideal.shankAtContact} | normal: ${normal.limbs} limbs / ${normal.runners} runners, stance ${normal.stancePct}%, shank ${normal.shankAtContact}`)

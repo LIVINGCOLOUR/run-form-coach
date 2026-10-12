@@ -1,4 +1,5 @@
-import type { Frame, Measure } from './types'
+import type { Frame, RunLog } from '../../core/types'
+import type { Measure } from './types'
 import { L } from './landmarks'
 
 // 調整用の記録。映像は残さず、骨格の点と判定の数字だけを、取れたコマごとに残す
@@ -10,19 +11,6 @@ export const LOG_POINTS = [
 export const LOG_COLUMNS = ['t', 'phase', 'visible', 'moving', 'by', 'cadence', 'neck', 'trunk', 'body', 'hipRatio', 'sideDeg', 'still', 'pitch', 'yaw', 'headLean', '...points(x,y,v)']
 const PHASES = ['setup', 'baseline', 'run'] as const
 const BY = [null, 'steps', 'inPlace'] as const
-
-export interface RunLog {
-  id: string
-  startedAt: number
-  width: number
-  height: number
-  columns: string[]
-  points: number[]
-  phases: readonly string[]
-  rows: number[][]
-  events: [number, string][] // [t, 話した言葉や段階の切り替え]
-  sessionId?: string
-}
 
 const r1 = (x: number) => Math.round(x * 10) / 10
 const r2 = (x: number) => Math.round(x * 100) / 100

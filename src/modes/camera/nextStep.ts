@@ -1,4 +1,4 @@
-import type { ItemKey, Session } from './types'
+import type { ItemKey, Session } from '../../core/types'
 
 // 理想の目安（研究にもとづく値）
 export const IDEAL = { head: 0, trunk: 7, body: 3, hipDrop: 0 }

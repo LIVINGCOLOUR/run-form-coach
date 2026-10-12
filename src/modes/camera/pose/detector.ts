@@ -1,7 +1,7 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
-import { POWER } from '../core/params'
-import type { Frame } from '../core/types'
-import { OneEuro } from '../core/filter'
+import { POWER } from '../../../core/params'
+import type { Frame } from '../../../core/types'
+import { OneEuro } from '../filter'
 
 let landmarker: PoseLandmarker | null = null
 

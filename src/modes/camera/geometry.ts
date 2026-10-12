@@ -1,4 +1,5 @@
-import type { Frame, Measure, Pt } from './types'
+import type { Frame, Pt } from '../../core/types'
+import type { Measure } from './types'
 import { L } from './landmarks'
 
 const DEG = 180 / Math.PI

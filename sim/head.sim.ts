@@ -9,8 +9,8 @@ import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadRiglet, placeLike, type Joint, type RigletTrial } from './riglet'
 import { makeCamera, toFrame, rng, W, H, type Placement, type Noise, type Body } from './camera'
-import { leanFromVertical, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../src/core/geometry'
-import { LIMITS, BASELINE, HEAD_ABS } from '../src/core/params'
+import { leanFromVertical, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../src/modes/camera/geometry'
+import { LIMITS, BASELINE, HEAD_ABS } from '../src/modes/camera/params'
 import type { V3 } from './rbds'
 
 const DIR = process.env.RIGLET_DIR!
