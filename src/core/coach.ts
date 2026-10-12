@@ -2,7 +2,7 @@ import type { Category, Frame, ItemKey, Measure, Sample, Session, Stride } from 
 import { category, itemScore, LIMITS } from './scoring'
 import { CUE } from './phrases'
 import { HEAD_ABS, HIP_REF, REL_LIMITS, STRIDE } from './params'
-import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut } from './engine'
+import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from './engine'
 
 // カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体・腰を見る。
 // 声かけのしくみ（いつ声をかけ、ほめ、黙って見守るか）は engine.ts で、どのモードでも共通。
@@ -78,8 +78,12 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     // 頭は、走り始めの自分との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
     const head = this.leanRef ? neck - this.leanRef.neck : 0
     const judge = this.leanRef ? { trunk: toScale('trunk', trunk - this.leanRef.trunk), body: toScale('body', body - this.leanRef.body) } : undefined
-    const values = { head, trunk: judge?.trunk ?? trunk, body: judge?.body ?? body, hip: hipDrop }
-    const sample: Sample = { t, head, trunk, body, hipDrop, score: ctx.score(values), quiet: ctx.quiet, judge, headLean }
+    // 上体と体全体は、基準ができるまでは決まった線で判定する。頭と腰は、走り始めの自分の基準ができるまで判定しない
+    const values: Values<ItemKey> = { trunk: judge?.trunk ?? trunk, body: judge?.body ?? body }
+    if (this.leanRef) values.head = head
+    if (this.hipRef) values.hip = hipDrop
+    // 上体と体全体はいつも判定するので、点数が null になることはない
+    const sample: Sample = { t, head, trunk, body, hipDrop, score: ctx.score(values) ?? 100, quiet: ctx.quiet, judge, headLean }
     this.maybeKeepStride(sample)
     return { sample, values, ready, once }
   }
