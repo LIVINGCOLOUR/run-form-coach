@@ -9,13 +9,13 @@ import { Slow } from './modes/camera/screens/Slow'
 import { PhoneLive } from './modes/phone/screens/PhoneLive'
 import { PhoneResult } from './modes/phone/screens/PhoneResult'
 import { loadPhoneSessions } from './modes/phone/storage'
-import type { PhoneSession, PhoneWhere } from './modes/phone/session'
+import type { PhoneKind, PhoneSession, PhoneWhere } from './modes/phone/session'
 import type { LocationPermission } from './modes/phone/sensor'
 
 export type Screen = { name: 'home' } | { name: 'live'; video?: File } | { name: 'result'; id: string } | { name: 'posture'; id: string } | { name: 'slow'; video: File }
   // スマホ版（腰）。where：外（GPS の速さで判定を止める）かトレッドミル（実機テスト。速さは一定とみなす）。
   // location：外のとき、位置情報を許可されたか。sim は模擬データで試す速さ（倍。模擬データは速さ一定なのでトレッドミル扱い）
-  | { name: 'phone'; where: PhoneWhere; location?: LocationPermission; sim?: number }
+  | { name: 'phone'; where: PhoneWhere; location?: LocationPermission; sim?: number; kind?: PhoneKind }
   | { name: 'phoneResult'; id: string }
 
 export default function App() {
@@ -65,6 +65,8 @@ export default function App() {
           sim={screen.sim}
           where={screen.where}
           location={screen.location}
+          kind={screen.kind}
+          sessions={phoneSessions}
           onDone={async (id) => {
             await reload()
             setScreen(id ? { name: 'phoneResult', id } : { name: 'home' })

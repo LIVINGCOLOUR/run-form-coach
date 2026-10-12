@@ -13,7 +13,10 @@ import { VOICES, VOICE_ORDER, type VoiceKind } from '../core/voices'
 import { startGravity } from '../modes/camera/gravity'
 import { demoStride, idealFrame, lerpFrame, nextStepFrame, normalizeStride } from '../modes/camera/ui/figure'
 import { ShareBar } from '../ui/ShareBar'
-import type { PhoneSession } from '../modes/phone/session'
+import type { PhoneKind, PhoneSession } from '../modes/phone/session'
+import { nextPractice } from '../modes/phone/practice'
+import { prevFormTest } from '../modes/phone/formtest'
+import { FORM_TEST, PRACTICE } from '../modes/phone/params'
 import { requestLocation, requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
 import { exportPhoneLog } from '../modes/phone/storage'
 
@@ -102,15 +105,19 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   // 動きのセンサーの許可は、押した流れの中で求めないと出ないので先に。位置情報は、そのあとに続けて
   // 選ぶものを増やさない（設定を間違える人が多い：docs/phone-spec.md 知らせ方の決まり）ため、大きなボタンは外の1つだけにして、
   // トレッドミル（開発の実機テスト）は小さなリンクにした
-  const startPhone = async (where: 'outdoor' | 'treadmill') => {
+  const startPhone = async (where: 'outdoor' | 'treadmill', kind?: PhoneKind) => {
     unlockVoice()
     const wake = requestWakeLock()
     await requestMotionPermission()
     const location = where === 'outdoor' ? await requestLocation() : undefined
     await wake
-    go({ name: 'phone', where, location })
+    go({ name: 'phone', where, location, kind })
   }
   const lastPhone = phoneSessions[0]
+  // ピッチを上げる練習（選んだ人だけ）とフォームのテスト（月1回）。どちらも押すだけで始まり、選ぶものはない
+  const practice = nextPractice(phoneSessions, Date.now())
+  const lastTest = prevFormTest(phoneSessions, Date.now())
+  const testDays = lastTest ? Math.floor((Date.now() - lastTest.startedAt) / (24 * 3600 * 1000)) : null
 
   const goodPct = last ? Math.round(last.share.good * 100) : null
   const delta = last && prev ? Math.round((last.share.good - prev.share.good) * 100) : null
@@ -283,6 +290,20 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           <button className="primary" style={{ height: 48, fontSize: 16 }} onClick={() => startPhone('outdoor')}>
             スマホ版をはじめる
           </button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <button className="card" onClick={() => startPhone('outdoor', { kind: 'practice', plan: practice })} style={{ textAlign: 'left', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>ピッチを上げる練習</span>
+              <span className="muted" style={{ fontSize: 11, lineHeight: 1.5 }}>
+                {practice.n === 1 ? `メトロノームに合わせて走る。2週間で${PRACTICE.runs}回` : `${practice.n} / ${PRACTICE.runs} 回目をはじめる`}
+              </span>
+            </button>
+            <button className="card" onClick={() => startPhone('outdoor', { kind: 'test' })} style={{ textAlign: 'left', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>フォームのテスト</span>
+              <span className="muted" style={{ fontSize: 11, lineHeight: 1.5, color: testDays !== null && testDays >= FORM_TEST.everyDays ? 'var(--accent)' : undefined }}>
+                {testDays === null ? '月1回、平らな道を5分' : testDays >= FORM_TEST.everyDays ? `前のテストから${testDays}日。そろそろ` : `前のテストから${testDays}日`}
+              </span>
+            </button>
+          </div>
           <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 0' }} className="muted">
             {lastPhone && (
               <>
@@ -298,6 +319,14 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
             {'　·　'}
             <button onClick={() => startPhone('treadmill')} style={linkStyle}>
               トレッドミルで試す（実機テスト）
+            </button>
+            {'　·　'}
+            <button onClick={() => startPhone('treadmill', { kind: 'practice', plan: practice })} style={linkStyle}>
+              練習をトレッドミルで
+            </button>
+            {'　·　'}
+            <button onClick={() => startPhone('treadmill', { kind: 'test' })} style={linkStyle}>
+              テストをトレッドミルで
             </button>
             {'　·　'}
             <button

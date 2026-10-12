@@ -5,6 +5,7 @@ import type { MountIssue } from '../mount'
 import { FATIGUE } from '../params'
 import type { PhoneSession } from '../session'
 import { exportPhoneLog } from '../storage'
+import { FormTestCard, PracticeCard } from './PhoneProgress'
 
 // スマホ版の結果。カメラ版の結果（src/screens/Result.tsx）は姿勢の項目と走り姿を前提にしているので、別に持つ
 // 腰のスマホでは姿勢が見えないので「良い姿勢」ではなく「良い走り」と言う
@@ -52,6 +53,12 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
 
       {s.mount && <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>{MOUNT_TEXT[s.mount]}</div>}
 
+      {s.practice && <PracticeCard s={s} sessions={sessions} />}
+      {s.test && <FormTestCard s={s} sessions={sessions} />}
+
+      {/* 練習とテストでは、ピッチが落ちても知らせないので、声なしで保てた時間と良い走りの割合は出さない */}
+      {!s.kind && (
+        <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ fontSize: 14 }} className="muted">声なしで保てた時間</div>
         {heldAny ? (
@@ -85,6 +92,8 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
         <div style={{ fontSize: 14 }} className="muted">良い走りの割合（走り始めの自分と比べて）</div>
         {judgedAny ? <ShareBar share={s.share} height={12} /> : <div style={{ fontSize: 13 }} className="muted">判定した時間がありません（走り始めの基準は3分で作ります）</div>}
       </div>
+        </>
+      )}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="row">

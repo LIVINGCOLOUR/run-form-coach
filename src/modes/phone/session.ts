@@ -2,10 +2,13 @@ import { CueEngine, type CoachEvent, type CueRecord } from '../../core/engine'
 import type { Category } from '../../core/types'
 import { PhoneAnalyzer, type PhoneItem, type PhoneSample } from './analyzer'
 import { fatigueOf, type FatigueResult } from './fatigue'
+import { formTestOf, type FormTestResult } from './formtest'
 import { PhoneLogRecorder, type PhoneLog } from './log'
 import type { MountIssue } from './mount'
 import type { PhoneMeasure } from './signal'
+import { PracticeRun, type PracticePlan, type PracticeResult } from './practice'
 import { SpeedTrack, type GpsFix } from './speed'
+import { PHRASES } from '../../core/phrases'
 
 // スマホ版の1回の走り：センサーの値を見る役と声かけのしくみに渡し、調整用の記録を取り、走り終わったら結果をまとめる
 // 画面（screens/PhoneLive.tsx）から切り離して、模擬データでテストできるようにしている
@@ -13,7 +16,8 @@ import { SpeedTrack, type GpsFix } from './speed'
 //   センサーの値が来るたびに：run.feed(m)   （m.t は performance.now() の秒）
 //   外（outdoor）では、位置が届くたびに：run.gps(f)   （f.t も performance.now() の秒）
 //   タイマーで（値が途切れたことに気づくため）：run.tick(今)
-//   戻り値の speak を声で読み上げ、tone が on ならメトロノームを run.tempo() のテンポで bars 小節鳴らし、off なら止める。
+//   戻り値の speak を声で読み上げ、tone が on ならメトロノームを run.tempo() のテンポで bars 小節鳴らし（練習では止めるまで）、off なら止める。
+//   練習・テストのときは4つ目に種類（PhoneKind）を渡し、画面を開いたら run.intro() を言う
 //   state が ended なら終える
 //   終えるとき：run.finish() → 結果（短すぎれば null）と記録
 
@@ -25,6 +29,11 @@ export const PHONE_VOICED: PhoneItem[] = ['cadence']
 // どこで走るか。outdoor：外。GPS の速さが基準から外れた秒・GPS が取れない秒は判定しない（docs/phone-spec.md 機能4）。
 // treadmill：トレッドミル（実機テスト）。GPS は使わず、速さは一定とみなす
 export type PhoneWhere = 'outdoor' | 'treadmill'
+
+// 走りの種類。ふつうの走り（なし）・ピッチを上げる練習（practice.ts）・フォームのテスト（formtest.ts）
+//   練習とテストでは、ピッチが落ちたときの声とメトロノームは使わない（練習はメトロノームが混ざらないように、テストは声をかけないため）。
+//   ほめる言葉と声なしの見守りの言葉も言わない。付け方の確認の声と、始め・終わりの言葉は言う
+export type PhoneKind = { kind: 'practice'; plan: PracticePlan } | { kind: 'test' }
 
 export interface PhoneSession {
   id: string
@@ -44,7 +53,13 @@ export interface PhoneSession {
   mount: MountIssue | null // 付け方の問題（見つけたら、その走りでは判定を止めた）
   mountAt?: number // 見つけた秒
   logId?: string
+  kind?: 'practice' | 'test' // ないのはふつうの走り
+  practice?: PracticeResult // ピッチを上げる練習の回の結果
+  test?: FormTestResult // フォームのテストの値
 }
+
+// 練習とテストで言わない言葉（しくみがかける、ほめる言葉と声なしの見守りの言葉）
+const QUIET_IN_SPECIAL = new Set<string>([PHRASES.phonePraise5, PHRASES.quietStart, PHRASES.phoneQuietDone])
 
 class PhoneCoach extends CueEngine<PhoneMeasure, PhoneSample, PhoneItem> {
   finish(a: PhoneAnalyzer): PhoneSession {
@@ -64,20 +79,34 @@ const MIN_SAMPLES = 30
 export class PhoneRun {
   readonly analyzer = new PhoneAnalyzer()
   // holdUnjudged：速さで判定を止めた秒には新しく知らせず、鳴らしているメトロノームも止める
-  readonly coach = new PhoneCoach(this.analyzer, { pause: true, items: PHONE_VOICED, muteOthers: true, holdUnjudged: true })
+  readonly coach: PhoneCoach
   readonly rec: PhoneLogRecorder
   readonly where: PhoneWhere
+  readonly kind: PhoneKind['kind'] | null
+  readonly practice: PracticeRun | null = null // ピッチを上げる練習のときだけ
   private seen = 0
-  private lastState = this.coach.state
+  private lastState: PhoneCoach['state']
   private refLogged = false
   private speedRefKey: string | null = null
   private lastGate: string | null = null
 
-  constructor(clock: { perfMs: number; epochMs: number }, device: { userAgent: string; intervalMs: number | null; sim?: number }, where: PhoneWhere) {
+  constructor(clock: { perfMs: number; epochMs: number }, device: { userAgent: string; intervalMs: number | null; sim?: number }, where: PhoneWhere, kind?: PhoneKind) {
     this.where = where
+    this.kind = kind?.kind ?? null
+    // 練習とテストでは、どの項目でも知らせない（ピッチが落ちたときのメトロノームを鳴らさない）
+    this.coach = new PhoneCoach(this.analyzer, { pause: true, items: kind ? [] : PHONE_VOICED, muteOthers: true, holdUnjudged: true })
+    this.lastState = this.coach.state
+    if (kind?.kind === 'practice') this.practice = new PracticeRun(kind.plan)
     if (where === 'outdoor') this.analyzer.speed = new SpeedTrack()
     this.rec = new PhoneLogRecorder(clock, device, where)
     this.rec.event(clock.perfMs / 1000, `state:${this.coach.state}`)
+    if (kind) this.rec.event(clock.perfMs / 1000, kind.kind === 'practice' ? `kind:practice:${kind.plan.n}:${kind.plan.base === null ? 'none' : kind.plan.base.toFixed(1)}` : 'kind:test')
+  }
+
+  // 画面を開いたときに言う言葉（練習の1回目・テスト）
+  intro(): string | null {
+    if (this.kind === 'test') return PHRASES.testStart
+    return this.practice?.intro() ?? null
   }
 
   // 位置を1つ受け取る（外のときだけ使う）
@@ -96,20 +125,20 @@ export class PhoneRun {
     this.analyzer.feed(m)
     const ev = this.coach.update({ t: m.t, present: true, moving: this.analyzer.moving, m })
     this.rec.raw(m, this.coach.state)
-    this.after(m.t, ev)
-    return ev
+    return this.after(m.t, ev)
   }
 
   // 値が途切れているときだけ、しくみの時間を進める（途切れたと気づかせる）
   tick(t: number): CoachEvent[] {
     if (this.analyzer.connected(t)) return []
     const ev = this.coach.update({ t, present: false, moving: false })
-    this.after(t, ev)
-    return ev
+    return this.after(t, ev)
   }
 
-  // メトロノームのテンポ（歩/分）。走り始めの自分のピッチ。基準ができる前は null
+  // メトロノームのテンポ（歩/分）。ふつうの走りでは走り始めの自分のピッチ（基準ができる前は null）。
+  // 練習では練習のテンポ（鳴らしていなければ null）
   tempo(): number | null {
+    if (this.practice) return this.practice.tempo()
     return this.analyzer.ref?.cadence ?? null
   }
 
@@ -118,11 +147,11 @@ export class PhoneRun {
     this.rec.event(t, text)
   }
 
-  private after(t: number, ev: CoachEvent[]) {
-    for (const e of ev) {
-      if (e.type === 'speak') this.rec.event(t, e.text)
-      if (e.type === 'tone') this.rec.event(t, e.on ? `tone:on:${e.item}:${Math.round(this.tempo() ?? 0)}` : `tone:off:${e.item}`)
-    }
+  private after(t: number, ev0: CoachEvent[]): CoachEvent[] {
+    // 練習とテストでは、ほめる言葉と声なしの見守りの言葉を言わない
+    const ev = this.kind ? ev0.filter((e) => !(e.type === 'speak' && QUIET_IN_SPECIAL.has(e.text))) : ev0
+    // 練習：走りが止まったら（一時停止・途切れ・終わり）、メトロノームを止める
+    if (this.practice && this.coach.state !== 'running' && this.practice.halt()) ev.push({ type: 'tone', on: false, item: 'practice' })
     const a = this.analyzer
     if (a.refLater && !this.refLogged && a.ref) {
       this.refLogged = true
@@ -143,6 +172,13 @@ export class PhoneRun {
       const ls = this.analyzer.lastSecond
       const s = ss[this.seen++]
       this.rec.second(t, s, ls?.est ?? null, ls?.mount ?? null)
+      // 練習：1秒ごとに、鳴らす・止める・テンポを変えるを決める
+      if (this.practice) {
+        const p = this.practice.second(s.t, s.cadence, this.analyzer.ref?.cadence ?? null, this.coach.state === 'running')
+        if (p.say) ev.push({ type: 'speak', text: p.say })
+        if (p.tone === 'on') ev.push({ type: 'tone', on: true, item: 'practice', bars: Infinity })
+        if (p.tone === 'off') ev.push({ type: 'tone', on: false, item: 'practice' })
+      }
       // 速さで判定を止めた・戻した（外だけ）
       const g = s.gate ?? null
       if (g !== this.lastGate) {
@@ -150,6 +186,11 @@ export class PhoneRun {
         this.lastGate = g
       }
     }
+    for (const e of ev) {
+      if (e.type === 'speak') this.rec.event(t, e.text)
+      if (e.type === 'tone') this.rec.event(t, e.on ? `tone:on:${e.item}:${Math.round(this.tempo() ?? 0)}` : `tone:off:${e.item}`)
+    }
+    return ev
   }
 
   get log(): PhoneLog {
@@ -160,6 +201,9 @@ export class PhoneRun {
     const log = this.rec.log
     if (this.coach.samples.length < MIN_SAMPLES) return { session: null, log }
     const session = this.coach.finish(this.analyzer)
+    if (this.kind) session.kind = this.kind
+    if (this.practice) session.practice = this.practice.result()
+    if (this.kind === 'test') session.test = formTestOf(session.samples, session.mount, this.where)
     log.fatigue = session.fatigue ?? null
     session.logId = log.id
     log.sessionId = session.id

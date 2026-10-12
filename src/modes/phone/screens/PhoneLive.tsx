@@ -7,7 +7,10 @@ import { loadSettings } from '../../../core/storage'
 import { preloadVoice, speak, stopVoice } from '../../../core/voice'
 import type { MountIssue } from '../mount'
 import { keepAwake, listenMotion, toMeasure, watchLocation, type LocationPermission, type MotionLike } from '../sensor'
-import { PhoneRun, type PhoneWhere } from '../session'
+import { PhoneRun, type PhoneKind, type PhoneSession, type PhoneWhere } from '../session'
+import { FORM_TEST, PRACTICE } from '../params'
+import { practiceOnShare } from '../practice'
+import { prevFormTest } from '../formtest'
 import type { SpeedGate } from '../speed'
 import { demoRun } from '../simulate'
 import { savePhoneLog, savePhoneSession } from '../storage'
@@ -18,6 +21,7 @@ import { savePhoneLog, savePhoneSession } from '../storage'
 // sim：模擬データをセンサーの代わりに流し込む速さ（倍）。ブラウザで画面と記録を試すため
 // where：外（outdoor）なら位置情報（GPS）の速さを受け取り、速さが走り始めの基準から外れた秒は判定しない（声もメトロノームも出さない）。
 //   トレッドミル（treadmill）では GPS を使わず、速さは一定とみなす
+// kind：ピッチを上げる練習（practice.ts。練習のテンポのメトロノームだけを鳴らす）か、フォームのテスト（formtest.ts。声はかけず、5分で終える）
 
 interface Hud {
   state: CoachState
@@ -28,6 +32,8 @@ interface Hud {
   refCadence: number | null
   refLater: boolean // 基準を5〜12分の平均に置き換えた
   tone: boolean // メトロノームを鳴らしている
+  tempo: number | null // 鳴らしているテンポ
+  practiceBase: number | null // 練習：自分のピッチ
   bounceCm: number | null
   brakingMs: number | null
   cadences: (number | null)[]
@@ -65,10 +71,12 @@ const MOUNT_TEXT: Record<MountIssue, string> = {
 const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
 const DEG = 180 / Math.PI
 
-export function PhoneLive({ sim, where, location, onDone }: { sim?: number; where: PhoneWhere; location?: LocationPermission; onDone: (id?: string) => void }) {
+export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }: { sim?: number; where: PhoneWhere; location?: LocationPermission; kind?: PhoneKind; sessions?: PhoneSession[]; onDone: (id?: string) => void }) {
+  // テスト：前のテストの速さに合わせてもらう
+  const prevTest = kind?.kind === 'test' ? prevFormTest(sessions, Date.now())?.test ?? null : null
   const finishRef = useRef<() => void>(() => {})
   const [hud, setHud] = useState<Hud>({
-    state: 'waiting', elapsed: 0, quiet: false, caption: '', cadence: null, refCadence: null, refLater: false, tone: false, bounceCm: null, brakingMs: null, cadences: [], mount: null, hz: 0, gyro: false, wake: false, noData: false,
+    state: 'waiting', elapsed: 0, quiet: false, caption: '', cadence: null, refCadence: null, refLater: false, tone: false, tempo: null, practiceBase: kind?.kind === 'practice' ? kind.plan.base : null, bounceCm: null, brakingMs: null, cadences: [], mount: null, hz: 0, gyro: false, wake: false, noData: false,
     speed: null, refSpeed: null, gate: null, gpsError: location === 'denied' ? 1 : location === 'unsupported' ? 2 : null,
   })
 
@@ -76,7 +84,7 @@ export function PhoneLive({ sim, where, location, onDone }: { sim?: number; wher
     let disposed = false
     let finished = false
     const perf0 = performance.now()
-    const run = new PhoneRun({ perfMs: perf0, epochMs: Date.now() }, { userAgent: navigator.userAgent, intervalMs: null, sim }, where)
+    const run = new PhoneRun({ perfMs: perf0, epochMs: Date.now() }, { userAgent: navigator.userAgent, intervalMs: null, sim }, where, kind)
     let caption = ''
     let captionAt = -1e9
     let lastWait = perf0 / 1000
@@ -166,7 +174,13 @@ export function PhoneLive({ sim, where, location, onDone }: { sim?: number; wher
     const stopAwake = keepAwake((held) => {
       wake = held
     })
-    preloadVoice(loadSettings().voice).catch(() => {})
+    // 練習の1回目・テストは、はじめに何をするかを言う
+    const intro = run.intro()
+    preloadVoice(loadSettings().voice)
+      .catch(() => {})
+      .then(() => {
+        if (intro && !disposed && !finished) say(intro, now(), true)
+      })
 
     // 値が途切れたことに気づくためのタイマーと、画面の更新
     const timer = setInterval(() => {
@@ -174,6 +188,12 @@ export function PhoneLive({ sim, where, location, onDone }: { sim?: number; wher
       const t = now()
       handle(run.tick(t), t)
       const coach = run.coach
+      // テスト：決まった長さを走ったら終える
+      if (run.kind === 'test' && coach.state === 'running' && coach.active >= FORM_TEST.seconds) {
+        say(PHRASES.testDone, t, true)
+        finish()
+        return
+      }
       // 走り出すのを待っている間は、黙ったままにしない（値が届いているときだけ）
       if (coach.state === 'waiting' && run.analyzer.connected(t) && t - lastWait > RUNNING.waitRepeat) {
         lastWait = t
@@ -191,6 +211,8 @@ export function PhoneLive({ sim, where, location, onDone }: { sim?: number; wher
         refCadence: run.analyzer.ref?.cadence ?? null,
         refLater: run.analyzer.refLater,
         tone: metronome.playing,
+        tempo: metronome.playing ? metronome.bpm : null,
+        practiceBase: run.practice?.base ?? null,
         bounceCm: last?.bounceCm ?? null,
         brakingMs: last?.brakingMs ?? null,
         cadences: ss.slice(-600).map((s) => s.cadence),
@@ -244,12 +266,35 @@ export function PhoneLive({ sim, where, location, onDone }: { sim?: number; wher
 
       {sim && <div style={{ fontSize: 12, color: 'var(--warn)' }}>模擬データで試しています（{sim}倍の速さ。速さは一定とみなします）</div>}
       {!sim && where === 'treadmill' && <div style={{ fontSize: 12, color: 'var(--warn)' }}>トレッドミルで試しています（GPS は使わず、速さは一定とみなします）</div>}
-      {note && <div style={{ fontSize: 14 }} className="muted">{note}</div>}
+      {kind?.kind === 'practice' && (
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 700 }}>ピッチを上げる練習　{kind.plan.n} / {PRACTICE.runs} 回目</div>
+          <div className="muted">
+            {hud.practiceBase === null
+              ? 'はじめの3分で、今のピッチを測っています。いつもどおり走ってください'
+              : `自分のピッチ ${Math.round(hud.practiceBase)} 歩/分 → 目標 ${Math.round(hud.practiceBase * (1 + PRACTICE.target / 100))} 歩/分（+${PRACTICE.target}%）。音に足音を合わせてください`}
+          </div>
+          {practiceOnShare(kind.plan.n) < 1 && <div className="muted">今日は、ときどき音が止まります（鳴らす時間 {Math.round(practiceOnShare(kind.plan.n) * 100)}%）。止まっても同じリズムで</div>}
+        </div>
+      )}
+      {kind?.kind === 'test' && (
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 700 }}>フォームのテスト　残り {mmss(Math.max(0, FORM_TEST.seconds - hud.elapsed))}</div>
+          <div className="muted">
+            {prevTest?.speed
+              ? `前のテストの速さ ${pace(prevTest.speed)}/km に合わせて、平らな道を走ってください（いま ${pace(hud.speed)}/km）`
+              : prevTest
+                ? '前のテストと同じ速さで、平らな道を走ってください'
+                : '楽に続けられる速さで、平らな道を走ってください。次のテストからは、この速さに合わせます'}
+          </div>
+        </div>
+      )}
+      {note && !(kind?.kind === 'test' && hud.state === 'running') && !(kind?.kind === 'practice' && hud.practiceBase !== null) && <div style={{ fontSize: 14 }} className="muted">{note}</div>}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div className="row">
           <div style={{ fontSize: 13 }} className="muted">ピッチ</div>
-          <div style={{ fontSize: 12 }} className="muted">{hud.tone ? `♪ メトロノーム ${Math.round(hud.refCadence ?? 0)}` : hud.refCadence !== null ? `基準 ${Math.round(hud.refCadence)} 歩/分${hud.refLater ? '' : '（仮）'}` : '基準はまだ'}</div>
+          <div style={{ fontSize: 12 }} className="muted">{hud.tone ? `♪ メトロノーム ${Math.round(hud.tempo ?? 0)}` : hud.refCadence !== null ? `基準 ${Math.round(hud.refCadence)} 歩/分${hud.refLater ? '' : '（仮）'}` : '基準はまだ'}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
           <div className="num" style={{ fontSize: 96, lineHeight: 0.85, color: 'var(--accent)' }}>{hud.cadence !== null ? Math.round(hud.cadence) : '—'}</div>
@@ -263,12 +308,17 @@ export function PhoneLive({ sim, where, location, onDone }: { sim?: number; wher
         <Small label="着地のブレーキ" value={hud.brakingMs !== null ? hud.brakingMs.toFixed(2) : '—'} unit="m/s" />
       </div>
 
-      {where === 'outdoor' && !sim && hud.state === 'running' && hud.gate && !hud.mount && (
+      {where === 'outdoor' && !sim && !kind && hud.state === 'running' && hud.gate && !hud.mount && (
         <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--line)', fontSize: 13, lineHeight: 1.6 }} className="muted">
           {GATE_TEXT[hud.gate]}（声もメトロノームも出しません）
         </div>
       )}
-      {where === 'outdoor' && !sim && hud.gpsError === 1 && (
+      {where === 'outdoor' && !sim && kind && hud.gpsError === 1 && (
+        <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
+          位置情報が許可されていないので、速さが分かりません。{kind.kind === 'test' ? '速さがそろっているかを確かめられません。' : '練習のメトロノームは鳴らします。'}
+        </div>
+      )}
+      {where === 'outdoor' && !sim && !kind && hud.gpsError === 1 && (
         <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
           位置情報が許可されていないので、速さが分からず、ピッチの判定（声とメトロノーム）を止めています。記録は取ります。設定の「プライバシーとセキュリティ」→「位置情報サービス」→「Safari の Web サイト」で許可してください。トレッドミルなら、ホームの「トレッドミルで試す」から始めてください。
         </div>
