@@ -25,6 +25,7 @@ export interface PhoneSample {
   score: number | null // 判定しない秒（走り始めの基準ができる前・付け方がおかしいと分かった後）は null
   quiet: boolean
   mount: MountIssue | null // この走りで見つけた付け方の問題（見つけた秒から後に付く）
+  values: Values<PhoneItem> // 線と比べた値（走り始めの自分からの崩れ）。判定しない秒は {}
 }
 
 // 崩れたとき・付け方がおかしいときの言葉
@@ -71,6 +72,8 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
   private lastFedAt: number | null = null // 最後に値が来た時刻
   private refs: { cadence: number[]; bounceCm: number[]; brakingMs: number[] } = { cadence: [], bounceCm: [], brakingMs: [] }
   ref: { cadence: number; bounceCm: number; brakingMs: number } | null = null
+  // 直近の1秒で使った、測った値と付け方の手がかり（記録の書き出しで使う）。走っていない秒は est が null
+  lastSecond: { est: Estimate | null; mount: MountFeatures | null } | null = null
 
   // センサーの値を1つ受け取る。走っているかの判定は、走る前（engine が走っていないとき）にも要るので、ここで続ける
   feed(m: PhoneMeasure) {
@@ -101,6 +104,7 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
     const est = estimate(this.buf)
     const e = isRunning(est, RUNNING.runSpm) ? est : null
     const x: MountFeatures | null = mountFeatures(this.buf, e ? e.cadence / 60 : undefined)
+    this.lastSecond = { est: e, mount: x }
     if (!e && !offWaistRunning(x, RUNNING.runSpm)) return null
 
     const found = this.mount.check(t, x)
@@ -138,6 +142,7 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
       score: ctx.score(values),
       quiet: ctx.quiet,
       mount: this.mount.issue,
+      values,
     }
     return { sample, values, ready, once }
   }

@@ -273,3 +273,15 @@ export function simulateStanding(s: { seconds: number; orientation?: Vec3; fs?: 
   }
   return out
 }
+
+// 画面で試すための模擬の走り（ブラウザで、センサーの代わりに流し込む）。立って5秒 → ピッチ172で4分 → 158で1分半。
+// 4分目のあとにピッチが約8%落ちるので、走り始めの基準ができたあと、ピッチの声がかかる
+export function demoRun(): PhoneMeasure[] {
+  const o: Vec3 = [90, 0, 0]
+  const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, bounceCm: 8, brakingMs: 0.3, orientation: o }
+  return [
+    ...simulateStanding({ seconds: 5, orientation: o, noise: 0.05 }),
+    ...simulateRun({ ...real, cadence: 172, seconds: 240, seed: 11, t0: 5 }),
+    ...simulateRun({ ...real, cadence: 158, seconds: 90, seed: 12, t0: 245 }),
+  ]
+}

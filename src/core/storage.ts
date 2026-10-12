@@ -7,14 +7,18 @@ const DB = 'run-form-coach'
 const STORE = 'sessions'
 const LOGS = 'logs' // 調整用の記録（骨格の点と判定の数字）。直近10回分だけ残す
 const KEEP_LOGS = 10
+// スマホ版（src/modes/phone/）の記録。中身の形はスマホ版が決め、ここでは入れ物だけを用意する
+export const PHONE_SESSIONS = 'phoneSessions'
+export const PHONE_LOGS = 'phoneLogs'
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 2)
+    const req = indexedDB.open(DB, 3)
     req.onupgradeneeded = () => {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(LOGS)) db.createObjectStore(LOGS, { keyPath: 'id' })
+      for (const name of [PHONE_SESSIONS, PHONE_LOGS]) if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' })
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
@@ -59,6 +63,30 @@ export async function loadLog(id?: string): Promise<RunLog | undefined> {
   })
   if (id) return all.find((l) => l.id === id)
   return all.sort((a, b) => b.startedAt - a.startedAt)[0]
+}
+
+// 入り口ごとの入れ物に1件入れる（id で上書き）。keep があれば、startedAt の新しいものから keep 件だけ残す
+export async function putRecord<T extends { id: string; startedAt: number }>(store: string, v: T, keep?: number): Promise<void> {
+  const db = await open()
+  const old = keep ? (await allRecords<T>(store)).filter((o) => o.id !== v.id).sort((a, b) => b.startedAt - a.startedAt).slice(keep - 1) : []
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite')
+    const st = tx.objectStore(store)
+    for (const o of old) st.delete(o.id)
+    st.put(v)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+// 入り口ごとの入れ物の中身すべて（新しい順）
+export async function allRecords<T extends { startedAt: number }>(store: string): Promise<T[]> {
+  const db = await open()
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(store).objectStore(store).getAll()
+    req.onsuccess = () => resolve((req.result as T[]).sort((a, b) => b.startedAt - a.startedAt))
+    req.onerror = () => reject(req.error)
+  })
 }
 
 export async function loadSessions(): Promise<Session[]> {

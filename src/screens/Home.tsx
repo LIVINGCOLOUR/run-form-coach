@@ -13,6 +13,9 @@ import { VOICES, VOICE_ORDER, type VoiceKind } from '../core/voices'
 import { startGravity } from '../modes/camera/gravity'
 import { demoStride, idealFrame, lerpFrame, nextStepFrame, normalizeStride } from '../modes/camera/ui/figure'
 import { ShareBar } from '../ui/ShareBar'
+import type { PhoneSession } from '../modes/phone/session'
+import { requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
+import { exportPhoneLog } from '../modes/phone/storage'
 
 const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', body: '体全体の前傾', hip: '腰の下がり' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
@@ -36,7 +39,9 @@ function useMorph(on: boolean) {
   return k
 }
 
-export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) => void }) {
+const linkStyle = { background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 } as const
+
+export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]; phoneSessions?: PhoneSession[]; go: (s: Screen) => void }) {
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [progress, setProgress] = useState<Progress>(loadProgress)
   const [ideal, setIdeal] = useState(false)
@@ -92,6 +97,16 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
     await preloadVoice(voice)
     speak(PHRASES.sample, voice)
   }
+
+  // スマホ版：押したときに、動きのセンサーの許可（iPhone）と、画面が消えないようにする仕組みを求める
+  const startPhone = async () => {
+    unlockVoice()
+    const wake = requestWakeLock()
+    await requestMotionPermission()
+    await wake
+    go({ name: 'phone' })
+  }
+  const lastPhone = phoneSessions[0]
 
   const goodPct = last ? Math.round(last.share.good * 100) : null
   const delta = last && prev ? Math.round((last.share.good - prev.share.good) * 100) : null
@@ -256,6 +271,38 @@ export function Home({ sessions, go }: { sessions: Session[]; go: (s: Screen) =>
             iPhone のカメラの「スロー」で、真横から1〜1.5m離れて、足元まで入れて数歩撮った動画を選びます。接地時間・着地のすね・上下動を測ります。
           </div>
         </button>
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>スマホ版（腰に付けて走る）</div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+            スマホを腰のベルトに付けて走ります。加速度とジャイロでピッチ・上下動・着地のブレーキを測り、ピッチが落ちたら声で知らせます。いまは実機の値を取るための試作で、画面はつけたまま使います。
+          </div>
+          <button className="primary" style={{ height: 48, fontSize: 16 }} onClick={startPhone}>
+            スマホ版をはじめる
+          </button>
+          <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 0' }} className="muted">
+            {lastPhone && (
+              <>
+                <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={linkStyle}>
+                  前回の結果（{fmtDate(lastPhone.startedAt)}）
+                </button>
+                {'　·　'}
+              </>
+            )}
+            <button onClick={() => exportPhoneLog().then((ok) => ok || alert('まだスマホ版の記録がありません'))} style={linkStyle}>
+              直近の記録を書き出す
+            </button>
+            {'　·　'}
+            <button
+              onClick={() => {
+                unlockVoice()
+                go({ name: 'phone', sim: 10 })
+              }}
+              style={linkStyle}
+            >
+              模擬データで試す
+            </button>
+          </div>
+        </div>
         <input
           ref={slowRef}
           type="file"

@@ -6,18 +6,30 @@ import { Live } from './modes/camera/screens/Live'
 import { Result } from './screens/Result'
 import { Posture } from './modes/camera/screens/Posture'
 import { Slow } from './modes/camera/screens/Slow'
+import { PhoneLive } from './modes/phone/screens/PhoneLive'
+import { PhoneResult } from './modes/phone/screens/PhoneResult'
+import { loadPhoneSessions } from './modes/phone/storage'
+import type { PhoneSession } from './modes/phone/session'
 
 export type Screen = { name: 'home' } | { name: 'live'; video?: File } | { name: 'result'; id: string } | { name: 'posture'; id: string } | { name: 'slow'; video: File }
+  | { name: 'phone'; sim?: number } // スマホ版（腰）。sim は模擬データで試す速さ（倍）
+  | { name: 'phoneResult'; id: string }
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' })
   const [sessions, setSessions] = useState<Session[]>([])
+  const [phoneSessions, setPhoneSessions] = useState<PhoneSession[]>([])
 
   const reload = useCallback(async () => {
     try {
       setSessions(await loadSessions())
     } catch {
       setSessions([])
+    }
+    try {
+      setPhoneSessions(await loadPhoneSessions())
+    } catch {
+      setPhoneSessions([])
     }
   }, [])
 
@@ -29,7 +41,7 @@ export default function App() {
 
   switch (screen.name) {
     case 'home':
-      return <Home sessions={sessions} go={setScreen} />
+      return <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
     case 'live':
       return (
         <Live
@@ -42,13 +54,27 @@ export default function App() {
       )
     case 'result': {
       const s = find(screen.id)
-      return s ? <Result session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} go={setScreen} />
+      return s ? <Result session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
+    }
+    case 'phone':
+      return (
+        <PhoneLive
+          sim={screen.sim}
+          onDone={async (id) => {
+            await reload()
+            setScreen(id ? { name: 'phoneResult', id } : { name: 'home' })
+          }}
+        />
+      )
+    case 'phoneResult': {
+      const s = phoneSessions.find((x) => x.id === screen.id)
+      return s ? <PhoneResult session={s} sessions={phoneSessions} onHome={() => setScreen({ name: 'home' })} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
     }
     case 'slow':
       return <Slow video={screen.video} go={setScreen} />
     case 'posture': {
       const s = find(screen.id)
-      return s ? <Posture session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} go={setScreen} />
+      return s ? <Posture session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
     }
   }
 }

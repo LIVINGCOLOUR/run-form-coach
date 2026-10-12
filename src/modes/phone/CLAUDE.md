@@ -17,7 +17,10 @@
 - 見る役：ピッチ・上下動・着地のブレーキ。模擬データでは合っているが、模擬データ自体が同じ仮定で作られているので、本当の精度は分からない
 - 付け方の確認（`mount.ts`）：腰以外（腕・手・ポケット）・ゆるい・途中でずれた、を見分けて1回だけ知らせ、その走りでは判定を止めて記録に印。主な手がかりはジャイロ。線（`MOUNT`）は模擬データだけで決めた仮の値
 - 線（`PHONE_LIMITS`）は、ピッチの5%（Heiderscheit 2011）以外は根拠のない仮の値
-- 角速度は rad/s で受け取る。Web の DeviceMotion の rotationRate は deg/s なので、渡す側で直す
+- 角速度は rad/s で受け取る。Web の DeviceMotion の rotationRate は deg/s なので、`sensor.ts` の `toMeasure` で直す（alpha→z、beta→x、gamma→y）。加速度は accelerationIncludingGravity をそのまま渡す（3つの軸の符号がそろって逆の機種でも、見る役の値は変わらない）
+- 画面（ウェブ）：ホームの「スマホ版をはじめる」で、動きのセンサーの許可と画面が消えない仕組み（Wake Lock）を求め、`screens/PhoneLive.tsx` で測って声をかける。結果は `screens/PhoneResult.tsx`（カメラ版の結果とは別）。1回の走りの中身は画面から切り離した `session.ts` の `PhoneRun`。声にする項目はピッチだけ（`PHONE_VOICED`）だが、しくみは大きく崩れた項目にも声をかけるので、ブレーキ・上下動の声が出ることはある
+- 記録：`log.ts`。生の値（届いたコマすべて：t・ふつうの時刻 wallMs・加速度・角速度・しくみの状態）と1秒ごとの判定の値（測った値・線と比べた値・付け方の手がかり）を残し、`storage.ts` の `exportPhoneLog` でカメラ版と同じ形（`{ log, session }`）に書き出す。列の意味はファイルの `units` に入る
+- 「模擬データで試す」：`simulate.ts` の `demoRun` を10倍の速さでセンサーの代わりに流し込む（ブラウザで画面と記録を確かめるため）
 
 ## 実機で確かめること
 
