@@ -1,6 +1,7 @@
 import { CueEngine, type CoachEvent, type CueRecord } from '../../core/engine'
 import type { Category } from '../../core/types'
 import { PhoneAnalyzer, type PhoneItem, type PhoneSample } from './analyzer'
+import { fatigueOf, type FatigueResult } from './fatigue'
 import { PhoneLogRecorder, type PhoneLog } from './log'
 import type { MountIssue } from './mount'
 import type { PhoneMeasure } from './signal'
@@ -33,7 +34,8 @@ export interface PhoneSession {
   samples: PhoneSample[]
   cues: CueRecord<PhoneItem>[]
   share: Record<Category, number>
-  breakdownMin?: number
+  breakdownMin?: number // 崩れ始め（分）。スマホ版では疲れの見分け（fatigue.onsetSec）から出す
+  fatigue?: FatigueResult | null // 疲れの見分けと、上下動・ブレーキ・接地時間の変化。基準を作れなければ null。ないのは、入れる前の記録
   quietHeldSec: number
   ref: { cadence: number; bounceCm: number; brakingMs: number } | null // 走り始めの自分（基準）
   where?: PhoneWhere // ないのは、外とトレッドミルを分ける前の記録（速さで止めていない）
@@ -46,9 +48,12 @@ export interface PhoneSession {
 
 class PhoneCoach extends CueEngine<PhoneMeasure, PhoneSample, PhoneItem> {
   finish(a: PhoneAnalyzer): PhoneSession {
+    // 崩れ始めは、しくみの点数（ピッチの崩れ）ではなく、疲れの見分けから出す（docs/phone-spec.md 機能5）
+    const fatigue = fatigueOf(this.samples)
     return {
       ...this.summary(), id: `phone-${this.startedAt}`, mode: 'phone', samples: this.samples, ref: a.ref, refLater: a.refLater, mount: a.mount.issue, mountAt: a.mount.issueAt ?? undefined,
       where: a.speed ? 'outdoor' : 'treadmill', refSpeed: a.speed ? a.refSpeed : undefined,
+      fatigue, breakdownMin: fatigue?.onsetSec != null ? Math.round(fatigue.onsetSec / 60) : undefined,
     }
   }
 }
@@ -155,6 +160,7 @@ export class PhoneRun {
     const log = this.rec.log
     if (this.coach.samples.length < MIN_SAMPLES) return { session: null, log }
     const session = this.coach.finish(this.analyzer)
+    log.fatigue = session.fatigue ?? null
     session.logId = log.id
     log.sessionId = session.id
     return { session, log }

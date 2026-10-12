@@ -3,6 +3,7 @@ import { HIP_REF, RUNNING } from '../../core/params'
 import { PHRASES } from '../../core/phrases'
 import { MountCheck, mountFeatures, offWaistRunning, type MountFeatures, type MountIssue } from './mount'
 import { PHONE, PHONE_LIMITS, PHONE_REF, SPEED } from './params'
+import type { FatigueFeatures } from './fatigue'
 import { estimate, isRunning, type Estimate, type PhoneMeasure } from './signal'
 import { speedGate, type SpeedGate, type SpeedTrack } from './speed'
 
@@ -32,6 +33,7 @@ export interface PhoneSample {
   speed?: number | null // GPS のならした速さ（m/s）。トレッドミルでは付けない
   gate?: SpeedGate | null // 速さで判定を止めた理由（speed.ts）。止めていない秒・トレッドミルでは null か、付けない
   values: Values<PhoneItem> // 線と比べた値（走り始めの自分からの崩れ）。判定しない秒は {}
+  fat?: FatigueFeatures | null // 疲れの見分けの材料（fatigue.ts）。走り終わった後にまとめる。声にはしない。測れなかった秒は null
 }
 
 // 崩れたとき・付け方がおかしいときの言葉
@@ -217,6 +219,7 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
       quiet: ctx.quiet,
       mount: this.mount.issue,
       values,
+      fat: e ? { regularity: e.regularity, apRegularity: e.apRegularity, ratioV: e.ratioV, ratioAP: e.ratioAP, ratioML: e.ratioML, contactMs: e.contactMs } : null,
     }
     if (gps) {
       sample.speed = v

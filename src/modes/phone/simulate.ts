@@ -20,6 +20,9 @@ export interface RunSpec {
   bounceCm: number // 重心の上下動（cm）
   brakingMs: number // 1歩ごとに着地で落ちる速さ（m/s）
   tiltDeg?: number // 骨盤の前傾（度）。坂や疲れで変わる
+  pitchDeg?: number // 1歩ごとの骨盤の前後の傾きの揺れ（片側、度）。走りではふつう数度。重力が前後に漏れ込み、ブレーキの値を狂わせる
+  pitchPhase?: number // その揺れの、1歩の始まり（接地）での位相（度）。0 なら接地の始まりから前に傾いていく
+  vary?: number // 1歩ごとの上下の力の強さのばらつき（割合、標準偏差）。疲れて1歩ごとの動きがそろわなくなる形
   seconds: number
   fs?: number // センサーの回数（毎秒）
   noise?: number // 加速度の雑音（m/s²、標準偏差）
@@ -170,6 +173,9 @@ export function simulateRunWithSteps(s: RunSpec): { ms: PhoneMeasure[]; steps: n
   const roll = s.rollDeg ?? 0
   const yaw = s.yawDeg ?? 0
   const tilt = s.tiltDeg ?? 0
+  const pitch = s.pitchDeg ?? 0
+  const pitchPh = rad(s.pitchPhase ?? 0)
+  const vary = s.vary ?? 0
   const asym = s.asym ?? 0
   const mount = s.mount
   const impact = s.impact ?? 0
@@ -182,6 +188,9 @@ export function simulateRunWithSteps(s: RunSpec): { ms: PhoneMeasure[]; steps: n
   // 1歩ごとの始まりの時刻
   const starts: number[] = [0]
   while (starts[starts.length - 1] < s.seconds + 1) starts.push(starts[starts.length - 1] + T0 * (1 + jitter * gauss()))
+  // 1歩ごとの力の強さ（別の乱数にして、vary がないときの模擬データを変えない）
+  const g3 = rng((s.seed ?? 1) + 104729)
+  const power = starts.map(() => 1 + vary * g3())
 
   // ゆるいときの、1歩ごとの揺れ（向きの揺れ2つ・体に対する加速度、その周波数と向き）とゆっくりしたぶれ
   // （付け方の乱数は別にして、しっかり付けたときの模擬データを変えない）
@@ -200,16 +209,23 @@ export function simulateRunWithSteps(s: RunSpec): { ms: PhoneMeasure[]; steps: n
     const A = (Math.PI * G * T) / (2 * tc)
     const B = (s.brakingMs * Math.PI) / tc
     // 重力を含む上下の加速度（センサーが感じる値）
-    const side = 1 + (i % 2 ? asym : -asym)
+    const side = (1 + (i % 2 ? asym : -asym)) * (vary ? power[i] : 1)
     const vert = (tau < tc ? side * A * Math.sin((Math.PI * tau) / tc) : 0) + impact * mexicanHat((tau - 0.015) / IMPACT_SD)
     const ap = tau < tc ? -B * Math.sin((2 * Math.PI * tau) / tc) : 0
     const ph = Math.PI * (i + tau / T) // 2歩で1回
     const ml = sway * Math.sin(ph)
     const fw: Vec3 = [ap, ml, vert]
-    const w = Math.PI / T // 位相の進む速さ（rad/s）。角速度は世界の座標で近似し、スマホの座標に直す
-    // 体の向き：骨盤の前傾に、2歩で1回の左右の傾きとねじれ
-    const body = mul(rz(yaw * Math.cos(ph)), mul(rx(roll * Math.sin(ph)), ry(tilt)))
-    const om: Vec3 = [rad(roll * Math.cos(ph)) * w, 0, rad(-yaw * Math.sin(ph)) * w]
+    const w = Math.PI / T // 位相の進む速さ（rad/s）。付け方の揺れの角速度は世界の座標で近似し、スマホの座標に直す
+    // 体の向き：骨盤の前傾に、2歩で1回の左右の傾きとねじれ、1歩で1回の前後の傾き
+    const bodyAt = (u: number): Mat => {
+      const p = Math.PI * (i + u / T)
+      return mul(rz(yaw * Math.cos(p)), mul(rx(roll * Math.sin(p)), ry(tilt + pitch * Math.sin((2 * Math.PI * u) / T + pitchPh))))
+    }
+    const body = bodyAt(tau)
+    // 体の角速度（世界の座標）：少し先の向きとの差から出す（ジャイロで向きを直す測り方を、ずれのない値で確かめるため）
+    const hh = 1e-4
+    const dR = mul(bodyAt(tau + hh), tr(body))
+    const om: Vec3 = [(dR[2][1] - dR[1][2]) / (2 * hh), (dR[0][2] - dR[2][0]) / (2 * hh), (dR[1][0] - dR[0][1]) / (2 * hh)]
     // 付け方：体に対するスマホの向き（rel）と、体に対する加速度（世界の座標で近似）
     let rel: Mat = I3
     if (mount && (mount.kind === 'arm' || mount.kind === 'hand' || mount.kind === 'pocket')) {
