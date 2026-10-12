@@ -8,6 +8,7 @@
 - 記録：端末の中（IndexedDB）だけ
 - 画面：React + Vite + TypeScript
 
+製品として決まっていること（誰に売るか・料金・無料版）は [docs/product.md](docs/product.md)。開発の決まりは [CLAUDE.md](CLAUDE.md)。
 判定の精度を上げるための検証データの集め方（水戸ランナー塾への相談を含む）は [docs/validation-plan.md](docs/validation-plan.md)。
 競合の調査（定期的に調べ直す）は [docs/competitors.md](docs/competitors.md)。
 
