@@ -45,7 +45,7 @@ describe('スマホ：センサーの値の直し方', () => {
 
 // センサーの値を、画面と同じ道（toMeasure）で流し込む。時刻は performance.now() の秒にあたる値
 function feedAll(data: PhoneMeasure[], base = 1000) {
-  const run = new PhoneRun({ perfMs: base * 1000, epochMs: 1_760_000_000_000 }, { userAgent: 'test', intervalMs: 16.7 })
+  const run = new PhoneRun({ perfMs: base * 1000, epochMs: 1_760_000_000_000 }, { userAgent: 'test', intervalMs: 16.7 }, 'treadmill')
   const said: { t: number; text: string }[] = []
   const tones: { t: number; on: boolean; bars?: number }[] = []
   for (const d of data) {

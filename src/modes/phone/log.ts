@@ -2,6 +2,7 @@ import type { CoachState } from '../../core/engine'
 import type { PhoneSample } from './analyzer'
 import type { Estimate, PhoneMeasure } from './signal'
 import type { MountFeatures } from './mount'
+import { SPEED_GATES, type FixOut, type GpsFix } from './speed'
 
 // スマホ版の調整用の記録。センサーの生の値（届いたコマすべて）と、1秒ごとの判定の値を残す
 // 書き出したファイルを、トレッドミルで同時に撮ったカメラ版の記録と時刻で合わせて比べる（作る順番の2）
@@ -14,8 +15,10 @@ import type { MountFeatures } from './mount'
 export const PHONE_RAW_COLUMNS = ['t', 'wallMs', 'ax', 'ay', 'az', 'gx', 'gy', 'gz', 'state'] as const
 export const PHONE_SECOND_COLUMNS = [
   't', 'wallMs', 'sec', 'cadence', 'bounceCm', 'brakingMs', 'regularity', 'accRms', 'score', 'quiet', 'mount',
-  'vCadence', 'vBounce', 'vBraking', 'stepHz', 'gravity', 'gyroSwing', 'gyroHf', 'upX', 'upY', 'upZ',
+  'vCadence', 'vBounce', 'vBraking', 'stepHz', 'gravity', 'gyroSwing', 'gyroHf', 'upX', 'upY', 'upZ', 'speed', 'gate',
 ] as const
+// 位置が届くたびの1行（外だけ）。位置そのもの（緯度・経度）は残さない（家の場所が分かるため）。速さは前の点からの距離で出し直せる
+export const PHONE_GPS_COLUMNS = ['t', 'wallMs', 'accuracy', 'speedDevice', 'stepM', 'raw', 'speed', 'used', 'altitude', 'altitudeAccuracy'] as const
 // state の列の数字（しくみの状態）。mount の列の数字（付け方の問題）
 export const PHONE_STATES: readonly CoachState[] = ['waiting', 'running', 'paused', 'ended']
 export const PHONE_MOUNTS = [null, 'notWaist', 'loose', 'shifted'] as const
@@ -29,12 +32,15 @@ export interface PhoneLog {
   startedAt: number // ふつうの時刻（ms）
   clock: { perfMs: number; epochMs: number } // 同じ瞬間の performance.now() と Date.now()
   device: { userAgent: string; intervalMs: number | null; gyro: boolean; sim?: number } // sim：模擬データで試したときの速さ（倍）
+  where?: 'outdoor' | 'treadmill' // 外（GPS の速さで判定を止める）か、トレッドミル（速さは一定とみなす）か
   units: Record<string, string>
   columns: readonly string[]
   rows: (number | null)[][] // 生の値（PHONE_RAW_COLUMNS）
   secondColumns: readonly string[]
   seconds: (number | null)[][] // 1秒ごとの判定の値（PHONE_SECOND_COLUMNS）。測れなかった値は null
   events: [number, string][] // [t, 話した言葉やしくみの状態の切り替え]
+  gpsColumns?: readonly string[]
+  gps?: (number | null)[][] // 位置が届くたびの値（PHONE_GPS_COLUMNS）。外だけ
   truncated?: boolean // 生の値が多すぎて途中で止めた
   sessionId?: string
 }
@@ -50,7 +56,11 @@ const UNITS = {
   'vCadence,vBounce,vBraking': '線と比べた値（走り始めからのピッチの下がり %・上下動の増え cm・ブレーキの増え m/s）。判定しない秒は null',
   mount: `付け方の問題（${PHONE_MOUNTS.map((s, i) => `${i}=${s ?? 'なし'}`).join('、')}）`,
   'stepHz,gravity,gyroSwing,gyroHf,upX,upY,upZ': '付け方の確認の手がかり（mount.ts の MountFeatures）',
-  events: '話した言葉、state:状態（しくみの状態の切り替え）、tone:on:項目:テンポ（歩/分）・tone:off:項目（メトロノームを鳴らす・止める）、ref:later:ピッチ（基準を5〜12分の平均に置き換えた）',
+  speed: 'm/s。GPS のならした速さ（外だけ。取れない秒・トレッドミルは null）',
+  gate: `速さで判定を止めた理由（${SPEED_GATES.map((s, i) => `${i}=${s ?? '止めていない'}`).join('、')}。noGps=GPS が取れない、noBase=基準の速さを作れなかった、slow・fast=基準の速さから外れた）。トレッドミルは null`,
+  'gps:accuracy,speedDevice,stepM,raw,speed,used,altitude,altitudeAccuracy':
+    '位置が届くたび（外だけ）：横の誤差 m・端末が出した速さ m/s・前に使った点からの距離 m・ならす前の速さ m/s・ならした速さ m/s・速さに使ったか（1/0）・高さ m・高さの誤差 m',
+  events: '話した言葉、state:状態（しくみの状態の切り替え）、tone:on:項目:テンポ（歩/分）・tone:off:項目（メトロノームを鳴らす・止める）、ref:later:ピッチ（基準を5〜12分の平均に置き換えた）、ref:speed:速さ（基準の速さ m/s。作れなければ none）、gate:on:理由・gate:off（速さで判定を止めた・戻した）',
 }
 
 const r = (x: number, k: number) => Math.round(x * k) / k
@@ -58,7 +68,7 @@ const n = (x: number | null | undefined, k: number) => (x === null || x === unde
 
 export class PhoneLogRecorder {
   log: PhoneLog
-  constructor(clock: { perfMs: number; epochMs: number }, device: Omit<PhoneLog['device'], 'gyro'>) {
+  constructor(clock: { perfMs: number; epochMs: number }, device: Omit<PhoneLog['device'], 'gyro'>, where: 'outdoor' | 'treadmill' = 'treadmill') {
     this.log = {
       id: `phone-log-${clock.epochMs}`,
       mode: 'phone',
@@ -71,7 +81,17 @@ export class PhoneLogRecorder {
       secondColumns: PHONE_SECOND_COLUMNS,
       seconds: [],
       events: [],
+      where,
     }
+    if (where === 'outdoor') {
+      this.log.gpsColumns = PHONE_GPS_COLUMNS
+      this.log.gps = []
+    }
+  }
+
+  gps(f: GpsFix, o: FixOut) {
+    if (!this.log.gps || this.log.gps.length >= MAX_RAW) return
+    this.log.gps.push([r(f.t, 1000), this.wallMs(f.t), n(f.accuracy, 10), n(f.speed, 100), n(o.stepM, 100), n(o.raw, 100), n(o.speed, 100), o.used ? 1 : 0, n(f.altitude, 10), n(f.altitudeAccuracy, 10)])
   }
 
   wallMs(t: number): number {
@@ -95,6 +115,7 @@ export class PhoneLogRecorder {
       s.score, s.quiet ? 1 : 0, PHONE_MOUNTS.indexOf(s.mount),
       n(s.values.cadence, 100), n(s.values.bounce, 100), n(s.values.braking, 1000),
       n(x?.stepHz, 1000), n(x?.gravity, 100), n(x?.gyroSwing, 1000), n(x?.gyroHf, 1000), n(x?.up[0], 1000), n(x?.up[1], 1000), n(x?.up[2], 1000),
+      n(s.speed, 100), s.gate === undefined ? null : SPEED_GATES.indexOf(s.gate),
     ])
   }
 

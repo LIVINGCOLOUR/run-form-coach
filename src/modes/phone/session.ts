@@ -4,11 +4,13 @@ import { PhoneAnalyzer, type PhoneItem, type PhoneSample } from './analyzer'
 import { PhoneLogRecorder, type PhoneLog } from './log'
 import type { MountIssue } from './mount'
 import type { PhoneMeasure } from './signal'
+import { SpeedTrack, type GpsFix } from './speed'
 
 // スマホ版の1回の走り：センサーの値を見る役と声かけのしくみに渡し、調整用の記録を取り、走り終わったら結果をまとめる
 // 画面（screens/PhoneLive.tsx）から切り離して、模擬データでテストできるようにしている
-//   const run = new PhoneRun({ perfMs: performance.now(), epochMs: Date.now() }, { userAgent, intervalMs: null })
+//   const run = new PhoneRun({ perfMs: performance.now(), epochMs: Date.now() }, { userAgent, intervalMs: null }, 'outdoor')
 //   センサーの値が来るたびに：run.feed(m)   （m.t は performance.now() の秒）
+//   外（outdoor）では、位置が届くたびに：run.gps(f)   （f.t も performance.now() の秒）
 //   タイマーで（値が途切れたことに気づくため）：run.tick(今)
 //   戻り値の speak を声で読み上げ、tone が on ならメトロノームを run.tempo() のテンポで bars 小節鳴らし、off なら止める。
 //   state が ended なら終える
@@ -18,6 +20,10 @@ import type { PhoneMeasure } from './signal'
 // ほかの項目は、大きく崩れても声をかけない（しくみの muteOthers）。測って記録し、結果の画面に出すだけ。
 // 付け方の確認の声（mount・place）は、見る役の「一度だけかける声」なので、これとは別にかかる
 export const PHONE_VOICED: PhoneItem[] = ['cadence']
+
+// どこで走るか。outdoor：外。GPS の速さが基準から外れた秒・GPS が取れない秒は判定しない（docs/phone-spec.md 機能4）。
+// treadmill：トレッドミル（実機テスト）。GPS は使わず、速さは一定とみなす
+export type PhoneWhere = 'outdoor' | 'treadmill'
 
 export interface PhoneSession {
   id: string
@@ -30,6 +36,8 @@ export interface PhoneSession {
   breakdownMin?: number
   quietHeldSec: number
   ref: { cadence: number; bounceCm: number; brakingMs: number } | null // 走り始めの自分（基準）
+  where?: PhoneWhere // ないのは、外とトレッドミルを分ける前の記録（速さで止めていない）
+  refSpeed?: number | null // 基準の速さ（m/s）。外だけ
   refLater?: boolean // 基準を5〜12分の平均に置き換えた（false なら仮の基準：30秒〜3分）
   mount: MountIssue | null // 付け方の問題（見つけたら、その走りでは判定を止めた）
   mountAt?: number // 見つけた秒
@@ -38,7 +46,10 @@ export interface PhoneSession {
 
 class PhoneCoach extends CueEngine<PhoneMeasure, PhoneSample, PhoneItem> {
   finish(a: PhoneAnalyzer): PhoneSession {
-    return { ...this.summary(), id: `phone-${this.startedAt}`, mode: 'phone', samples: this.samples, ref: a.ref, refLater: a.refLater, mount: a.mount.issue, mountAt: a.mount.issueAt ?? undefined }
+    return {
+      ...this.summary(), id: `phone-${this.startedAt}`, mode: 'phone', samples: this.samples, ref: a.ref, refLater: a.refLater, mount: a.mount.issue, mountAt: a.mount.issueAt ?? undefined,
+      where: a.speed ? 'outdoor' : 'treadmill', refSpeed: a.speed ? a.refSpeed : undefined,
+    }
   }
 }
 
@@ -47,15 +58,33 @@ const MIN_SAMPLES = 30
 
 export class PhoneRun {
   readonly analyzer = new PhoneAnalyzer()
-  readonly coach = new PhoneCoach(this.analyzer, { pause: true, items: PHONE_VOICED, muteOthers: true })
+  // holdUnjudged：速さで判定を止めた秒には新しく知らせず、鳴らしているメトロノームも止める
+  readonly coach = new PhoneCoach(this.analyzer, { pause: true, items: PHONE_VOICED, muteOthers: true, holdUnjudged: true })
   readonly rec: PhoneLogRecorder
+  readonly where: PhoneWhere
   private seen = 0
   private lastState = this.coach.state
   private refLogged = false
+  private speedRefKey: string | null = null
+  private lastGate: string | null = null
 
-  constructor(clock: { perfMs: number; epochMs: number }, device: { userAgent: string; intervalMs: number | null; sim?: number }) {
-    this.rec = new PhoneLogRecorder(clock, device)
+  constructor(clock: { perfMs: number; epochMs: number }, device: { userAgent: string; intervalMs: number | null; sim?: number }, where: PhoneWhere) {
+    this.where = where
+    if (where === 'outdoor') this.analyzer.speed = new SpeedTrack()
+    this.rec = new PhoneLogRecorder(clock, device, where)
     this.rec.event(clock.perfMs / 1000, `state:${this.coach.state}`)
+  }
+
+  // 位置を1つ受け取る（外のときだけ使う）
+  gps(f: GpsFix) {
+    const track = this.analyzer.speed
+    if (!track) return
+    this.rec.gps(f, track.fix(f))
+  }
+
+  // ならした速さ（m/s）。トレッドミル・GPS が取れないときは null
+  speedNow(t: number): number | null {
+    return this.analyzer.speed?.at(t) ?? null
   }
 
   feed(m: PhoneMeasure): CoachEvent[] {
@@ -94,6 +123,12 @@ export class PhoneRun {
       this.refLogged = true
       this.rec.event(t, `ref:later:${a.ref.cadence.toFixed(1)}`)
     }
+    // 基準の速さ（外だけ）。基準を置き換えたら、もう一度残す
+    const speedKey = a.speed && a.ref ? `${a.refLater}:${a.refSpeed}` : null
+    if (speedKey !== null && speedKey !== this.speedRefKey) {
+      this.speedRefKey = speedKey
+      this.rec.event(t, `ref:speed:${a.refSpeed === null ? 'none' : a.refSpeed.toFixed(2)}`)
+    }
     if (this.coach.state !== this.lastState) {
       this.lastState = this.coach.state
       this.rec.event(t, `state:${this.coach.state}`)
@@ -101,7 +136,14 @@ export class PhoneRun {
     const ss = this.coach.samples
     while (this.seen < ss.length) {
       const ls = this.analyzer.lastSecond
-      this.rec.second(t, ss[this.seen++], ls?.est ?? null, ls?.mount ?? null)
+      const s = ss[this.seen++]
+      this.rec.second(t, s, ls?.est ?? null, ls?.mount ?? null)
+      // 速さで判定を止めた・戻した（外だけ）
+      const g = s.gate ?? null
+      if (g !== this.lastGate) {
+        this.rec.event(t, g ? `gate:on:${g}` : 'gate:off')
+        this.lastGate = g
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 import type { PhoneMeasure } from './signal'
+import type { GpsFix } from './speed'
 
 // ウェブ（Safari）の動きのセンサー（DeviceMotion）と、画面が消えないようにする仕組み（Wake Lock）
 //
@@ -84,4 +85,39 @@ export function keepAwake(onChange: (held: boolean) => void): () => void {
     sentinel?.release().catch(() => {})
     sentinel = null
   }
+}
+
+// 位置情報（外で走るとき、GPS の速さで判定を止めるため。speed.ts）
+//   許可は「スマホ版をはじめる」を押したときに、動きのセンサーの許可とまとめて求める（requestLocation）。
+//   許可されたら、走る画面で位置を受け取り続ける（watchLocation）
+export type LocationPermission = 'granted' | 'denied' | 'unsupported'
+
+// 許可を求める。許可の画面が出て、答えが決まるまで待つ。許可されたあと位置がすぐ取れなくても（屋内など）granted
+export function requestLocation(): Promise<LocationPermission> {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) return Promise.resolve('unsupported')
+  return new Promise((done) => {
+    navigator.geolocation.getCurrentPosition(
+      () => done('granted'),
+      (e) => done(e.code === e.PERMISSION_DENIED ? 'denied' : 'granted'),
+      { enableHighAccuracy: true, timeout: 3000, maximumAge: 60000 },
+    )
+  })
+}
+
+// 位置を受け取り始める。t は受け取った時刻（performance.now() の秒。センサーの値と同じ時計）。止めるための関数を返す
+// 許可されていない・取れないときは onError に code（1=許可されていない、2=取れない、3=時間切れ）
+export function watchLocation(cb: (f: GpsFix) => void, onError?: (code: number) => void): () => void {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    onError?.(2)
+    return () => {}
+  }
+  const id = navigator.geolocation.watchPosition(
+    (p) => {
+      const c = p.coords
+      cb({ t: performance.now() / 1000, lat: c.latitude, lon: c.longitude, accuracy: c.accuracy, speed: c.speed, altitude: c.altitude, altitudeAccuracy: c.altitudeAccuracy })
+    },
+    (e) => onError?.(e.code),
+    { enableHighAccuracy: true, maximumAge: 0 },
+  )
+  return () => navigator.geolocation.clearWatch(id)
 }

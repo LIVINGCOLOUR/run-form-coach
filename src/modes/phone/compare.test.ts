@@ -75,7 +75,7 @@ function phoneMeasures(): PhoneMeasure[] {
 
 function phoneFile() {
   const base = 500 // performance.now() の秒
-  const run = new PhoneRun({ perfMs: base * 1000, epochMs: EPOCH }, { userAgent: 'test', intervalMs: 16.7 })
+  const run = new PhoneRun({ perfMs: base * 1000, epochMs: EPOCH }, { userAgent: 'test', intervalMs: 16.7 }, 'treadmill')
   for (const m of phoneMeasures()) run.feed({ ...m, t: base + m.t })
   const { session, log } = run.finish()
   return JSON.parse(JSON.stringify({ log, session }))

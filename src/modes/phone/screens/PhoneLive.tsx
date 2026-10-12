@@ -6,8 +6,9 @@ import { metronome } from '../../../core/metronome'
 import { loadSettings } from '../../../core/storage'
 import { preloadVoice, speak, stopVoice } from '../../../core/voice'
 import type { MountIssue } from '../mount'
-import { keepAwake, listenMotion, toMeasure, type MotionLike } from '../sensor'
-import { PhoneRun } from '../session'
+import { keepAwake, listenMotion, toMeasure, watchLocation, type LocationPermission, type MotionLike } from '../sensor'
+import { PhoneRun, type PhoneWhere } from '../session'
+import type { SpeedGate } from '../speed'
 import { demoRun } from '../simulate'
 import { savePhoneLog, savePhoneSession } from '../storage'
 
@@ -15,6 +16,8 @@ import { savePhoneLog, savePhoneSession } from '../storage'
 // 声は共通のしくみ（engine.ts）が決め、言葉と音声は phrases.ts のものを使う
 // ピッチの知らせは、初めだけ言葉で、あとは走り始めのテンポのメトロノーム（core/metronome.ts）。声の間は鳴らさない
 // sim：模擬データをセンサーの代わりに流し込む速さ（倍）。ブラウザで画面と記録を試すため
+// where：外（outdoor）なら位置情報（GPS）の速さを受け取り、速さが走り始めの基準から外れた秒は判定しない（声もメトロノームも出さない）。
+//   トレッドミル（treadmill）では GPS を使わず、速さは一定とみなす
 
 interface Hud {
   state: CoachState
@@ -33,6 +36,24 @@ interface Hud {
   gyro: boolean
   wake: boolean
   noData: boolean // 値がしばらく届いていない
+  speed: number | null // GPS のならした速さ（m/s）
+  refSpeed: number | null
+  gate: SpeedGate | null // 速さで判定を止めている理由
+  gpsError: number | null // 位置が取れない理由（1=許可されていない、2=取れない、3=時間切れ）
+}
+
+const GATE_TEXT: Record<SpeedGate, string> = {
+  slow: 'ペースが走り始めより落ちているので、判定を止めています',
+  fast: 'ペースが走り始めより上がっているので、判定を止めています',
+  noGps: 'GPS の速さが取れないので、判定を止めています',
+  noBase: '走り始めの速さが分からなかったので、判定を止めています',
+}
+
+// m/s → 1km あたりの分:秒
+const pace = (v: number | null) => {
+  if (v === null || v < 0.5) return '—'
+  const s = Math.round(1000 / v)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
 const MOUNT_TEXT: Record<MountIssue, string> = {
@@ -44,17 +65,18 @@ const MOUNT_TEXT: Record<MountIssue, string> = {
 const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
 const DEG = 180 / Math.PI
 
-export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string) => void }) {
+export function PhoneLive({ sim, where, location, onDone }: { sim?: number; where: PhoneWhere; location?: LocationPermission; onDone: (id?: string) => void }) {
   const finishRef = useRef<() => void>(() => {})
   const [hud, setHud] = useState<Hud>({
     state: 'waiting', elapsed: 0, quiet: false, caption: '', cadence: null, refCadence: null, refLater: false, tone: false, bounceCm: null, brakingMs: null, cadences: [], mount: null, hz: 0, gyro: false, wake: false, noData: false,
+    speed: null, refSpeed: null, gate: null, gpsError: location === 'denied' ? 1 : location === 'unsupported' ? 2 : null,
   })
 
   useEffect(() => {
     let disposed = false
     let finished = false
     const perf0 = performance.now()
-    const run = new PhoneRun({ perfMs: perf0, epochMs: Date.now() }, { userAgent: navigator.userAgent, intervalMs: null, sim })
+    const run = new PhoneRun({ perfMs: perf0, epochMs: Date.now() }, { userAgent: navigator.userAgent, intervalMs: null, sim }, where)
     let caption = ''
     let captionAt = -1e9
     let lastWait = perf0 / 1000
@@ -125,6 +147,22 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
       stopMotion = listenMotion((e, interval) => onMotion(e, performance.now() / 1000, interval))
     }
 
+    // 位置（外だけ。模擬データは速さ一定なので使わない）
+    let gpsError: number | null = location === 'denied' ? 1 : location === 'unsupported' ? 2 : null
+    const stopGps =
+      where === 'outdoor' && !sim
+        ? watchLocation(
+            (f) => {
+              if (disposed || finished) return
+              gpsError = null
+              run.gps(f)
+            },
+            (code) => {
+              gpsError = code
+            },
+          )
+        : () => {}
+
     const stopAwake = keepAwake((held) => {
       wake = held
     })
@@ -161,12 +199,17 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
         gyro: run.log.device.gyro,
         wake,
         noData: t - perf0 / 1000 > 3 && !run.analyzer.connected(t),
+        speed: run.speedNow(t),
+        refSpeed: run.analyzer.refSpeed,
+        gate: run.analyzer.gate,
+        gpsError,
       })
     }, 250)
 
     return () => {
       disposed = true
       stopMotion()
+      stopGps()
       if (simTimer) clearInterval(simTimer)
       clearInterval(timer)
       stopAwake()
@@ -199,7 +242,8 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
         <div className="num" style={{ fontSize: 44 }}>{mmss(hud.elapsed)}</div>
       </div>
 
-      {sim && <div style={{ fontSize: 12, color: 'var(--warn)' }}>模擬データで試しています（{sim}倍の速さ）</div>}
+      {sim && <div style={{ fontSize: 12, color: 'var(--warn)' }}>模擬データで試しています（{sim}倍の速さ。速さは一定とみなします）</div>}
+      {!sim && where === 'treadmill' && <div style={{ fontSize: 12, color: 'var(--warn)' }}>トレッドミルで試しています（GPS は使わず、速さは一定とみなします）</div>}
       {note && <div style={{ fontSize: 14 }} className="muted">{note}</div>}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -219,6 +263,16 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
         <Small label="着地のブレーキ" value={hud.brakingMs !== null ? hud.brakingMs.toFixed(2) : '—'} unit="m/s" />
       </div>
 
+      {where === 'outdoor' && !sim && hud.state === 'running' && hud.gate && !hud.mount && (
+        <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--line)', fontSize: 13, lineHeight: 1.6 }} className="muted">
+          {GATE_TEXT[hud.gate]}（声もメトロノームも出しません）
+        </div>
+      )}
+      {where === 'outdoor' && !sim && hud.gpsError === 1 && (
+        <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
+          位置情報が許可されていないので、速さが分からず、ピッチの判定（声とメトロノーム）を止めています。記録は取ります。設定の「プライバシーとセキュリティ」→「位置情報サービス」→「Safari の Web サイト」で許可してください。トレッドミルなら、ホームの「トレッドミルで試す」から始めてください。
+        </div>
+      )}
       {hud.mount && <div style={{ padding: '10px 14px', borderRadius: 14, background: 'var(--warn)', color: '#0A0C0E', fontSize: 14, fontWeight: 900, lineHeight: 1.5 }}>{MOUNT_TEXT[hud.mount]}</div>}
       {hud.noData && (
         <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
@@ -230,6 +284,7 @@ export function PhoneLive({ sim, onDone }: { sim?: number; onDone: (id?: string)
         <Chip ok={hud.hz >= 30} label={`センサー ${hud.hz}回/秒`} />
         <Chip ok={hud.gyro} label={hud.gyro ? 'ジャイロ あり' : 'ジャイロ なし'} />
         <Chip ok={hud.wake} label={hud.wake ? '画面は消えません' : '画面が消えるかも'} />
+        {where === 'outdoor' && !sim && <Chip ok={hud.speed !== null} label={hud.speed !== null ? `GPS ${pace(hud.speed)}/km${hud.refSpeed !== null ? `（基準 ${pace(hud.refSpeed)}）` : ''}` : 'GPS なし'} />}
       </div>
       {!hud.wake && <div style={{ fontSize: 12 }} className="muted">画面が消えると測れません。設定の「画面表示と明るさ」→「自動ロック」を「なし」にしてください。</div>}
 

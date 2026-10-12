@@ -149,19 +149,24 @@ export class CueEngine<M, S, K extends string> {
   private readonly pauseOn: boolean
   protected readonly activeItems: K[]
   private readonly muteOthers: boolean
+  private readonly holdUnjudged: boolean
   private readonly said: EngineSay
 
   // pause: 止まったら一時停止するか（検証中は切っておく）
   // items: 声をかける項目（ランナーのレベルで決まる。ほかの項目は大きく崩れたときだけ）。なければすべて
   // muteOthers: items のほかの項目は、大きく崩れても声をかけない（測って記録するだけ。精度を確かめていない項目のある入り口で使う）。
   //   一度だけかける声（見る役の once）は、これとは別にかける
-  constructor(analyzer: ModeAnalyzer<M, S, K>, opts: { pause?: boolean; items?: K[]; muteOthers?: boolean } = {}) {
+  // holdUnjudged: 見る役がその項目を判定しなかった秒（values に入れなかった秒）には、その項目で新しく知らせず、
+  //   鳴らしている音も止める。窓の平均だけで決めると、判定を止めた直後に、止める前の秒の値で知らせてしまうため
+  //   （スマホ：速さが基準から外れた秒を判定しない）。一度だけかける声は、これとは別にかける
+  constructor(analyzer: ModeAnalyzer<M, S, K>, opts: { pause?: boolean; items?: K[]; muteOthers?: boolean; holdUnjudged?: boolean } = {}) {
     this.analyzer = analyzer
     this.order = analyzer.items.map((s) => s.key)
     this.specs = Object.fromEntries(analyzer.items.map((s) => [s.key, s])) as Record<K, ItemSpec<K>>
     this.pauseOn = opts.pause ?? true
     this.activeItems = opts.items ?? this.order
     this.muteOthers = opts.muteOthers ?? false
+    this.holdUnjudged = opts.holdUnjudged ?? false
     this.said = { ...SAY, ...analyzer.say }
   }
 
@@ -316,6 +321,8 @@ export class CueEngine<M, S, K extends string> {
   private decide(r: Record_<K>): CoachEvent[] {
     const ev: CoachEvent[] = []
     const t = r.t
+    // 判定しなかった項目の音は止める（holdUnjudged）
+    if (this.holdUnjudged && this.toneOn !== null && r.values[this.toneOn] === undefined) this.stopTone(ev)
 
     // 声なしで見守る時間
     if (this.quiet) {
@@ -368,6 +375,7 @@ export class CueEngine<M, S, K extends string> {
     const win = this.within(CUE_P.window)
     if (t - this.lastAnyCue >= CUE_P.gap) {
       for (const k of this.order) {
+        if (this.holdUnjudged && r.values[k] === undefined) continue
         const vs = valuesOf(win, k)
         if (vs.length < CUE_P.window * CUE_P.coverage) continue
         const avg = mean(vs)

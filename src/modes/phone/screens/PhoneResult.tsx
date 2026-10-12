@@ -32,6 +32,9 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
   const cad = avg('cadence')
   const bounce = avg('bounceCm')
   const braking = avg('brakingMs')
+  // 速さで判定を止めた時間（外だけ。1秒の記録の数で数える）
+  const gated = s.samples.filter((x) => x.gate).length
+  const gatedNoGps = s.samples.filter((x) => x.gate === 'noGps' || x.gate === 'noBase').length
 
   return (
     <main className="page">
@@ -103,6 +106,9 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
         <Stat label="ピッチ" value={cad !== null ? `${Math.round(cad)}` : '—'} note={s.ref ? `基準 ${Math.round(s.ref.cadence)} 歩/分` : '歩/分'} />
         <Stat label="上下動" value={bounce !== null ? bounce.toFixed(1) : '—'} note={s.ref ? `基準 ${s.ref.bounceCm.toFixed(1)} cm` : 'cm'} />
         <Stat label="着地のブレーキ" value={braking !== null ? braking.toFixed(2) : '—'} note={s.ref ? `基準 ${s.ref.brakingMs.toFixed(2)} m/s` : 'm/s'} />
+        {s.where === 'outdoor' && (
+          <Stat label="速さで判定を止めた" value={fmtMinSec(gated)} note={gatedNoGps ? `うち GPS なし ${fmtMinSec(gatedNoGps)}` : s.refSpeed ? `基準 ${(s.refSpeed * 3.6).toFixed(1)} km/h` : undefined} />
+        )}
         <Stat label="崩れ始め" value={s.breakdownMin !== undefined ? `${s.breakdownMin}分` : 'なし'} />
         <Stat label="知らせた回数" value={`${cues.length}`} note={`声 ${cues.filter((c) => !c.tone).length} · メトロノーム ${cues.filter((c) => c.tone).length}`} />
       </div>

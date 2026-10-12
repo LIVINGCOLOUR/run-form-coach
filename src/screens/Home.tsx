@@ -14,7 +14,7 @@ import { startGravity } from '../modes/camera/gravity'
 import { demoStride, idealFrame, lerpFrame, nextStepFrame, normalizeStride } from '../modes/camera/ui/figure'
 import { ShareBar } from '../ui/ShareBar'
 import type { PhoneSession } from '../modes/phone/session'
-import { requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
+import { requestLocation, requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
 import { exportPhoneLog } from '../modes/phone/storage'
 
 const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', body: '体全体の前傾', hip: '腰の下がり' }
@@ -98,13 +98,17 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
     speak(PHRASES.sample, voice)
   }
 
-  // スマホ版：押したときに、動きのセンサーの許可（iPhone）と、画面が消えないようにする仕組みを求める
-  const startPhone = async () => {
+  // スマホ版：押したときに、動きのセンサーの許可（iPhone）と、画面が消えないようにする仕組みと、位置情報の許可（外のとき）をまとめて求める。
+  // 動きのセンサーの許可は、押した流れの中で求めないと出ないので先に。位置情報は、そのあとに続けて
+  // 選ぶものを増やさない（設定を間違える人が多い：docs/phone-spec.md 知らせ方の決まり）ため、大きなボタンは外の1つだけにして、
+  // トレッドミル（開発の実機テスト）は小さなリンクにした
+  const startPhone = async (where: 'outdoor' | 'treadmill') => {
     unlockVoice()
     const wake = requestWakeLock()
     await requestMotionPermission()
+    const location = where === 'outdoor' ? await requestLocation() : undefined
     await wake
-    go({ name: 'phone' })
+    go({ name: 'phone', where, location })
   }
   const lastPhone = phoneSessions[0]
 
@@ -274,9 +278,9 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>スマホ版（腰に付けて走る）</div>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            スマホを腰のベルトに付けて走ります。加速度とジャイロでピッチ・上下動・着地のブレーキを測り、ピッチが落ちたら声で知らせます。いまは実機の値を取るための試作で、画面はつけたまま使います。
+            スマホを腰のベルトに付けて外を走ります。加速度とジャイロでピッチ・上下動・着地のブレーキを測り、ピッチが落ちたら声で知らせます。ペースを落とした・上げたときは位置情報（GPS）の速さで気づいて、判定を止めます。いまは実機の値を取るための試作で、画面はつけたまま使います。
           </div>
-          <button className="primary" style={{ height: 48, fontSize: 16 }} onClick={startPhone}>
+          <button className="primary" style={{ height: 48, fontSize: 16 }} onClick={() => startPhone('outdoor')}>
             スマホ版をはじめる
           </button>
           <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 0' }} className="muted">
@@ -292,10 +296,14 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
               直近の記録を書き出す
             </button>
             {'　·　'}
+            <button onClick={() => startPhone('treadmill')} style={linkStyle}>
+              トレッドミルで試す（実機テスト）
+            </button>
+            {'　·　'}
             <button
               onClick={() => {
                 unlockVoice()
-                go({ name: 'phone', sim: 10 })
+                go({ name: 'phone', where: 'treadmill', sim: 10 })
               }}
               style={linkStyle}
             >
