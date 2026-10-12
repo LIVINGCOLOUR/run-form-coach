@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>体に付けるセンサー 1個目の作り方</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm 18mm 15mm; }
+  :root { --accent: #1f5f8b; --warn: #b3261e; --ok: #1e7b34; --line: #c9d3dc; --soft: #f2f6f9; }
+  body { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; font-size: 10.5pt; line-height: 1.7; color: #1d1d1f; }
+  h1 { font-size: 21pt; margin: 0 0 4px; color: var(--accent); }
+  h2 { font-size: 14.5pt; color: #fff; background: var(--accent); padding: 5px 10px; margin: 26px 0 10px; border-radius: 3px; break-after: avoid; }
+  h3 { font-size: 11.5pt; color: var(--accent); border-bottom: 1.5px solid var(--line); padding-bottom: 2px; margin: 18px 0 6px; break-after: avoid; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 4px 0 8px; padding-left: 22px; }
+  li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 10px; font-size: 9.8pt; break-inside: avoid; }
+  th, td { border: 1px solid var(--line); padding: 4px 7px; vertical-align: top; text-align: left; }
+  th { background: var(--soft); }
+  code, pre { font-family: "SF Mono", Menlo, monospace; font-size: 9pt; }
+  code { background: #eef1f4; padding: 0 3px; border-radius: 2px; }
+  pre { background: #f6f8fa; border: 1px solid var(--line); padding: 8px 10px; white-space: pre-wrap; word-break: break-all; line-height: 1.45; break-inside: avoid; margin: 6px 0 10px; }
+  pre.code { font-size: 7.6pt; break-inside: auto; }
+  .box { border-left: 4px solid var(--accent); background: var(--soft); padding: 6px 12px; margin: 10px 0; break-inside: avoid; }
+  .warn { border-left-color: var(--warn); background: #fdf1f0; }
+  .warn b.t { color: var(--warn); }
+  .ok { border-left-color: var(--ok); background: #eff8f1; }
+  .ok b.t { color: var(--ok); }
+  .sub { color: #555; font-size: 10pt; }
+  .cover { border-bottom: 3px solid var(--accent); padding-bottom: 10px; margin-bottom: 12px; }
+  .meta { color: #555; font-size: 9.5pt; }
+  .flow { display: flex; gap: 4px; flex-wrap: nowrap; margin: 8px 0; }
+  .flow div { flex: 1 1 0; min-width: 0; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 6px; font-size: 9pt; text-align: center; }
+  .flow b { display: block; color: var(--accent); font-size: 10pt; }
+  .check { list-style: none; padding-left: 4px; }
+  .check li::before { content: "□ "; color: var(--accent); font-weight: bold; }
+  .page-break { break-before: page; }
+  svg text { font-family: "Hiragino Sans", sans-serif; }
+  .small { font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>体に付けるセンサー　1個目の作り方</h1>
+  <div class="sub">XIAO nRF52840 ＋ 6軸センサー（LSM6DSV16X）で、動きの値を Bluetooth で Mac に送るまで</div>
+  <div class="meta">2026年10月9日版　／　ファイル一式：<code>~/Developer/run-form-coach/hardware/sensor/</code></div>
+</div>
+
+<h2>0. この手順書でやること</h2>
+<p>6か所（両手首・両足首・首・胸）に付けるセンサーの、<b>最初の1個</b>を作ります。最初は電池を使わず、Mac の USB で電気をもらって動かします。うまくいったら、モバイルバッテリーで Mac から離して動かします。</p>
+<div class="flow">
+  <div><b>手順1</b>Mac の準備</div>
+  <div><b>手順2</b>XIAO だけで<br>書き込み確認</div>
+  <div><b>手順3</b>はんだ付け</div>
+  <div><b>手順4</b>配線</div>
+  <div><b>手順5</b>センサーの<br>値を見る</div>
+  <div><b>手順6</b>Bluetooth で<br>Chrome へ</div>
+  <div><b>手順7</b>モバイル<br>バッテリーで</div>
+</div>
+<div class="box"><b>失敗しないための考え方</b>：1つの手順が通ってから次へ進みます。特に<b>手順2（はんだ付けの前に、XIAO 単体で書き込みを確かめる）</b>を飛ばさないでください。XIAO が初めから不良でも、はんだ付けする前なら交換を頼めます。</div>
+
+<h3>この手順書で確かめ済みのこと・まだのこと</h3>
+<table>
+  <tr><th style="width:50%">確かめ済み（2026-10-09、作者の Mac で）</th><th>まだ（実物が届いてから）</th></tr>
+  <tr><td>
+    <ul>
+      <li>3つのプログラムが、XIAO nRF52840 向けにコンパイルできる</li>
+      <li>準備のスクリプト（<code>tools/setup.sh</code>）が最後まで通る</li>
+      <li>書き込みのスクリプトが、XIAO を探すところまで動く</li>
+      <li>センサー基板の回路図（秋月電子）から、ジャンパーとピンの役割を確認</li>
+      <li>受信画面（<code>viewer.html</code>）の文法に誤りがない</li>
+    </ul>
+  </td><td>
+    <ul>
+      <li>実際に XIAO に書き込めるか</li>
+      <li>センサーの値が正しく読めるか</li>
+      <li>Bluetooth で 1秒に50回届くか</li>
+      <li>モバイルバッテリーで切れずに動くか</li>
+    </ul>
+  </td></tr>
+</table>
+
+<h2>1. そろえるもの</h2>
+<h3>部品（秋月電子で1回の注文）</h3>
+<table>
+  <tr><th>部品</th><th>数</th><th>値段（税込）</th><th>販売コード</th><th>メモ</th></tr>
+  <tr><td>Seeed XIAO nRF52840（<b>無印</b>）</td><td>2</td><td>3,560円</td><td>117341</td><td>技適 211-220207。「Plus」「Sense」ではない無印を選ぶ</td></tr>
+  <tr><td>6軸IMUセンサーモジュール AE-LSM6DSV16X</td><td>1</td><td>990円</td><td>130950</td><td>ピンヘッダー付属</td></tr>
+  <tr><td>ピンヘッダー 1×40（PH-1x40SG）</td><td>2</td><td>70円</td><td>100167</td><td>XIAO 用。7ピンずつ切って使う</td></tr>
+  <tr><td>ブレッドボード＋ジャンパーワイヤーセット（EIC-102J）</td><td>1</td><td>1,280円</td><td>102314</td><td></td></tr>
+  <tr><td colspan="2"><b>合計</b></td><td colspan="3"><b>約5,900円</b>＋送料</td></tr>
+</table>
+<h3>ほかに用意するもの</h3>
+<ul>
+  <li><b>USB-C のケーブル</b>（XIAO と Mac をつなぐ）：<b>「充電・転送」「データ転送対応」</b>と書いてあるもの。<b>「充電専用」は使えません</b>（Mac から XIAO が見えず、書き込めない）。ダイソーの 330円「USB Type-C 充電・転送ケーブル」でも足ります。Mac の差し込み口が楕円形なら両端 USB-C を選びます。</li>
+  <li>はんだごて、はんだ、テスター、ニッパー（手元にあるもの）</li>
+  <li>モバイルバッテリー（手順7で使う）</li>
+  <li>Mac（Apple シリコン）、Homebrew、Google Chrome（この Mac にはすべて入っています）</li>
+</ul>
+
+<h2>2. 安全の注意（先に読む）</h2>
+<div class="box warn"><b class="t">センサーに 5V をつながない</b>：センサーは 3.3V 専用です。XIAO の <b>5V</b> ピンにつなぐと壊れます。必ず <b>3V3</b> ピンにつなぎます。</div>
+<div class="box warn"><b class="t">センサー基板のジャンパーは J1 と J3 だけ</b>：J2 と J3 を両方ふさぐと、アドレスの線がぶつかります。J4（CS を GND へ）をふさぐと I2C で動かなくなります。J5・J6 もふさぎません。</div>
+<div class="box warn"><b class="t">電源を入れる前に、テスターでショートを確かめる</b>：はんだ付けの後、3V3 と GND の間がつながっていない（導通しない）ことを確かめます。</div>
+<ul>
+  <li>XIAO の USB-C の差し込み口は小さくて外れやすいので、ケーブルを横にこじらない。</li>
+  <li>基板を触る前に金属に触れて、静電気を逃がす。</li>
+</ul>
+
+<h2>手順1. Mac の準備（約15分、最初に1回だけ）</h2>
+<p>ターミナルで次を実行します。</p>
+<pre>cd ~/Developer/run-form-coach/hardware/sensor
+tools/setup.sh</pre>
+<p>このスクリプトは、次の4つをします。</p>
+<ol>
+  <li><b>Rosetta</b> を入れる：XIAO 用のコンパイラーが Intel の Mac 向けにしか作られていないため、Apple シリコンの Mac では必要です（この Mac には、2026-10-09 に入れました）。</li>
+  <li><b>arduino-cli</b>（Arduino のコマンド版）を入れる（入れ済み）。</li>
+  <li><b>XIAO nRF52840 のボードのパッケージ</b>（Seeed nRF52 Boards）を入れる（入れ済み）。</li>
+  <li>ボードのパッケージが <code>python</code> という名前を呼ぶのに、Mac には <code>python3</code> しかないので、<code>tools/bin/python</code> でつなぐ。</li>
+</ol>
+<div class="box"><b>なぜ Arduino IDE（画面で操作するほう）を使わないか</b>：上の 1 と 4 の問題で、Mac の Arduino IDE ではコンパイルが止まる可能性が高いからです。この手順書のコマンドは、作者の Mac で実際に通してあります。</div>
+<div class="box ok"><b class="t">成功のしるし</b>：最後に「== 準備ができました」と出る。</div>
+
+<h2>手順2. XIAO だけで書き込みを確かめる（はんだ付けの前に）</h2>
+<ol>
+  <li>XIAO を、データ転送対応の USB-C ケーブルで Mac につなぐ。</li>
+  <li>ターミナルで書き込む：
+<pre>tools/flash.sh 01_blink</pre></li>
+  <li>XIAO の文字を見る（終わるときは Ctrl+C）：
+<pre>tools/monitor.sh</pre></li>
+</ol>
+<div class="box ok"><b class="t">成功のしるし</b>：XIAO の小さな LED が1秒ごとに点滅し、モニタに <code>XIAO is alive: 0, 1, 2…</code> と出る。</div>
+<p class="small"><b>「XIAO が見つかりません」と出たら</b>：①ケーブルが充電専用でないか、②XIAO のリセットボタン（USB の横の小さなボタン）を<b>素早く2回</b>押して書き込み待ちにしてから、もう一度 <code>tools/flash.sh 01_blink</code>。</p>
+<p><b>2個目の XIAO でも同じことをします。</b>どちらも動けば、XIAO は良品です。</p>
+
+<h2 class="page-break">手順3. はんだ付け</h2>
+<h3>3-1. XIAO にピンヘッダー</h3>
+<ul>
+  <li>ピンヘッダー（1×40）をニッパーで<b>7ピンずつ2本</b>に切る。</li>
+  <li>ブレッドボードに7ピンを2本挿し、その上に XIAO を載せてはんだ付けすると、まっすぐ付きます。</li>
+  <li>部品の面が上、USB-C の差し込み口が端になる向きで付けます。</li>
+</ul>
+<h3>3-2. センサー基板にピンヘッダー</h3>
+<ul>
+  <li>付属のピンヘッダーを、ニッパーで<b>3ピンずつ</b>に切り離す（秋月電子の説明より）。</li>
+  <li>基板の4か所の3ピンの穴（左右に2組ずつ）すべてに付けると、ブレッドボードの上で安定します。</li>
+</ul>
+<h3>3-3. センサー基板のジャンパーを2か所ふさぐ（大事）</h3>
+<p>この基板は、<b>ジャンパーをふさがないと I2C で動きません。</b>小さな2つの四角い接点の間を、はんだで橋渡しします。</p>
+<table>
+  <tr><th>ジャンパー</th><th>役割（回路図より）</th><th>どうする</th></tr>
+  <tr><td><b>J1</b></td><td>I2C のプルアップ抵抗（10kΩ）をつなぐ</td><td><b>ふさぐ</b></td></tr>
+  <tr><td><b>J3</b></td><td>I2C のアドレスを <b>0x6A</b> にする（「6A」の刻印の近く）</td><td><b>ふさぐ</b></td></tr>
+  <tr><td>J2</td><td>アドレスを 0x6B にする（「6B」の刻印の近く）</td><td>ふさがない（J3 と同時は不可）</td></tr>
+  <tr><td>J4</td><td>CS を GND につなぐ（SPI 用）</td><td><b>ふさがない</b>（ふさぐと I2C で動かない）</td></tr>
+  <tr><td>J5・J6</td><td>補助の端子を GND につなぐ</td><td>ふさがない</td></tr>
+</table>
+<p class="small">CS は基板の上で 10kΩ で 3.3V に引き上げられているので、何もつながなければ I2C になります。プログラムは 0x6A と 0x6B の両方を探すので、J2 を選んでも動きます。</p>
+<h3>3-4. テスターで確かめる</h3>
+<ul class="check">
+  <li>XIAO の 3V3 と GND の間が導通しない</li>
+  <li>センサーの 3V3 と GND の間が導通しない</li>
+  <li>J1・J3 がふさがっている（両側が導通する）。J2・J4 はふさがっていない</li>
+  <li>隣どうしのピンが、はんだでくっついていない</li>
+</ul>
+
+<h2>手順4. 配線（ブレッドボード）</h2>
+<p>つなぐのは<b>4本だけ</b>です。センサー基板のピンの名前は、<b>基板に印刷された文字を見て</b>確かめてください。</p>
+<table>
+  <tr><th>XIAO のピン</th><th>→</th><th>センサー基板のピン</th><th>線の色（おすすめ）</th></tr>
+  <tr><td><b>3V3</b>（右側の上から3番目）</td><td>→</td><td><b>3V3</b></td><td>赤</td></tr>
+  <tr><td><b>GND</b>（右側の上から2番目）</td><td>→</td><td><b>GND</b></td><td>黒</td></tr>
+  <tr><td><b>D4 = SDA</b>（左側の上から5番目）</td><td>→</td><td><b>SDA</b></td><td>青</td></tr>
+  <tr><td><b>D5 = SCL</b>（左側の上から6番目）</td><td>→</td><td><b>SCL</b></td><td>黄</td></tr>
+</table>
+<p class="small">XIAO のピンの位置は、部品の面を上・USB-C を上にして見たときのものです。左側は上から D0〜D6、右側は上から 5V・GND・3V3・D10・D9・D8・D7 の順です。<b>5V（右側のいちばん上）には何もつなぎません。</b>センサーの CS・SDO/SA0・INT1・INT2・SDX・SCX・SDO_AUX・OCS_AUX はつなぎません。</p>
+
+<svg viewBox="0 0 640 250" width="100%" style="max-width:640px;display:block;margin:6px auto 4px">
+  <rect x="40" y="20" width="160" height="210" rx="10" fill="#e9f0f6" stroke="#1f5f8b" stroke-width="2"/>
+  <rect x="95" y="8" width="50" height="22" rx="4" fill="#bbb" stroke="#555"/>
+  <text x="120" y="23" font-size="10" text-anchor="middle">USB-C</text>
+  <text x="120" y="98" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f5f8b">XIAO</text>
+  <text x="120" y="114" font-size="11" text-anchor="middle" fill="#1f5f8b">nRF52840</text>
+  <g font-size="10">
+    <text x="50" y="52">D0</text><text x="50" y="77">D1</text><text x="50" y="102">D2</text><text x="50" y="127">D3</text>
+    <text x="50" y="152" font-weight="bold" fill="#1565c0">D4 SDA</text><text x="50" y="177" font-weight="bold" fill="#b8860b">D5 SCL</text><text x="50" y="202">D6</text>
+    <text x="190" y="52" text-anchor="end" fill="#b3261e">5V ×</text><text x="190" y="77" text-anchor="end" font-weight="bold">GND</text><text x="190" y="102" text-anchor="end" font-weight="bold" fill="#c62828">3V3</text>
+    <text x="190" y="127" text-anchor="end">D10</text><text x="190" y="152" text-anchor="end">D9</text><text x="190" y="177" text-anchor="end">D8</text><text x="190" y="202" text-anchor="end">D7</text>
+  </g>
+  <rect x="440" y="60" width="160" height="140" rx="8" fill="#eef7ee" stroke="#1e7b34" stroke-width="2"/>
+  <text x="520" y="118" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e7b34">AE-LSM6DSV16X</text>
+  <text x="520" y="136" font-size="10" text-anchor="middle" fill="#1e7b34">J1・J3 をふさぐ</text>
+  <g font-size="10" font-weight="bold">
+    <text x="450" y="82">3V3</text><text x="450" y="102">GND</text><text x="450" y="172">SDA</text><text x="450" y="192">SCL</text>
+  </g>
+  <path d="M195,98 C300,98 340,78 445,78" fill="none" stroke="#c62828" stroke-width="3"/>
+  <path d="M195,73 C300,73 340,98 445,98" fill="none" stroke="#222" stroke-width="3"/>
+  <path d="M45,148 C20,148 20,240 120,240 L380,240 C420,240 420,168 445,168" fill="none" stroke="#1565c0" stroke-width="3"/>
+  <path d="M45,173 C30,173 30,232 120,232 L370,232 C410,232 410,188 445,188" fill="none" stroke="#d4a017" stroke-width="3"/>
+</svg>
+<p class="small" style="text-align:center">図：つなぐのは 3V3・GND・SDA・SCL の4本。センサー側のピンの実際の並びは、基板の印刷を見て合わせる。</p>
+<div class="box warn"><b class="t">つなぐ前にもう一度</b>：赤い線が XIAO の <b>3V3</b>（5V ではない）につながっているか、目で確かめる。</div>
+
+<h2>手順5. センサーの値を見る</h2>
+<pre>tools/flash.sh 02_check_lsm6dsv
+tools/monitor.sh</pre>
+<div class="box ok"><b class="t">成功のしるし</b>：次のように出る。
+<pre>Start!
+LSM6DSV16X found. address: 0x6A
+WHO_AM_I = 0x70
+LSM6DSV16X initialized.
+ax[g], ay[g], az[g], gx[dps], gy[dps], gz[dps]
+0.01, -0.02, 1.00, 0.35, -0.21, 0.07</pre>
+机に置いたまま動かさないと、加速度のどれか1つが約 <b>1.00</b>（重力）、ほかの2つは約 0、ジャイロ（後ろの3つ）はほぼ 0。基板を傾けると加速度が、回すとジャイロが大きく変わる。</div>
+<table>
+  <tr><th>出たもの</th><th>意味と、やること</th></tr>
+  <tr><td><code>LSM6DSV16X not found</code> が繰り返される</td><td>センサーが見えていない。①4本の配線、②J1・J3 がふさがっているか、③SDA と SCL が逆になっていないか、④センサーの 3V3 に電圧が来ているか（テスターで約3.3V）を確かめる</td></tr>
+  <tr><td><code>WHO_AM_I = 0x...</code> が 70 以外</td><td>別のチップか、通信が乱れている。配線を短くし、はんだ付けを見直す</td></tr>
+  <tr><td>値がずっと 0 のまま</td><td>初期設定が効いていない。XIAO のリセットボタンを1回押して、もう一度見る</td></tr>
+</table>
+
+<h2>手順6. Bluetooth で Mac の Chrome に送る</h2>
+<ol>
+  <li>Bluetooth で送るプログラムを書き込む：
+<pre>tools/flash.sh 03_ble_imu</pre></li>
+  <li>受信画面を開く（Chrome が自動で開きます。終わるときはターミナルで Ctrl+C）：
+<pre>tools/viewer.sh</pre></li>
+  <li>画面の<b>「接続」</b>を押し、一覧の <b>RFC-IMU-1</b> を選んで「ペア設定」。</li>
+</ol>
+<div class="box ok"><b class="t">成功のしるし</b>：加速度とジャイロの数字が動き、<b>「受信：約50 回/秒」</b>と出る。</div>
+<ul>
+  <li><b>一覧に何も出ないとき</b>：Mac の「システム設定 → プライバシーとセキュリティ → Bluetooth」で、Google Chrome を許可する。Mac の Bluetooth が入っているかも確かめる。</li>
+  <li><b>XIAO の LED が速く点滅し続けるとき</b>：センサーが見つかっていない。手順5に戻る。</li>
+  <li>受信画面は、Web Bluetooth の決まりで <code>https</code> か <code>localhost</code> でしか動きません。<code>viewer.html</code> をダブルクリックで開くのではなく、必ず <code>tools/viewer.sh</code> から開きます。</li>
+</ul>
+
+<h2>手順7. モバイルバッテリーで動かす</h2>
+<ol>
+  <li>XIAO を Mac から外し、モバイルバッテリーにつなぐ（書き込んだプログラムはそのまま残っています）。</li>
+  <li>Mac の受信画面で、もう一度「接続」。</li>
+  <li><b>5分そのまま</b>置いて、切れないか見る。</li>
+</ol>
+<div class="box warn"><b class="t">モバイルバッテリーが勝手に切れることがある</b>：XIAO はとても少ない電気で動くので、バッテリーが「充電が終わった」と思って 30秒〜1分で切れることがあります。「低電流モード」（小型機器モード）があれば使ってください。</div>
+
+<h2>手順8（できれば）. トレッドミルで記録する</h2>
+<ul>
+  <li>XIAO とブレッドボードとモバイルバッテリーを、ウエストポーチなどに入れて体に固定する（ぶら下げると揺れが雑音になる）。</li>
+  <li>受信画面の「記録を始める」→ 走る → 「記録を止める」→「CSVで保存」。</li>
+  <li>CSV には、時刻（ミリ秒）、加速度 3軸（g）、ジャイロ 3軸（dps）が入ります。1秒に約50行です。</li>
+</ul>
+
+<h2>うまくいかないとき（まとめ）</h2>
+<table>
+  <tr><th style="width:36%">起きたこと</th><th>確かめること</th></tr>
+  <tr><td>コンパイルで <code>bad CPU type in executable</code></td><td>Rosetta が入っていない。<code>tools/setup.sh</code> をもう一度</td></tr>
+  <tr><td>コンパイルで <code>exec: "python": executable file not found</code></td><td><code>tools/bin/python</code> がない。<code>tools/setup.sh</code> をもう一度。必ず <code>tools/flash.sh</code> から書き込む</td></tr>
+  <tr><td>「XIAO が見つかりません」</td><td>充電専用ケーブルでないか。リセットボタンを素早く2回押してから再実行</td></tr>
+  <tr><td>書き込んだら動かなくなった、Mac から見えない</td><td>リセットボタンを素早く2回押すと書き込み待ちに戻る。それでも駄目なら USB を抜き差し</td></tr>
+  <tr><td>センサーが見つからない</td><td>手順5の表を見る</td></tr>
+  <tr><td>Chrome の一覧に出ない</td><td>Chrome の Bluetooth の許可。XIAO の LED が速く点滅していないか</td></tr>
+  <tr><td>受信が 1秒に50回より大きく少ない</td><td>Mac と XIAO を近づける。ほかの Bluetooth 機器を減らす</td></tr>
+</table>
+
+<h2>次の段階（1個目が全部通ってから）</h2>
+<ol>
+  <li><b>2個目</b>：2個目の XIAO にも同じものを作る。<code>03_ble_imu.ino</code> の <code>DEVICE_NAME</code> を <code>"RFC-IMU-2"</code> に変えてから書き込む。胸と首に付けて、猫背の実験。</li>
+  <li><b>電池</b>：402030 型 200mAh（約4×20×30mm、<b>保護回路内蔵・PSE マーク付き</b>を確かめて買う）。XIAO の裏の BAT 端子にはんだ付け。<b>プラスとマイナスをテスターで先に確かめる。</b>充電中は P0.14 を HIGH にしない（メーカーの警告）。</li>
+  <li><b>小さくする</b>：ブレッドボードをやめて細い電線で直結。センサーを白猫屋の小さい基板（13×18mm）にするなら、ピンの並びと I2C 対応をショップに確かめてから。</li>
+  <li><b>6個にする</b>：上が全部通ったら、残りを買う。</li>
+</ol>
+
+<h2 class="page-break">付録A. ファイル一覧</h2>
+<table>
+  <tr><th>ファイル</th><th>中身</th></tr>
+  <tr><td><code>tools/setup.sh</code></td><td>最初に1回：Rosetta、arduino-cli、ボードのパッケージ、python のつなぎ</td></tr>
+  <tr><td><code>tools/flash.sh &lt;名前&gt;</code></td><td>コンパイルして XIAO に書き込む</td></tr>
+  <tr><td><code>tools/monitor.sh</code></td><td>XIAO が出す文字を見る</td></tr>
+  <tr><td><code>tools/viewer.sh</code></td><td>Bluetooth の受信画面を開く</td></tr>
+  <tr><td><code>firmware/01_blink</code></td><td>手順2：XIAO だけで LED を点滅</td></tr>
+  <tr><td><code>firmware/02_check_lsm6dsv</code></td><td>手順5：センサーの確認（秋月電子の動作確認プログラムをもとに XIAO 用に変更、MIT License）</td></tr>
+  <tr><td><code>firmware/03_ble_imu</code></td><td>手順6：1秒に50回、Bluetooth で送る</td></tr>
+  <tr><td><code>viewer/viewer.html</code></td><td>Chrome で受けて表示、CSV で保存</td></tr>
+</table>
+
+<h3>Bluetooth で送る中身（16バイト）</h3>
+<table>
+  <tr><th>バイト</th><th>中身</th><th>単位</th></tr>
+  <tr><td>0〜3</td><td>時刻（XIAO の起動からのミリ秒、符号なし32ビット）</td><td>ms</td></tr>
+  <tr><td>4〜9</td><td>ジャイロ x・y・z（符号付き16ビット ×3）</td><td>1 = 0.07 dps（範囲 ±2000 dps）</td></tr>
+  <tr><td>10〜15</td><td>加速度 x・y・z（符号付き16ビット ×3）</td><td>1 = 0.000244 g（範囲 ±8 g）</td></tr>
+</table>
+<p class="small">サービス 0xFFE0、キャラクタリスティック 0xFFE1（通知）。すべてリトルエンディアン。センサーは 960Hz で測り、そのうち 20ミリ秒ごとの最新値を送ります。</p>
+
+<h3>付録B. 03_ble_imu.ino（手順6のプログラム）</h3>
+<pre class="code">__BLE_SKETCH__</pre>
+
+<h3>付録C. 参考にしたもの</h3>
+<ul class="small">
+  <li>秋月電子通商 AE-LSM6DSV16X 商品ページ・回路図・動作確認プログラム：akizukidenshi.com/catalog/g/g130950/</li>
+  <li>Seeed Studio XIAO nRF52840 Wiki（ピン配置、ボードのパッケージ、充電の注意）：wiki.seeedstudio.com/XIAO_BLE/</li>
+  <li>XIAO nRF52840 の日本の工事設計認証書（211-220207）：files.seeedstudio.com/Seeed_Certificate/documents_certificate/102010448-TELEC.pdf</li>
+  <li>Smol Slime の作例（XIAO nRF52840 ＋ LSM6DSV）：note.com/mmtg03/n/ncabe6e5c6596</li>
+</ul>
+
+</body>
+</html>
