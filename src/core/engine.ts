@@ -38,10 +38,16 @@ export interface CueRecord<K extends string> {
   text: string
 }
 
+// 1秒の判定の値。その秒に判定しない項目は入れない（0 を入れると「崩れていない」と数えてしまう）
+export type Values<K extends string> = Partial<Record<K, number>>
+
+// しくみが話す言葉のうち、入り口ごとに替えられるもの（見えなくなったときの言葉など）
+export type EngineSay = Record<keyof typeof SAY, string>
+
 // 見る役が1秒ごとに返すもの
 export interface SecondOut<S, K extends string> {
   sample: S // そのモードの1秒の記録（画面や結果に使う）
-  values: Record<K, number> // 判定に使う値（線と比べる）
+  values: Values<K> // 判定に使う値（線と比べる）。判定しない項目は入れない。1つもなければ、その秒は判定しない
   ready?: boolean // 走り始めの自分の基準ができた（声なしの見守りは、ここから QUIET.enterWindow 経つまで入らない）
   once?: { item: K; back: number } // 一度だけかける声。直ったかは values[item] が back 以下に戻ったかで見る
 }
@@ -49,11 +55,13 @@ export interface SecondOut<S, K extends string> {
 export interface SecondContext<K extends string> {
   quiet: boolean // 声なしで見守っている時間か
   active: K[] // 声をかける項目
-  score: (values: Record<K, number>) => number // 1秒の点数（いちばん崩れている項目の点数）
+  score: (values: Values<K>) => number | null // 1秒の点数（判定した項目のうち、いちばん崩れている項目の点数）。判定した項目がなければ null
 }
 
 export interface ModeAnalyzer<M, S, K extends string> {
   items: ItemSpec<K>[] // 測る項目。並び順が、声をかける優先順
+  // この入り口で替える言葉（スマホなら、見えなくなったときの言葉をセンサーが途切れたときの言葉に）。ないものは SAY のまま
+  say?: Partial<EngineSay>
   // 走っている間、1コマごとに呼ぶ（走り姿の記録など。要らなければ無くてよい）
   input?(inp: EngineInput<M>): void
   // 1秒分の測定（bucket）をまとめる。足りなければ null
@@ -61,11 +69,19 @@ export interface ModeAnalyzer<M, S, K extends string> {
 }
 
 // 1秒ごとの判定の記録（しくみの中だけで使う）
+// 判定しなかった秒も入れる（間引いた分の重みを、次の記録までの時間で数えるため）。score が null の秒は判定しなかった秒
 interface Record_<K extends string> {
   t: number
-  values: Record<K, number>
-  score: number
+  values: Values<K>
+  score: number | null
 }
+
+const judged = <K extends string>(rs: Record_<K>[]) => rs.filter((r): r is Record_<K> & { score: number } => r.score !== null)
+const valuesOf = <K extends string>(rs: Record_<K>[], k: K) =>
+  rs.flatMap((r) => {
+    const v = r.values[k]
+    return v === undefined ? [] : [v]
+  })
 
 interface Pending<K extends string> {
   item: K
@@ -117,6 +133,7 @@ export class CueEngine<M, S, K extends string> {
   private readonly order: K[]
   private readonly pauseOn: boolean
   protected readonly activeItems: K[]
+  private readonly said: EngineSay
 
   // pause: 止まったら一時停止するか（検証中は切っておく）
   // items: 声をかける項目（ランナーのレベルで決まる。ほかの項目は大きく崩れたときだけ）。なければすべて
@@ -126,11 +143,13 @@ export class CueEngine<M, S, K extends string> {
     this.specs = Object.fromEntries(analyzer.items.map((s) => [s.key, s])) as Record<K, ItemSpec<K>>
     this.pauseOn = opts.pause ?? true
     this.activeItems = opts.items ?? this.order
+    this.said = { ...SAY, ...analyzer.say }
   }
 
-  // 1秒の点数 = いちばん崩れている項目の点数
-  score(values: Record<K, number>): number {
-    return Math.min(...this.order.map((k) => scoreOf(this.specs[k].limits, values[k])))
+  // 1秒の点数 = 判定した項目のうち、いちばん崩れている項目の点数。判定した項目がなければ null
+  score(values: Values<K>): number | null {
+    const ks = this.order.filter((k) => values[k] !== undefined)
+    return ks.length ? Math.min(...ks.map((k) => scoreOf(this.specs[k].limits, values[k]!))) : null
   }
 
   private over(k: K, value: number) {
@@ -151,11 +170,11 @@ export class CueEngine<M, S, K extends string> {
       if (this.state === 'running') {
         if (gone >= ABSENCE.lostSay && !this.lostSaid) {
           this.lostSaid = true
-          ev.push({ type: 'speak', text: SAY.lost })
+          ev.push({ type: 'speak', text: this.said.lost })
         }
-        if (gone >= ABSENCE.lostEnd) this.end(ev, SAY.giveUp)
+        if (gone >= ABSENCE.lostEnd) this.end(ev, this.said.giveUp)
       } else if (gone >= ABSENCE.stopEnd) {
-        this.end(ev, SAY.end)
+        this.end(ev, this.said.end)
       }
       return ev
     }
@@ -170,14 +189,14 @@ export class CueEngine<M, S, K extends string> {
     }
 
     if ((this.state === 'waiting' || this.state === 'paused') && this.movingSince !== null && inp.t - this.movingSince >= RUNNING.startAfter) {
-      ev.push({ type: 'speak', text: this.state === 'waiting' ? SAY.start : SAY.resume })
+      ev.push({ type: 'speak', text: this.state === 'waiting' ? this.said.start : this.said.resume })
       this.state = 'running'
       this.everRan = true
       ev.push({ type: 'state', state: 'running' })
     } else if (this.pauseOn && this.state === 'running' && this.stillSince !== null && inp.t - this.stillSince >= RUNNING.pauseAfter) {
       this.state = 'paused'
       this.bucket = []
-      ev.push({ type: 'state', state: 'paused' }, { type: 'speak', text: SAY.pause })
+      ev.push({ type: 'state', state: 'paused' }, { type: 'speak', text: this.said.pause })
     }
     if (this.state !== 'running') return ev
 
@@ -204,7 +223,11 @@ export class CueEngine<M, S, K extends string> {
     const t = this.active
     if (t < POWER.warmup) return true
     // 声をかける線を越えたら、点数がまだ高くても細かく見る（間引いたままだと記録が足りず、声がかからない）
-    if (this.records.slice(-POWER.recentBad).some((r) => r.t > t - POWER.recentBad && (r.score < SCORE.good || this.order.some((k) => this.over(k, r.values[k]))))) return true
+    const shaky = (r: Record_<K>) => (r.score !== null && r.score < SCORE.good) || this.order.some((k) => {
+      const v = r.values[k]
+      return v !== undefined && this.over(k, v)
+    })
+    if (this.records.slice(-POWER.recentBad).some((r) => r.t > t - POWER.recentBad && shaky(r))) return true
     const every = this.quiet ? POWER.lookEveryQuiet : POWER.lookEvery
     return t % every < POWER.lookSec
   }
@@ -253,8 +276,9 @@ export class CueEngine<M, S, K extends string> {
     if (this.quiet) {
       // 間引いた分は、前の記録からの時間をこの記録の分として数える
       const prev = this.records[this.records.length - 2]
-      if (r.score >= SCORE.good) this.quietHeldSec += prev ? Math.min(POWER.lookEveryQuiet, t - prev.t) : 1
-      const lastFew = this.within(QUIET.failWindow)
+      // 判定しなかった秒は、保てた時間に数えない
+      if (r.score !== null && r.score >= SCORE.good) this.quietHeldSec += prev ? Math.min(POWER.lookEveryQuiet, t - prev.t) : 1
+      const lastFew = judged(this.within(QUIET.failWindow))
       if (lastFew.length >= QUIET.failMinSamples && mean(lastFew.map((x) => x.score)) < SCORE.mid) {
         this.quiet = false
         this.quietEnd = t
@@ -263,7 +287,9 @@ export class CueEngine<M, S, K extends string> {
         this.quiet = false
         this.quietEnd = t
         this.quietLen = Math.min(QUIET.max, this.quietLen + QUIET.step)
-        this.say(ev, t, 'praise', SAY.quietDone)
+        // 「保てていました」と言えるのは、その間に判定した秒があったときだけ
+        const seen = judged(this.within(this.quietLen)).filter((x) => x.t > this.quietStart)
+        if (seen.length >= QUIET.failMinSamples) this.say(ev, t, 'praise', this.said.quietDone)
       }
       return ev
     }
@@ -271,8 +297,9 @@ export class CueEngine<M, S, K extends string> {
     // 直ったらほめる
     if (this.pending && t - this.pending.t <= CUE_P.recoverWithin) {
       const p = this.pending
-      const back = this.within(CUE_P.recoverHold).filter((x) => x.t > p.t)
-      if (back.length >= 2 && t - p.t >= CUE_P.recoverHold && back.every((x) => x.values[p.item] <= p.back)) {
+      // 判定しなかった秒は飛ばして、判定した秒だけで見る
+      const back = valuesOf(this.within(CUE_P.recoverHold).filter((x) => x.t > p.t), p.item)
+      if (back.length >= 2 && t - p.t >= CUE_P.recoverHold && back.every((v) => v <= p.back)) {
         this.say(ev, t, 'recover', RECOVER[this.cues.length % RECOVER.length])
         this.pending = null
         return ev
@@ -289,11 +316,13 @@ export class CueEngine<M, S, K extends string> {
       return ev
     }
 
-    // 崩れていたら声をかける（優先順は見る役の items の並び）
+    // 崩れていたら声をかける（優先順は見る役の items の並び）。項目ごとに、その項目を判定した秒だけで平均する
     const win = this.within(CUE_P.window)
-    if (win.length >= CUE_P.window * CUE_P.coverage && t - this.lastAnyCue >= CUE_P.gap) {
+    if (t - this.lastAnyCue >= CUE_P.gap) {
       for (const k of this.order) {
-        const avg = mean(win.map((x) => x.values[k]))
+        const vs = valuesOf(win, k)
+        if (vs.length < CUE_P.window * CUE_P.coverage) continue
+        const avg = mean(vs)
         const lim = this.specs[k].limits
         // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ
         const over = this.activeItems.includes(k) ? this.over(k, avg) : scoreOf(lim, avg) < SCORE.mid
@@ -306,7 +335,7 @@ export class CueEngine<M, S, K extends string> {
     }
 
     // 5分きれいに走れていたらほめる
-    const lastLong = this.within(PRAISE.window)
+    const lastLong = judged(this.within(PRAISE.window))
     if (
       t >= PRAISE.window &&
       lastLong.length >= PRAISE.minSamples &&
@@ -314,14 +343,14 @@ export class CueEngine<M, S, K extends string> {
       mean(lastLong.map((x) => x.score)) >= SCORE.good &&
       t - this.lastAnyCue >= PRAISE.afterCue
     ) {
-      this.say(ev, t, 'praise', SAY.praise5)
+      this.say(ev, t, 'praise', this.said.praise5)
       this.lastPraise = t
       return ev
     }
 
     // 安定していたら、声なしで見守る時間に入る。走り始めの自分との比べで安定していたかを見たいので、
     // 基準ができてから QUIET.enterWindow 経つまでは入らない
-    const lastMid = this.within(QUIET.enterWindow)
+    const lastMid = judged(this.within(QUIET.enterWindow))
     if (
       this.refAt !== null &&
       t - this.refAt >= QUIET.enterWindow &&
@@ -332,26 +361,27 @@ export class CueEngine<M, S, K extends string> {
     ) {
       this.quiet = true
       this.quietStart = t
-      this.say(ev, t, 'praise', SAY.quietStart)
+      this.say(ev, t, 'praise', this.said.quietStart)
     }
     return ev
   }
 
   // 結果のうち、どのモードでも共通の部分
   protected summary() {
-    // 間引いた分は、次の記録までの時間をその記録の重みにする（崩れて細かく見た時間に偏らないように）
+    // 間引いた分は、次の記録までの時間をその記録の重みにする（崩れて細かく見た時間に偏らないように）。
+    // 判定しなかった秒は、良い・ふつう・悪いのどれにも入れず、割合の分母からも外す（満点として数えると「良い」が水増しされる）
     const share = { good: 0, mid: 0, bad: 0 }
     const rs = this.records
     const w = rs.map((r, i) => (i + 1 < rs.length ? Math.min(POWER.lookEveryQuiet, rs[i + 1].t - r.t) : 1))
-    const total = w.reduce((a, b) => a + b, 0) || 1
-    rs.forEach((r, i) => (share[category(r.score)] += w[i] / total))
+    const total = rs.reduce((a, r, i) => a + (r.score === null ? 0 : w[i]), 0) || 1
+    rs.forEach((r, i) => r.score !== null && (share[category(r.score)] += w[i] / total))
     return {
       id: String(this.startedAt),
       startedAt: this.startedAt,
       durationSec: Math.round(this.active),
       cues: this.cues,
       share,
-      breakdownMin: breakdownMinute(rs),
+      breakdownMin: breakdownMinute(judged(rs)),
       quietHeldSec: this.quietHeldSec,
     }
   }

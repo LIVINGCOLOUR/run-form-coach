@@ -4,7 +4,7 @@
 // データ：<ID>/Session1/Calibration/Calibration.c3d（立った姿勢）と
 //         <ID>/Session1/Treadmill_Run/Treadmill_Run_Comfortable/Post_Process/Treadmill_Run_Comfortable.c3d（楽なペース）
 // 頭を前に出した走りはデータにないので、首の付け根を中心に頭（耳・鼻）を前に回して作る
-import { it } from 'vitest'
+import { it as itAll } from 'vitest'
 import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadRiglet, placeLike, type Joint, type RigletTrial } from './riglet'
@@ -14,6 +14,8 @@ import { LIMITS, BASELINE, HEAD_ABS } from '../src/core/params'
 import type { V3 } from './rbds'
 
 const DIR = process.env.RIGLET_DIR!
+// データの置き場所がないときは動かさない（空のまま結果のファイルを書き換えないため）
+const it = itAll.skipIf(!DIR)
 const FPS = 15
 const REF = 25 // 走り始めの基準にする長さ（秒）
 const EVAL = 30 // 判定を見る長さ（秒）。基準のあと

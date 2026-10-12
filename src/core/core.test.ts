@@ -6,6 +6,7 @@ import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
 import { category, itemScore, postureScore } from './scoring'
 import { Coach, breakdownMinute } from './coach'
 import { nextItem } from './nextStep'
+import { fmtMinSec, quietDelta, splitMinSec } from './quiet'
 import { capBaseline } from './storage'
 import { standingIssue } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
@@ -564,5 +565,24 @@ describe('ランナーのレベル', () => {
     const coach = new Coach({ pause: false, items: ['trunk', 'body'] })
     const said = feedSparse(coach, 0, 230, { ...good, headLean: 30 }).speak
     expect(said.some((x) => x.includes('頭が前に出ています'))).toBe(false)
+  })
+})
+
+describe('声なしで保てた時間', () => {
+  it('分と秒に分けて書く', () => {
+    expect(splitMinSec(750)).toEqual({ min: 12, sec: 30 })
+    expect(splitMinSec(59.6)).toEqual({ min: 1, sec: 0 }) // 端数の秒は四捨五入
+    expect(splitMinSec(-3)).toEqual({ min: 0, sec: 0 })
+    expect(fmtMinSec(750)).toBe('12分30秒')
+    expect(fmtMinSec(600)).toBe('10分')
+    expect(fmtMinSec(45)).toBe('45秒')
+    expect(fmtMinSec(0)).toBe('0秒')
+  })
+
+  it('前回との差（前回がなければ出さない）', () => {
+    expect(quietDelta(600, 450)).toBe(150)
+    expect(quietDelta(300, 450.4)).toBe(-150)
+    expect(quietDelta(0, 0)).toBe(0)
+    expect(quietDelta(600, undefined)).toBeNull()
   })
 })

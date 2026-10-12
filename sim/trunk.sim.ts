@@ -2,7 +2,7 @@
 // アプリの「上体の傾き」「体全体の傾き」がどれだけずれるか、前かがみの声かけが正しく出るかを測る
 // 動かし方：VH_DIR=<Van Hooren のデータ> npx vitest run --config sim/vitest.config.ts sim/trunk.sim.ts
 // データ：https://osf.io/7qbxc/ の Sub_XX_trunklean.c3d と Sub_XX_333ms.c3d（秒速3.33m）
-import { it } from 'vitest'
+import { it as itAll } from 'vitest'
 import { readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadUpper, type UpperTrial } from './vanhooren'
@@ -12,6 +12,8 @@ import { LIMITS, REL_LIMITS } from '../src/core/params'
 import type { V3 } from './rbds'
 
 const DIR = process.env.VH_DIR!
+// データの置き場所がないときは動かさない（空のまま結果のファイルを書き換えないため）
+const it = itAll.skipIf(!DIR)
 const T0 = 20
 const SEC = 30
 const FPS = 15
