@@ -1,7 +1,7 @@
 // 仮想実験：同じ走りを、置き方を変えた仮想のスマホで映し、アプリの判定がどれだけずれるかを測る
 // 動かし方：RBDS_DIR=<研究データのフォルダ> npx vitest run --config sim/vitest.config.ts sim/placement.sim.ts
 // 研究データ：https://doi.org/10.6084/m9.figshare.4543435 の RBDSnnnrunT35markers.txt / forces.txt / static.txt
-import { it } from 'vitest'
+import { it as itAll } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { loadTrial, type Trial, type V3, type JointName } from './rbds'
 import { makeCamera, toFrame, rng, type Placement, type Noise, type Body } from './camera'
@@ -11,6 +11,8 @@ import { levelFrame, measure, rotateFrame } from '../src/core/geometry'
 import { W, H } from './camera'
 
 const DIR = process.env.RBDS_DIR!
+// データの置き場所がないときは動かさない（空のまま結果のファイルを書き換えないため）
+const it = itAll.skipIf(!DIR)
 const SUBJECTS = Array.from({ length: 12 }, (_, i) => `RBDS${String(i + 1).padStart(3, '0')}`)
 const T0 = 3 // 見る区間（秒）
 const SLOW_SEC = 6
