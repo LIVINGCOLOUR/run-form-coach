@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { CueEngine } from '../../core/engine'
-import { PhoneAnalyzer, PHONE_CUE } from './analyzer'
+import { PhoneAnalyzer, PHONE_CUE, PHONE_SAY } from './analyzer'
 import { estimate, isRunning, uprightFrom, type PhoneMeasure, type Vec3 } from './signal'
 import { cadenceIn, simulateRun, simulateRunWithSteps, simulateStanding } from './simulate'
-import { RUNNING } from '../../core/params'
+import { HIP_REF, RUNNING } from '../../core/params'
+import { PHRASES, phraseId } from '../../core/phrases'
 
 // 模擬データに入れた正解と、測った値の差を確かめる
 // 許す差（模擬データで計算が正しいかを見る線。実際の走りでの精度は、トレッドミルでカメラ版と比べて確かめる）
@@ -167,5 +168,52 @@ describe('スマホ：声かけのしくみにつなぐ', () => {
     expect(analyzer.items.map((s) => s.key)).toEqual(['cadence', 'braking', 'bounce'])
     const { said } = drive(analyzer, run([{ seconds: 260, cadence: 170 }], [10, 80, 200]))
     expect(said.filter((s) => Object.values(PHONE_CUE).includes(s.text))).toEqual([])
+  })
+})
+
+describe('スマホ：判定しない秒と、途切れたとき', () => {
+  it('走り始めの基準ができるまでは判定しない（点数は null、良いに数えない）', () => {
+    const analyzer = new PhoneAnalyzer('waist')
+    const { coach } = drive(analyzer, run([{ seconds: 230, cadence: 170 }], [90, 0, 0]))
+    const before = coach.samples.filter((s) => s.t <= HIP_REF.to)
+    const after = coach.samples.filter((s) => s.t > HIP_REF.to)
+    expect(before.length).toBeGreaterThan(100)
+    expect(before.every((s) => s.score === null)).toBe(true)
+    expect(after.length).toBeGreaterThan(20)
+    expect(after.every((s) => s.score !== null)).toBe(true)
+  })
+
+  it('センサーの値が途切れたら、スマホの言葉で知らせ、戻らなければ終わる', () => {
+    const analyzer = new PhoneAnalyzer('waist')
+    const { coach, said } = drive(analyzer, run([{ seconds: 40, cadence: 170 }], [90, 0, 0]))
+    expect(coach.state).toBe('running')
+    // 値が来ないまま、タイマーで update を呼ぶ
+    for (let t = 40; t <= 80; t += 0.1) {
+      for (const ev of coach.update({ t, present: analyzer.connected(t), moving: analyzer.moving }))
+        if (ev.type === 'speak') said.push({ t, text: ev.text })
+    }
+    const lost = said.filter((s) => s.text === PHRASES.phoneLost)
+    expect(lost.length).toBe(1)
+    expect(lost[0].t).toBeGreaterThan(44)
+    expect(said.some((s) => s.text === PHRASES.lost)).toBe(false) // カメラの言葉は言わない
+    expect(said[said.length - 1].text).toBe(PHRASES.phoneGiveUp)
+    expect(coach.state).toBe('ended')
+  })
+
+  it('値の間があいていなければ、つながっているとみなす', () => {
+    const analyzer = new PhoneAnalyzer('waist')
+    expect(analyzer.connected(0)).toBe(false) // まだ1つも来ていない
+    analyzer.feed({ t: 10, ax: 0, ay: 0, az: 9.8 })
+    expect(analyzer.connected(10.4)).toBe(true)
+    expect(analyzer.connected(10.6)).toBe(false)
+  })
+
+  it('スマホの言葉はどれも PHRASES にあり、音声がある', () => {
+    const voices = Object.keys(import.meta.glob('../../../public/voices/female/*.m4a'))
+    for (const text of [...Object.values(PHONE_CUE), ...Object.values(PHONE_SAY)]) {
+      const id = phraseId(text!)
+      expect(id).toBeDefined()
+      expect(voices).toContain(`../../../public/voices/female/${id}.m4a`)
+    }
   })
 })
