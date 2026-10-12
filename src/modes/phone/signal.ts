@@ -1,6 +1,6 @@
 import { PHONE } from './params'
 
-// スマホのセンサーの値から、ピッチ・上下動・ブレーキ・上体の前傾を出す
+// 腰に付けたスマホのセンサーの値から、ピッチ・上下動・ブレーキを出す
 //
 // 入力は DeviceMotionEvent の accelerationIncludingGravity と同じ決まり：スマホの向きの座標（x・y・z）で、
 // 重力を含む加速度（m/s²）。止まっているときは、上向きに約 9.8 になる（W3C DeviceOrientation Event の決まり）。
@@ -9,7 +9,7 @@ import { PHONE } from './params'
 // スマホがどの向きでベルトに入っていても測れるよう、向きは値そのものから決める：
 //   上下：数歩ぶんの平均の加速度の向き（一定の速さで走っていれば、平均には重力だけが残る）
 //   前後：水平面の中で、1歩ごとにくり返す揺れがいちばん大きい向き（左右の揺れは2歩で1回なので分けられる）
-// ジャイロは今は使っていない（1歩の中の骨盤の回転で上下と水平が混ざるのを直すのに使える。実機で要るか確かめる）
+// ジャイロは、付け方の確認（mount.ts）でだけ使う（1歩の中の骨盤の回転で上下と水平が混ざるのを直すのにも使える。実機で要るか確かめる）
 
 export type Vec3 = [number, number, number]
 
@@ -19,13 +19,10 @@ export interface PhoneMeasure {
   ax: number // 重力を含む加速度（m/s²）
   ay: number
   az: number
-  gx?: number // 角速度（rad/s）。今は使っていない
+  gx?: number // 角速度（rad/s）。付け方の確認でだけ使う。取れない端末では無い
   gy?: number
   gz?: number
 }
-
-// スマホを付けた場所。腰（ランニングベルト）では上体の前傾は出さない（骨盤の傾きは上体の傾きと別に動くため）
-export type Placement = 'waist' | 'vest' | 'chest'
 
 export interface Estimate {
   cadence: number // ピッチ（歩／分）
@@ -33,7 +30,6 @@ export interface Estimate {
   accRms: number // 上下の加速度のばらつき（m/s²）
   bounceCm: number // 上下動（1歩の中の高さの振れ幅、cm）
   brakingMs: number // 1歩の中の、前後の速さの振れ幅（m/s）。着地のブレーキで落ちた速さ
-  lean?: number // 上体の前傾（度）。立ったときの向き（upright）が分かっていて、腰以外のときだけ
   up: Vec3 // スマホの座標で見た上向き
   forward: Vec3 // スマホの座標で見た前向き（水平）
 }
@@ -41,15 +37,16 @@ export interface Estimate {
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 const norm = (a: Vec3) => Math.hypot(a[0], a[1], a[2])
 const scale = (a: Vec3, k: number): Vec3 => [a[0] * k, a[1] * k, a[2] * k]
-const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 const unit = (a: Vec3) => scale(a, 1 / norm(a))
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 
-// 測った時刻はばらつくので、決まった間隔に並べ直す（前後の値の直線補間）
-export function resample(ms: PhoneMeasure[], fs = PHONE.fs): { t: number[]; acc: Vec3[] } {
+// 測った時刻はばらつくので、決まった間隔に並べ直す（前後の値の直線補間）。gyro はすべての値に角速度があるときだけ
+export function resample(ms: PhoneMeasure[], fs = PHONE.fs): { t: number[]; acc: Vec3[]; gyro?: Vec3[] } {
   const t: number[] = []
   const acc: Vec3[] = []
+  const hasGyro = ms.length > 0 && ms.every((m) => m.gx !== undefined && m.gy !== undefined && m.gz !== undefined)
+  const gyro: Vec3[] = []
   if (ms.length < 2) return { t, acc }
   let j = 0
   for (let x = ms[0].t; x <= ms[ms.length - 1].t; x += 1 / fs) {
@@ -59,8 +56,9 @@ export function resample(ms: PhoneMeasure[], fs = PHONE.fs): { t: number[]; acc:
     const w = b.t > a.t ? Math.min(1, Math.max(0, (x - a.t) / (b.t - a.t))) : 0
     t.push(x)
     acc.push([a.ax + (b.ax - a.ax) * w, a.ay + (b.ay - a.ay) * w, a.az + (b.az - a.az) * w])
+    if (hasGyro) gyro.push([a.gx! + (b.gx! - a.gx!) * w, a.gy! + (b.gy! - a.gy!) * w, a.gz! + (b.gz! - a.gz!) * w])
   }
-  return { t, acc }
+  return hasGyro ? { t, acc, gyro } : { t, acc }
 }
 
 // 1歩の周期（秒）を、上下の加速度の自己相関の山から出す
@@ -188,9 +186,8 @@ export function perStepRange(x: number[], cuts: number[], fs: number, p: 1 | 2):
   return mean(out)
 }
 
-// 直近の値から、ピッチ・上下動・ブレーキ・前傾を出す。値が足りない・走る動きでないときは null
-// upright：立って止まったときの平均の加速度（スマホの座標）。上体の前傾は、これからの傾きの変化で出す
-export function estimate(ms: PhoneMeasure[], placement: Placement, upright?: Vec3): Estimate | null {
+// 直近の値から、ピッチ・上下動・ブレーキを出す。値が足りない・走る動きでないときは null
+export function estimate(ms: PhoneMeasure[]): Estimate | null {
   if (ms.length < 3 || ms[ms.length - 1].t - ms[0].t < PHONE.minWindow) return null
   const { t, acc } = resample(ms)
   const fs = PHONE.fs
@@ -273,27 +270,10 @@ export function estimate(ms: PhoneMeasure[], placement: Placement, upright?: Vec
   const ap = acc.map((a) => dot(a, forward))
   const brakingMs = perStepRange(ap, cuts, fs, 1)
 
-  // 6. 上体の前傾：立ったときの上向きから、走っているときの上向きがどれだけ前に倒れたか（前後の面の中で）
-  let lean: number | undefined
-  if (placement !== 'waist' && upright) {
-    const us = unit(upright)
-    const fx = unit(sub(forward, scale(us, dot(forward, us)))) // 立ったときの体の前向き
-    lean = (Math.atan2(-dot(up, fx), dot(up, us)) * 180) / Math.PI
-  }
-
-  return { cadence, regularity: sp.regularity, accRms, bounceCm, brakingMs, lean, up, forward }
+  return { cadence, regularity: sp.regularity, accRms, bounceCm, brakingMs, up, forward }
 }
 
 // 走る動きをしているか（engine の moving に渡す）
 export function isRunning(e: Estimate | null, runSpm: number): boolean {
   return !!e && e.cadence >= runSpm && e.regularity >= PHONE.minRegularity && e.accRms >= PHONE.runAccRms
-}
-
-// 立って止まっているときの平均の加速度（前傾の基準）。動いていたら null
-export function uprightFrom(ms: PhoneMeasure[]): Vec3 | null {
-  if (ms.length < 3) return null
-  const g: Vec3 = [mean(ms.map((m) => m.ax)), mean(ms.map((m) => m.ay)), mean(ms.map((m) => m.az))]
-  const spread = Math.sqrt(mean(ms.map((m) => (m.ax - g[0]) ** 2 + (m.ay - g[1]) ** 2 + (m.az - g[2]) ** 2)))
-  if (spread > PHONE.stillStd || norm(g) < PHONE.gravityMin || norm(g) > PHONE.gravityMax) return null
-  return g
 }

@@ -60,6 +60,9 @@ export const PHRASES = {
   phoneGiveUp: '動きが取れないので、ここで終わりにします。おつかれさまでした。',
   phonePraise5: 'いい感じです。きれいな走りが続いています。',
   phoneQuietDone: '声なしでも、きれいな走りを保てていました。',
+  // 付け方の確認（src/modes/phone/mount.ts）。見つけたら、その走りでは声かけを止める
+  phoneMount: 'スマホがゆるいか、ずれているようです。腰のベルトに、しっかり付け直してください。この走りでは、フォームの声かけを休みます。',
+  phonePlace: 'スマホが腰に付いていないようです。腰のベルトに付けてください。この走りでは、フォームの声かけを休みます。',
 } as const
 
 export type PhraseId = keyof typeof PHRASES
