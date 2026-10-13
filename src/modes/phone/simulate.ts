@@ -305,3 +305,46 @@ export function demoRun(): PhoneMeasure[] {
     ...simulateRun({ ...real, cadence: 158, seconds: 60, seed: 14, t0: 305 }),
   ]
 }
+
+// その場で3回ジャンプ（1.5秒に1回）：沈んで押す（1.6g）→ 宙（0g）→ 着地（2.5g）。2台の時刻を合わせる手がかり
+export function simulateJumps(s: { seconds: number; orientation?: Vec3; seed?: number; t0?: number }): PhoneMeasure[] {
+  const t0 = s.t0 ?? 0
+  return simulateStanding({ seconds: s.seconds, orientation: s.orientation, noise: 0.05, t0, seed: s.seed }).map((m) => {
+    const u = m.t - t0
+    if (u >= 4.5) return m
+    const v = u % 1.5
+    const k = v < 0.25 ? 1.6 : v < 0.6 ? 0 : v < 0.75 ? 2.5 : 1
+    return { ...m, ax: m.ax * k, ay: m.ay * k, az: m.az * k }
+  })
+}
+
+// 崩しの撮影（drill.ts）の段に合わせた模擬の走り。0 秒が誘導の始まり。
+// 立つ・ジャンプ・休みは止まって、走る区間は区間ごとに値を変える（ピッチを落とす：155、弾む：上下動 12cm、
+// かかとから前に：ブレーキ 0.45、付け方の区間はその付け方）。頭・猫背などの姿勢は、腰のスマホの模擬では作れないのでふつうと同じ
+export function demoDrill(phases: { kind: string; start: number; sec: number; step?: { key: string } }[]): PhoneMeasure[] {
+  const o: Vec3 = [90, 0, 0]
+  const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, cadence: 172, bounceCm: 8, brakingMs: 0.3, orientation: o }
+  const by: Record<string, Partial<RunSpec>> = {
+    slow: { cadence: 155, bounceCm: 10, brakingMs: 0.4 },
+    bouncy: { bounceCm: 12 },
+    heel: { brakingMs: 0.45 },
+    loose: { mount: { kind: 'loose', tiltDeg: 8, accMs: 3 } },
+    hand: { mount: { kind: 'hand' } },
+    pocket: { mount: { kind: 'pocket' } },
+  }
+  const out: PhoneMeasure[] = []
+  phases.forEach((p, i) => {
+    const seed = 200 + i
+    if (p.kind === 'jump' || p.kind === 'endJump') out.push(...simulateJumps({ seconds: p.sec, orientation: o, seed, t0: p.start }))
+    else if (p.kind === 'run') out.push(...simulateRun({ ...real, ...(by[p.step?.key ?? ''] ?? {}), seconds: p.sec, seed, t0: p.start }))
+    else if (p.kind === 'belt') {
+      // ベルトが動き出すまで立ち、後半はもう走っている
+      out.push(...simulateStanding({ seconds: p.sec / 2, orientation: o, noise: 0.05, seed, t0: p.start }))
+      out.push(...simulateRun({ ...real, seconds: p.sec / 2, seed: seed + 1000, t0: p.start + p.sec / 2 }))
+    } else if (p.sec > 0) out.push(...simulateStanding({ seconds: p.sec, orientation: o, noise: 0.05, seed, t0: p.start }))
+  })
+  // 終わりの言葉のあとも少し立っている
+  const end = phases[phases.length - 1]
+  out.push(...simulateStanding({ seconds: 5, orientation: o, noise: 0.05, seed: 999, t0: end.start + end.sec }))
+  return out
+}

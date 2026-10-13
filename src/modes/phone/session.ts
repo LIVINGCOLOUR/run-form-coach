@@ -8,7 +8,8 @@ import type { MountIssue } from './mount'
 import type { PhoneMeasure } from './signal'
 import { PracticeRun, type PracticePlan, type PracticeResult } from './practice'
 import { SpeedTrack, type GpsFix } from './speed'
-import { PHRASES } from '../../core/phrases'
+import { PHRASES, SAY } from '../../core/phrases'
+import { Drill, type DrillOptions } from './drill'
 
 // スマホ版の1回の走り：センサーの値を見る役と声かけのしくみに渡し、調整用の記録を取り、走り終わったら結果をまとめる
 // 画面（screens/PhoneLive.tsx）から切り離して、模擬データでテストできるようにしている
@@ -18,6 +19,8 @@ import { PHRASES } from '../../core/phrases'
 //   タイマーで（値が途切れたことに気づくため）：run.tick(今)
 //   戻り値の speak を声で読み上げ、tone が on ならメトロノームを run.tempo() のテンポで bars 小節鳴らし（練習では止めるまで）、off なら止める。
 //   練習・テストのときは4つ目に種類（PhoneKind）を渡し、画面を開いたら run.intro() を言う
+//   崩しの撮影（drill）では、タイマーで run.guide(今) も呼び、戻り値を同じように扱う。run.drill.at(今).done になったら終える。
+//     途中でやめたら run.stopDrill(今)
 //   state が ended なら終える
 //   終えるとき：run.finish() → 結果（短すぎれば null）と記録
 
@@ -33,7 +36,9 @@ export type PhoneWhere = 'outdoor' | 'treadmill'
 // 走りの種類。ふつうの走り（なし）・ピッチを上げる練習（practice.ts）・フォームのテスト（formtest.ts）
 //   練習とテストでは、ピッチが落ちたときの声とメトロノームは使わない（練習はメトロノームが混ざらないように、テストは声をかけないため）。
 //   ほめる言葉と声なしの見守りの言葉も言わない。付け方の確認の声と、始め・終わりの言葉は言う
-export type PhoneKind = { kind: 'practice'; plan: PracticePlan } | { kind: 'test' }
+// 崩しの撮影（drill.ts。トレッドミルだけ）：ふつうの走りと同じようにピッチの声・メトロノーム・付け方の確認の声を出し、
+//   誘導の声を優先する（誘導の声の近くでは、ほかの声とメトロノームを待たせる）。しくみの始め・一時停止・再開・ほめる言葉・見守りの言葉は言わない
+export type PhoneKind = { kind: 'practice'; plan: PracticePlan } | { kind: 'test' } | { kind: 'drill'; drill: DrillOptions }
 
 export interface PhoneSession {
   id: string
@@ -53,13 +58,15 @@ export interface PhoneSession {
   mount: MountIssue | null // 付け方の問題（見つけたら、その走りでは判定を止めた）
   mountAt?: number // 見つけた秒
   logId?: string
-  kind?: 'practice' | 'test' // ないのはふつうの走り
+  kind?: 'practice' | 'test' | 'drill' // ないのはふつうの走り
   practice?: PracticeResult // ピッチを上げる練習の回の結果
   test?: FormTestResult // フォームのテストの値
 }
 
 // 練習とテストで言わない言葉（しくみがかける、ほめる言葉と声なしの見守りの言葉）
 const QUIET_IN_SPECIAL = new Set<string>([PHRASES.phonePraise5, PHRASES.quietStart, PHRASES.phoneQuietDone])
+// 崩しの撮影で言わない言葉（区間のあいだの休みで、一時停止・再開を毎回言わないように。始めは誘導が言う）
+const QUIET_IN_DRILL = new Set<string>([...QUIET_IN_SPECIAL, SAY.start, SAY.pause, SAY.resume])
 
 class PhoneCoach extends CueEngine<PhoneMeasure, PhoneSample, PhoneItem> {
   finish(a: PhoneAnalyzer): PhoneSession {
@@ -73,6 +80,9 @@ class PhoneCoach extends CueEngine<PhoneMeasure, PhoneSample, PhoneItem> {
   }
 }
 
+// 崩しの撮影：走る区間に入ってから、ピッチの声とメトロノームを出し始めるまでの秒（しくみの窓 CUE.window より長く）
+const DRILL_SETTLE = 10
+
 // 結果に残すのは、これだけ走ったときだけ（カメラ版と同じ）
 const MIN_SAMPLES = 30
 
@@ -84,6 +94,8 @@ export class PhoneRun {
   readonly where: PhoneWhere
   readonly kind: PhoneKind['kind'] | null
   readonly practice: PracticeRun | null = null // ピッチを上げる練習のときだけ
+  readonly drill: Drill | null = null // 崩しの撮影のときだけ
+  private held: { e: CoachEvent; phase: number }[] = [] // 誘導の声の近くで待たせている、しくみの声とメトロノーム（どの段で出たか）
   private seen = 0
   private lastState: PhoneCoach['state']
   private refLogged = false
@@ -94,13 +106,19 @@ export class PhoneRun {
     this.where = where
     this.kind = kind?.kind ?? null
     // 練習とテストでは、どの項目でも知らせない（ピッチが落ちたときのメトロノームを鳴らさない）
-    this.coach = new PhoneCoach(this.analyzer, { pause: true, items: kind ? [] : PHONE_VOICED, muteOthers: true, holdUnjudged: true })
+    // 崩しの撮影では、ふつうの走りと同じくピッチで知らせる
+    this.coach = new PhoneCoach(this.analyzer, { pause: true, items: kind && kind.kind !== 'drill' ? [] : PHONE_VOICED, muteOthers: true, holdUnjudged: true })
     this.lastState = this.coach.state
     if (kind?.kind === 'practice') this.practice = new PracticeRun(kind.plan)
+    if (kind?.kind === 'drill') this.drill = new Drill(kind.drill, clock.perfMs / 1000)
     if (where === 'outdoor') this.analyzer.speed = new SpeedTrack()
     this.rec = new PhoneLogRecorder(clock, device, where)
     this.rec.event(clock.perfMs / 1000, `state:${this.coach.state}`)
-    if (kind) this.rec.event(clock.perfMs / 1000, kind.kind === 'practice' ? `kind:practice:${kind.plan.n}:${kind.plan.base === null ? 'none' : kind.plan.base.toFixed(1)}` : 'kind:test')
+    if (kind)
+      this.rec.event(
+        clock.perfMs / 1000,
+        kind.kind === 'practice' ? `kind:practice:${kind.plan.n}:${kind.plan.base === null ? 'none' : kind.plan.base.toFixed(1)}` : kind.kind === 'drill' ? `kind:drill:${kind.drill.version}:${kind.drill.extra ? 'extra' : 'base'}` : 'kind:test',
+      )
   }
 
   // 画面を開いたときに言う言葉（練習の1回目・テスト）
@@ -142,6 +160,32 @@ export class PhoneRun {
     return this.analyzer.ref?.cadence ?? null
   }
 
+  // 崩しの撮影：タイマーで呼ぶ。誘導の言葉と、待たせていたしくみの声・メトロノームを返し、区間の印を記録に残す
+  guide(t: number): CoachEvent[] {
+    if (!this.drill) return []
+    const g = this.drill.advance(t)
+    for (const m of g.marks) this.rec.event(m.t, m.text)
+    const ev: CoachEvent[] = g.say.map((text) => ({ type: 'speak', text }))
+    for (const e of ev) if (e.type === 'speak') this.rec.event(t, e.text)
+    if (this.held.length && !this.drill.busy(t)) {
+      // 段が変わったら、ピッチの声とメトロノームは捨てる（前の区間のことなので）。付け方の確認の声などは出す
+      const cur = this.drill.at(t).index
+      const out = this.held.filter((h) => h.phase === cur || (h.e.type === 'speak' && h.e.text !== PHRASES.phoneCadence)).map((h) => h.e)
+      this.held = []
+      for (const e of out) {
+        if (e.type === 'speak') this.rec.event(t, e.text)
+        if (e.type === 'tone') this.rec.event(t, e.on ? `tone:on:${e.item}:${Math.round(this.tempo() ?? 0)}` : `tone:off:${e.item}`)
+      }
+      ev.push(...out)
+    }
+    return ev
+  }
+
+  // 崩しの撮影を途中でやめた：閉じていない区間の印を閉じる
+  stopDrill(t: number) {
+    for (const m of this.drill?.stop() ?? []) this.rec.event(t, m)
+  }
+
   // 言葉を記録に残す（しくみの外で話した言葉も）
   said(t: number, text: string) {
     this.rec.event(t, text)
@@ -149,7 +193,27 @@ export class PhoneRun {
 
   private after(t: number, ev0: CoachEvent[]): CoachEvent[] {
     // 練習とテストでは、ほめる言葉と声なしの見守りの言葉を言わない
-    const ev = this.kind ? ev0.filter((e) => !(e.type === 'speak' && QUIET_IN_SPECIAL.has(e.text))) : ev0
+    const mute = this.kind === 'drill' ? QUIET_IN_DRILL : this.kind ? QUIET_IN_SPECIAL : null
+    let ev = mute ? ev0.filter((e) => !(e.type === 'speak' && mute.has(e.text))) : ev0
+    // 崩しの撮影：誘導の声の近くでは、しくみの声とメトロノームを鳴らし始めずに待たせる（guide で出す）。
+    // 待たせている間にメトロノームを止める知らせが来たら、待たせていた分も捨てる
+    if (this.drill) {
+      const now: CoachEvent[] = []
+      for (const e of ev) {
+        if (e.type === 'tone' && !e.on && this.held.some((h) => h.e.type === 'tone' && h.e.on && h.e.item === e.item)) {
+          this.held = this.held.filter((h) => !(h.e.type === 'tone' && h.e.item === e.item))
+          continue
+        }
+        // ピッチの声とメトロノームは、走る区間に入って DRILL_SETTLE 秒たってから（しくみの窓は休みをまたぐので、
+        // 前の区間のピッチで次の区間の始めに鳴らさないように）。それより前に来たものは捨てる
+        const at = this.drill.at(t)
+        const pitch = (e.type === 'tone' && e.on) || (e.type === 'speak' && e.text === PHRASES.phoneCadence)
+        if (pitch && (at.phase.kind !== 'run' || t - this.drill.t0 - at.phase.start < DRILL_SETTLE)) continue
+        if ((e.type === 'speak' || (e.type === 'tone' && e.on)) && (this.held.length || this.drill.busy(t))) this.held.push({ e, phase: at.index })
+        else now.push(e)
+      }
+      ev = now
+    }
     // 練習：走りが止まったら（一時停止・途切れ・終わり）、メトロノームを止める
     if (this.practice && this.coach.state !== 'running' && this.practice.halt()) ev.push({ type: 'tone', on: false, item: 'practice' })
     const a = this.analyzer

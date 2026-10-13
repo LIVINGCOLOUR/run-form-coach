@@ -3,6 +3,7 @@ import { facing, legLength } from '../camera/geometry'
 import { L } from '../camera/landmarks'
 import { PHONE_MOUNTS, type PhoneLog } from './log'
 import { MountCheck, type MountFeatures, type MountIssue } from './mount'
+import { DRILL_PREP_MARKS, DRILL_STEPS } from './drill'
 
 // スマホ版とカメラ版を同時に記録した2つのファイルを、時刻を合わせて並べ、声にする前の関門（docs/phone-spec.md
 // 「精度の確かめ方」）の材料を出す。実機テスト①（docs/phone-test1.md）の記録を、scripts/compare-runs.mjs から使う
@@ -38,6 +39,8 @@ export const TEST1: Step[] = [
   { key: 'pocket', name: 'ポケット', min: 2, waist: false, expect: 'notWaist' },
   { key: 'normal4', name: '腰に戻してふつう', min: 2, waist: true, expect: null },
 ]
+// 崩しの撮影（drill.ts）の区間。key は TEST1 と同じものは同じ。記録に区間の印があれば、それで区間を決める
+export const DRILL: Step[] = DRILL_STEPS.map((s) => ({ key: s.key, name: s.name, min: s.full / 60, waist: s.waist, expect: s.expect }))
 // 研究で分かっている向き（ピッチを落とすと上下動とブレーキが増える：Heiderscheit 2011）。比べる相手は最初の「ふつう」
 const RESEARCH: Record<string, { bounce?: 1 | -1; braking?: 1 | -1 }> = { slow: { bounce: 1, braking: 1 }, bouncy: { bounce: 1 } }
 
@@ -57,6 +60,13 @@ interface PhoneSec {
 interface PhoneData {
   raw: { T: number; mag: number }[]
   secs: PhoneSec[]
+  marks: Mark[] // 崩しの撮影の区間の印（ないのは、印のない記録）
+}
+// 記録の events の protocol:<key>:start / end（drill.ts）。T はふつうの時刻（秒、スマホの時計）。end がなければ null
+export interface Mark {
+  key: string
+  start: number
+  end: number | null
 }
 
 interface CamFrame {
@@ -99,7 +109,24 @@ export function readPhone(file: unknown): PhoneData {
       ? null
       : { stepHz: r[hz]!, gravity: r[gr]!, up: [r[ux]!, r[uy]!, r[uz]!], gyroSwing: r[sw] ?? undefined, gyroHf: r[hf] ?? undefined },
   }))
-  return { raw, secs }
+  return { raw, secs, marks: readMarks(log) }
+}
+
+// 区間の印を読む。走る前・あとのジャンプと立つ間（DRILL_PREP_MARKS）も読むが、区間にはしない
+export function readMarks(log: Pick<PhoneLog, 'events' | 'clock'>): Mark[] {
+  const marks: Mark[] = []
+  if (!Array.isArray(log.events) || !log.clock) return marks
+  const T = (t: number) => (log.clock.epochMs + t * 1000 - log.clock.perfMs) / 1000
+  for (const [t, text] of log.events) {
+    const m = /^protocol:(.+):(start|end)$/.exec(text)
+    if (!m) continue
+    if (m[2] === 'start') marks.push({ key: m[1], start: T(t), end: null })
+    else {
+      const open = [...marks].reverse().find((x) => x.key === m[1] && x.end === null)
+      if (open) open.end = T(t)
+    }
+  }
+  return marks
 }
 
 export function readCamera(file: unknown): CamData {
@@ -285,8 +312,20 @@ export interface Segment {
 }
 
 // スマホの加速度の強さで、走っている区間を見つける（立って休む間で区切る）。短すぎる動き（ジャンプなど）は除く
+// 記録に区間の印があれば（崩しの撮影）、休みの見分けより先にそれで決める（labels を渡したときは今までどおり）
 export function findSegments(ph: PhoneData, steps: Step[] = TEST1, labels?: string[]): { segments: Segment[]; warnings: string[] } {
   const warnings: string[] = []
+  const runMarks = labels ? [] : ph.marks.filter((m) => !DRILL_PREP_MARKS.includes(m.key))
+  if (runMarks.length) {
+    const lastT = ph.raw.length ? ph.raw[ph.raw.length - 1].T : 0
+    const segments = runMarks.map((m, i): Segment => {
+      const step = steps.find((s) => s.key === m.key) ?? DRILL.find((s) => s.key === m.key) ?? TEST1.find((s) => s.key === m.key) ?? null
+      return { i, step, name: step?.name ?? m.key, start: m.start, end: m.end ?? lastT }
+    })
+    warnings.push(`区間は記録の印（protocol:…）から決めた（${segments.length} 個）`)
+    if (runMarks.some((m) => m.end === null)) warnings.push('終わりの印がない区間がある。記録の最後までとした')
+    return { segments, warnings }
+  }
   const act = activity(ph.raw.map((p) => ({ T: p.T, v: p.mag })), 1, 20, 0.05)
   const keys = [...act.keys()].sort((a, b) => a - b).filter((_, j) => j % 5 === 0) // 0.5 秒刻み
   const vals = keys.map((k) => act.get(k)!)

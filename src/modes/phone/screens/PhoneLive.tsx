@@ -12,7 +12,8 @@ import { FORM_TEST, PRACTICE } from '../params'
 import { practiceOnShare } from '../practice'
 import { prevFormTest } from '../formtest'
 import type { SpeedGate } from '../speed'
-import { demoRun } from '../simulate'
+import type { DrillPhase } from '../drill'
+import { demoDrill, demoRun } from '../simulate'
 import { savePhoneLog, savePhoneSession } from '../storage'
 import { queueUpload } from '../../../core/upload/uploads'
 
@@ -23,6 +24,7 @@ import { queueUpload } from '../../../core/upload/uploads'
 // where：外（outdoor）なら位置情報（GPS）の速さを受け取り、速さが走り始めの基準から外れた秒は判定しない（声もメトロノームも出さない）。
 //   トレッドミル（treadmill）では GPS を使わず、速さは一定とみなす
 // kind：ピッチを上げる練習（practice.ts。練習のテンポのメトロノームだけを鳴らす）か、フォームのテスト（formtest.ts。声はかけず、5分で終える）
+//   か、崩しの撮影（drill.ts。区間を声で指示し、いまの区間・残り時間・次の区間を大きく出す。最後まで進んだら終える）
 
 interface Hud {
   state: CoachState
@@ -47,6 +49,7 @@ interface Hud {
   refSpeed: number | null
   gate: SpeedGate | null // 速さで判定を止めている理由
   gpsError: number | null // 位置が取れない理由（1=許可されていない、2=取れない、3=時間切れ）
+  drill: { phase: DrillPhase; remaining: number; next: DrillPhase | null; n: number; of: number } | null // 崩しの撮影：いまの段
 }
 
 const GATE_TEXT: Record<SpeedGate, string> = {
@@ -78,7 +81,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
   const finishRef = useRef<() => void>(() => {})
   const [hud, setHud] = useState<Hud>({
     state: 'waiting', elapsed: 0, quiet: false, caption: '', cadence: null, refCadence: null, refLater: false, tone: false, tempo: null, practiceBase: kind?.kind === 'practice' ? kind.plan.base : null, bounceCm: null, brakingMs: null, cadences: [], mount: null, hz: 0, gyro: false, wake: false, noData: false,
-    speed: null, refSpeed: null, gate: null, gpsError: location === 'denied' ? 1 : location === 'unsupported' ? 2 : null,
+    speed: null, refSpeed: null, gate: null, gpsError: location === 'denied' ? 1 : location === 'unsupported' ? 2 : null, drill: null,
   })
 
   useEffect(() => {
@@ -104,6 +107,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       if (finished) return
       finished = true
       metronome.stop()
+      run.stopDrill(now())
       const { session, log } = run.finish()
       if (session) await savePhoneSession(session).catch(() => {})
       // 走りが始まらなかったときこそ調整に使うので、記録は残す
@@ -138,7 +142,8 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
     let stopMotion = () => {}
     let simTimer: ReturnType<typeof setInterval> | null = null
     if (sim) {
-      const data = demoRun()
+      // 崩しの撮影は、段に合わせた模擬の走り
+      const data = run.drill ? demoDrill(run.drill.phases) : demoRun()
       let i = 0
       const base = perf0 / 1000
       simTimer = setInterval(() => {
@@ -190,6 +195,15 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       const t = now()
       handle(run.tick(t), t)
       const coach = run.coach
+      // 崩しの撮影：誘導の言葉と区間の印。最後まで進んだら終える（終わりの言葉は guide が出す）
+      const drill = run.drill
+      if (drill) {
+        handle(run.guide(t), t)
+        if (drill.at(t).done) {
+          finish()
+          return
+        }
+      }
       // テスト：決まった長さを走ったら終える
       if (run.kind === 'test' && coach.state === 'running' && coach.active >= FORM_TEST.seconds) {
         say(PHRASES.testDone, t, true)
@@ -197,7 +211,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
         return
       }
       // 走り出すのを待っている間は、黙ったままにしない（値が届いているときだけ）
-      if (coach.state === 'waiting' && run.analyzer.connected(t) && t - lastWait > RUNNING.waitRepeat) {
+      if (!drill && coach.state === 'waiting' && run.analyzer.connected(t) && t - lastWait > RUNNING.waitRepeat) {
         lastWait = t
         say(PHRASES.waitRun, t, true)
       }
@@ -227,6 +241,14 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
         refSpeed: run.analyzer.refSpeed,
         gate: run.analyzer.gate,
         gpsError,
+        drill: drill
+          ? (() => {
+              const a = drill.at(t)
+              const runs = drill.phases.filter((p) => p.kind === 'run')
+              const n = runs.filter((p) => p.start <= a.phase.start).length
+              return { phase: a.phase, remaining: a.remaining, next: a.next, n, of: runs.length }
+            })()
+          : null,
       })
     }, 250)
 
@@ -241,6 +263,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       // 終わりの言葉（おつかれさまでした）は最後まで言わせる
       if (!finished) {
         stopVoice()
+        run.stopDrill(now())
         savePhoneLog(run.finish().log).catch(() => {})
       }
     }
@@ -266,6 +289,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
         <div className="num" style={{ fontSize: 44 }}>{mmss(hud.elapsed)}</div>
       </div>
 
+      {hud.drill && <DrillCard d={hud.drill} />}
       {sim && <div style={{ fontSize: 12, color: 'var(--warn)' }}>模擬データで試しています（{sim}倍の速さ。速さは一定とみなします）</div>}
       {!sim && where === 'treadmill' && <div style={{ fontSize: 12, color: 'var(--warn)' }}>トレッドミルで試しています（GPS は使わず、速さは一定とみなします）</div>}
       {kind?.kind === 'practice' && (
@@ -291,7 +315,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
           </div>
         </div>
       )}
-      {note && !(kind?.kind === 'test' && hud.state === 'running') && !(kind?.kind === 'practice' && hud.practiceBase !== null) && <div style={{ fontSize: 14 }} className="muted">{note}</div>}
+      {note && kind?.kind !== 'drill' && !(kind?.kind === 'test' && hud.state === 'running') && !(kind?.kind === 'practice' && hud.practiceBase !== null) && <div style={{ fontSize: 14 }} className="muted">{note}</div>}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div className="row">
@@ -353,6 +377,32 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
         終える
       </button>
     </main>
+  )
+}
+
+// 崩しの撮影：いまの段・残り時間・次の段。腰に付ける前と休みのときに見るので、大きく出す
+function DrillCard({ d }: { d: NonNullable<Hud['drill']> }) {
+  const { phase, remaining, next } = d
+  const running = phase.kind === 'run'
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6, borderColor: running ? 'var(--accent)' : undefined }}>
+      <div className="row" style={{ fontSize: 13 }}>
+        <span className="muted">崩しの撮影{running ? `　区間 ${d.n} / ${d.of}` : ''}</span>
+        <span className="muted">{phase.kind === 'done' ? '' : '残り'}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.15, color: running ? 'var(--accent)' : undefined, minWidth: 0 }}>{phase.name}</div>
+        {phase.kind !== 'done' && <div className="num" style={{ fontSize: 56, lineHeight: 0.9, flexShrink: 0 }}>{mmss(Math.ceil(remaining))}</div>}
+      </div>
+      {phase.how && <div style={{ fontSize: 15, lineHeight: 1.5 }}>{phase.how}</div>}
+      {next && (
+        <div style={{ fontSize: 15, paddingTop: 6, borderTop: '1px solid var(--line)' }}>
+          <span className="muted">次：</span>
+          <span style={{ fontWeight: 700 }}>{next.name}</span>
+          {next.kind === 'run' && <span className="muted">（{next.sec >= 60 ? `${next.sec / 60}分` : `${next.sec}秒`}）</span>}
+        </div>
+      )}
+    </div>
   )
 }
 

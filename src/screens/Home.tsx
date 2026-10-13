@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
@@ -17,6 +17,7 @@ import type { PhoneKind, PhoneSession, PhoneWhere } from '../modes/phone/session
 import { nextPractice } from '../modes/phone/practice'
 import { prevFormTest } from '../modes/phone/formtest'
 import { FORM_TEST, PRACTICE } from '../modes/phone/params'
+import { drillPlan, type DrillOptions, type DrillVersion } from '../modes/phone/drill'
 import { requestLocation, requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
 import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/storage'
 import { flushUploads } from '../core/upload/uploads'
@@ -134,6 +135,9 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
     setWhere(w)
     savePhoneWhere(w)
   }
+  // 崩しの撮影（トレッドミルだけ）：ふつう版か短い版か、最後に付け方の区間も走るか
+  const [drill, setDrill] = useState<DrillOptions>({ version: 'full', extra: true })
+  const drillMin = (o: DrillOptions) => Math.round(drillPlan(o).total / 60)
   const testDue = testDays !== null && testDays >= FORM_TEST.everyDays
   const phoneActions = [
     { title: '走る', note: 'ピッチが落ちたら、声で知らせます', start: () => startPhone(where) },
@@ -148,6 +152,17 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
       due: testDue,
       start: () => startPhone(where, { kind: 'test' }),
     },
+    // トレッドミルのときだけ：わざと崩した走りを、声の指示どおりに順に走る（横のカメラで動画も撮る）
+    ...(where === 'treadmill'
+      ? [
+          {
+            title: '崩しの撮影（声で指示）',
+            note: `頭を前に・猫背・ピッチを落とす…を、声の指示どおりに順に走って記録します。約${drillMin(drill)}分`,
+            drill: true,
+            start: () => startPhone(where, { kind: 'drill', drill }),
+          },
+        ]
+      : []),
   ]
 
   const goodPct = last ? Math.round(last.share.good * 100) : null
@@ -337,17 +352,34 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {phoneActions.map((a) => (
-              <button key={a.title} className="phone-action" onClick={a.start}>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                  <span style={{ fontSize: 15, fontWeight: 700 }}>{a.title}</span>
-                  <span className="muted" style={{ fontSize: 12, lineHeight: 1.5, color: a.due ? 'var(--accent)' : undefined }}>
-                    {a.note}
+              <Fragment key={a.title}>
+                {a.drill && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
+                    <div className="seg" role="group" aria-label="崩しの撮影の長さ" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                      {(['full', 'short'] as DrillVersion[]).map((v) => (
+                        <button key={v} aria-pressed={drill.version === v} onClick={() => setDrill({ ...drill, version: v })}>
+                          {v === 'full' ? 'ふつう版' : '短い版'}（約{drillMin({ ...drill, version: v })}分）
+                        </button>
+                      ))}
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                      <input type="checkbox" checked={drill.extra} onChange={(e) => setDrill({ ...drill, extra: e.target.checked })} style={{ accentColor: 'var(--accent)', width: 18, height: 18 }} />
+                      最後に付け方の区間も（ゆるい・手・ポケット）
+                    </label>
+                  </div>
+                )}
+                <button className="phone-action" onClick={a.start}>
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                    <span style={{ fontSize: 15, fontWeight: 700 }}>{a.title}</span>
+                    <span className="muted" style={{ fontSize: 12, lineHeight: 1.5, color: a.due ? 'var(--accent)' : undefined }}>
+                      {a.note}
+                    </span>
                   </span>
-                </span>
-                <span aria-hidden="true" style={{ fontSize: 20, color: 'var(--accent)' }}>
-                  ›
-                </span>
-              </button>
+                  <span aria-hidden="true" style={{ fontSize: 20, color: 'var(--accent)' }}>
+                    ›
+                  </span>
+                </button>
+              </Fragment>
             ))}
           </div>
 
@@ -372,6 +404,15 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
                 style={linkStyle}
               >
                 模擬データで試す（センサーの代わりに作った値を流す）
+              </button>
+              <button
+                onClick={() => {
+                  unlockVoice()
+                  go({ name: 'phone', where: 'treadmill', sim: 20, kind: { kind: 'drill', drill: { version: 'short', extra: true } } })
+                }}
+                style={linkStyle}
+              >
+                模擬データで崩しの撮影を試す（短い版を20倍の速さで）
               </button>
               <UploadKeyButton />
             </div>
