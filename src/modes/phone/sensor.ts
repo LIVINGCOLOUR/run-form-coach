@@ -88,7 +88,7 @@ export function keepAwake(onChange: (held: boolean) => void): () => void {
 }
 
 // 位置情報（外で走るとき、GPS の速さで判定を止めるため。speed.ts）
-//   許可は「スマホ版をはじめる」を押したときに、動きのセンサーの許可とまとめて求める（requestLocation）。
+//   許可は、ホームで外を選んでスマホ版のボタンを押したときに、動きのセンサーの許可とまとめて求める（requestLocation）。
 //   許可されたら、走る画面で位置を受け取り続ける（watchLocation）
 export type LocationPermission = 'granted' | 'denied' | 'unsupported'
 

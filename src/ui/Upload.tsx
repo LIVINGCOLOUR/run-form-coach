@@ -18,16 +18,10 @@ function askKey() {
   setUploadKey(k.trim() || null)
 }
 
-// ホーム：送る鍵の有無と、送れていない記録の数
+// ホーム：送れていない記録の数と、最後に送ったとき。鍵のない端末では何も出さない（鍵を入れるのはホームの「開発用」の中：UploadKeyButton）
 export function UploadPanel() {
   const v = useUploads()
-  if (!v.hasKey) {
-    return (
-      <button onClick={askKey} style={linkStyle}>
-        記録を送る鍵を入れる（テスト用）
-      </button>
-    )
-  }
+  if (!v.hasKey) return null
   const waiting = v.list.filter((e) => e.state === 'waiting')
   const lastSent = v.list.filter((e) => e.state === 'sent').sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0))[0]
   const badKey = waiting.some((e) => e.badKey)
@@ -49,11 +43,25 @@ export function UploadPanel() {
           </button>
         </>
       )}
-      {'　·　'}
-      <button onClick={askKey} style={linkStyle}>
-        鍵を入れ直す
-      </button>
+      {badKey && (
+        <>
+          {'　·　'}
+          <button onClick={askKey} style={linkStyle}>
+            鍵を入れ直す
+          </button>
+        </>
+      )}
     </div>
+  )
+}
+
+// ホームの「開発用」の中：送る鍵を入れる・入れ直す
+export function UploadKeyButton() {
+  const v = useUploads()
+  return (
+    <button onClick={askKey} style={linkStyle}>
+      {v.hasKey ? '記録を送る鍵を入れ直す' : '記録を送る鍵を入れる（テスト用）'}
+    </button>
   )
 }
 

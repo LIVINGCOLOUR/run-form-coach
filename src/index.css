@@ -179,3 +179,29 @@ a {
   background: rgba(10, 12, 14, 0.86);
   border: 1px solid var(--line);
 }
+
+/* ホームのスマホ版：やること（走る・練習・テスト）のボタン。どれも同じ形 */
+.phone-action {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  min-height: 60px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--stage);
+}
+
+.phone-action:active {
+  border-color: var(--accent);
+}
+
+/* 日常では使わないもの（開発用）を閉じておく欄 */
+details.dev summary {
+  font-size: 12px;
+  color: var(--faint);
+  cursor: pointer;
+}

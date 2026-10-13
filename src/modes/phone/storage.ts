@@ -2,7 +2,7 @@ import { shareJson } from '../../core/exportLog'
 import { allRecords, PHONE_LOGS, PHONE_SESSIONS, putRecord } from '../../core/storage'
 import type { UploadPayload } from '../../core/upload/queue'
 import type { PhoneLog } from './log'
-import type { PhoneSession } from './session'
+import type { PhoneSession, PhoneWhere } from './session'
 
 // スマホ版の結果と調整用の記録。端末の中だけ（IndexedDB）。調整用の記録は直近10回分だけ残す（カメラ版と同じ）
 const KEEP_LOGS = 10
@@ -35,4 +35,21 @@ export function phoneLogName(startedAt: number): string {
   const d = new Date(startedAt)
   const p = (n: number) => String(n).padStart(2, '0')
   return `rfc-phone-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`
+}
+
+// ホームの「どこで走る？」で選んだ場所。端末に覚えておく（localStorage。使えない環境では外のまま）
+const WHERE_KEY = 'rfc.phoneWhere'
+export function loadPhoneWhere(): PhoneWhere {
+  try {
+    return localStorage.getItem(WHERE_KEY) === 'treadmill' ? 'treadmill' : 'outdoor'
+  } catch {
+    return 'outdoor'
+  }
+}
+export function savePhoneWhere(where: PhoneWhere) {
+  try {
+    localStorage.setItem(WHERE_KEY, where)
+  } catch {
+    /* 保存できない環境では何もしない */
+  }
 }

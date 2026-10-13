@@ -322,13 +322,13 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       )}
       {where === 'outdoor' && !sim && !kind && hud.gpsError === 1 && (
         <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
-          位置情報が許可されていないので、速さが分からず、ピッチの判定（声とメトロノーム）を止めています。記録は取ります。設定の「プライバシーとセキュリティ」→「位置情報サービス」→「Safari の Web サイト」で許可してください。トレッドミルなら、ホームの「トレッドミルで試す」から始めてください。
+          位置情報が許可されていないので、速さが分からず、ピッチの判定（声とメトロノーム）を止めています。記録は取ります。設定の「プライバシーとセキュリティ」→「位置情報サービス」→「Safari の Web サイト」で許可してください。トレッドミルなら、ホームの「どこで走る？」で「トレッドミル」を選んでから始めてください。
         </div>
       )}
       {hud.mount && <div style={{ padding: '10px 14px', borderRadius: 14, background: 'var(--warn)', color: '#0A0C0E', fontSize: 14, fontWeight: 900, lineHeight: 1.5 }}>{MOUNT_TEXT[hud.mount]}</div>}
       {hud.noData && (
         <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
-          動きのセンサーの値が届いていません。許可しなかったときは、Safari をいったん閉じて開き直し、もう一度「スマホ版をはじめる」を押してください。
+          動きのセンサーの値が届いていません。許可しなかったときは、Safari をいったん閉じて開き直し、もう一度ホームのスマホ版のボタンを押してください。
         </div>
       )}
 

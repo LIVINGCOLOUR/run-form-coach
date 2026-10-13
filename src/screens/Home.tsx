@@ -13,14 +13,14 @@ import { VOICES, VOICE_ORDER, type VoiceKind } from '../core/voices'
 import { startGravity } from '../modes/camera/gravity'
 import { demoStride, idealFrame, lerpFrame, nextStepFrame, normalizeStride } from '../modes/camera/ui/figure'
 import { ShareBar } from '../ui/ShareBar'
-import type { PhoneKind, PhoneSession } from '../modes/phone/session'
+import type { PhoneKind, PhoneSession, PhoneWhere } from '../modes/phone/session'
 import { nextPractice } from '../modes/phone/practice'
 import { prevFormTest } from '../modes/phone/formtest'
 import { FORM_TEST, PRACTICE } from '../modes/phone/params'
 import { requestLocation, requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
-import { exportPhoneLog } from '../modes/phone/storage'
+import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/storage'
 import { flushUploads } from '../core/upload/uploads'
-import { UploadPanel } from '../ui/Upload'
+import { UploadKeyButton, UploadPanel } from '../ui/Upload'
 
 const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', body: '体全体の前傾', hip: '腰の下がり' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
@@ -42,6 +42,12 @@ function useMorph(on: boolean) {
     return () => cancelAnimationFrame(raf)
   }, [on])
   return k
+}
+
+const WHERE_LABEL: Record<PhoneWhere, string> = { outdoor: '外', treadmill: 'トレッドミル' }
+const WHERE_NOTE: Record<PhoneWhere, string> = {
+  outdoor: 'GPS で速さを見ます。ペースを変えたときは判定を止めます（位置情報の許可を求めます）',
+  treadmill: 'GPS は使いません。速さは一定とみなします',
 }
 
 const linkStyle = { background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 } as const
@@ -109,9 +115,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
 
   // スマホ版：押したときに、動きのセンサーの許可（iPhone）と、画面が消えないようにする仕組みと、位置情報の許可（外のとき）をまとめて求める。
   // 動きのセンサーの許可は、押した流れの中で求めないと出ないので先に。位置情報は、そのあとに続けて
-  // 選ぶものを増やさない（設定を間違える人が多い：docs/phone-spec.md 知らせ方の決まり）ため、大きなボタンは外の1つだけにして、
-  // トレッドミル（開発の実機テスト）は小さなリンクにした
-  const startPhone = async (where: 'outdoor' | 'treadmill', kind?: PhoneKind) => {
+  const startPhone = async (where: PhoneWhere, kind?: PhoneKind) => {
     unlockVoice()
     const wake = requestWakeLock()
     await requestMotionPermission()
@@ -120,10 +124,31 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
     go({ name: 'phone', where, location, kind })
   }
   const lastPhone = phoneSessions[0]
-  // ピッチを上げる練習（選んだ人だけ）とフォームのテスト（月1回）。どちらも押すだけで始まり、選ぶものはない
+  // ピッチを上げる練習（選んだ人だけ）とフォームのテスト（月1回）
   const practice = nextPractice(phoneSessions, Date.now())
   const lastTest = prevFormTest(phoneSessions, Date.now())
   const testDays = lastTest ? Math.floor((Date.now() - lastTest.startedAt) / (24 * 3600 * 1000)) : null
+  // どこで走るかを先に選び、やること（走る・練習・テスト）は同じ形のボタンで並べる。選んだ場所は端末に覚えておく
+  const [where, setWhere] = useState<PhoneWhere>(loadPhoneWhere)
+  const chooseWhere = (w: PhoneWhere) => {
+    setWhere(w)
+    savePhoneWhere(w)
+  }
+  const testDue = testDays !== null && testDays >= FORM_TEST.everyDays
+  const phoneActions = [
+    { title: '走る', note: 'ピッチが落ちたら、声で知らせます', start: () => startPhone(where) },
+    {
+      title: 'ピッチを上げる練習',
+      note: practice.n === 1 ? `メトロノームに合わせて走ります。2週間で${PRACTICE.runs}回` : `${practice.n} / ${PRACTICE.runs} 回目。メトロノームに合わせて走ります`,
+      start: () => startPhone(where, { kind: 'practice', plan: practice }),
+    },
+    {
+      title: 'フォームのテスト',
+      note: testDays === null ? '声はかけずに5分。月1回' : testDue ? `前のテストから${testDays}日。そろそろ` : `前のテストから${testDays}日`,
+      due: testDue,
+      start: () => startPhone(where, { kind: 'test' }),
+    },
+  ]
 
   const goodPct = last ? Math.round(last.share.good * 100) : null
   const delta = last && prev ? Math.round((last.share.good - prev.share.good) * 100) : null
@@ -288,64 +313,69 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
             iPhone のカメラの「スロー」で、真横から1〜1.5m離れて、足元まで入れて数歩撮った動画を選びます。接地時間・着地のすね・上下動を測ります。
           </div>
         </button>
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>スマホ版（腰に付けて走る）</div>
-          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            スマホを腰のベルトに付けて外を走ります。加速度とジャイロでピッチ・上下動・着地のブレーキを測り、ピッチが落ちたら声で知らせます。ペースを落とした・上げたときは位置情報（GPS）の速さで気づいて、判定を止めます。いまは実機の値を取るための試作で、画面はつけたまま使います。
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>スマホ版（腰に付けて走る）</div>
+            <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+              スマホを腰のベルトに付けて走ります。加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。
+            </div>
           </div>
-          <button className="primary" style={{ height: 48, fontSize: 16 }} onClick={() => startPhone('outdoor')}>
-            スマホ版をはじめる
-          </button>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <button className="card" onClick={() => startPhone('outdoor', { kind: 'practice', plan: practice })} style={{ textAlign: 'left', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ fontSize: 13, fontWeight: 700 }}>ピッチを上げる練習</span>
-              <span className="muted" style={{ fontSize: 11, lineHeight: 1.5 }}>
-                {practice.n === 1 ? `メトロノームに合わせて走る。2週間で${PRACTICE.runs}回` : `${practice.n} / ${PRACTICE.runs} 回目をはじめる`}
-              </span>
-            </button>
-            <button className="card" onClick={() => startPhone('outdoor', { kind: 'test' })} style={{ textAlign: 'left', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ fontSize: 13, fontWeight: 700 }}>フォームのテスト</span>
-              <span className="muted" style={{ fontSize: 11, lineHeight: 1.5, color: testDays !== null && testDays >= FORM_TEST.everyDays ? 'var(--accent)' : undefined }}>
-                {testDays === null ? '月1回、平らな道を5分' : testDays >= FORM_TEST.everyDays ? `前のテストから${testDays}日。そろそろ` : `前のテストから${testDays}日`}
-              </span>
-            </button>
-          </div>
-          <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 0' }} className="muted">
-            {lastPhone && (
-              <>
-                <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={linkStyle}>
-                  前回の結果（{fmtDate(lastPhone.startedAt)}）
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 13 }} className="muted">どこで走る？</div>
+            <div className="seg" role="group" aria-label="どこで走る？" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              {(['outdoor', 'treadmill'] as PhoneWhere[]).map((w) => (
+                <button key={w} aria-pressed={where === w} onClick={() => chooseWhere(w)}>
+                  {WHERE_LABEL[w]}
                 </button>
-                {'　·　'}
-              </>
-            )}
-            <button onClick={() => exportPhoneLog().then((ok) => ok || alert('まだスマホ版の記録がありません'))} style={linkStyle}>
-              直近の記録を書き出す
-            </button>
-            {'　·　'}
-            <button onClick={() => startPhone('treadmill')} style={linkStyle}>
-              トレッドミルで試す（実機テスト）
-            </button>
-            {'　·　'}
-            <button onClick={() => startPhone('treadmill', { kind: 'practice', plan: practice })} style={linkStyle}>
-              練習をトレッドミルで
-            </button>
-            {'　·　'}
-            <button onClick={() => startPhone('treadmill', { kind: 'test' })} style={linkStyle}>
-              テストをトレッドミルで
-            </button>
-            {'　·　'}
-            <button
-              onClick={() => {
-                unlockVoice()
-                go({ name: 'phone', where: 'treadmill', sim: 10 })
-              }}
-              style={linkStyle}
-            >
-              模擬データで試す
-            </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">
+              {WHERE_NOTE[where]}
+            </div>
           </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {phoneActions.map((a) => (
+              <button key={a.title} className="phone-action" onClick={a.start}>
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                  <span style={{ fontSize: 15, fontWeight: 700 }}>{a.title}</span>
+                  <span className="muted" style={{ fontSize: 12, lineHeight: 1.5, color: a.due ? 'var(--accent)' : undefined }}>
+                    {a.note}
+                  </span>
+                </span>
+                <span aria-hidden="true" style={{ fontSize: 20, color: 'var(--accent)' }}>
+                  ›
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {lastPhone && (
+            <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={{ ...linkStyle, alignSelf: 'flex-start', fontSize: 13 }}>
+              前回の結果を見る（{fmtDate(lastPhone.startedAt)}）
+            </button>
+          )}
           <UploadPanel />
+
+          <details className="dev">
+            <summary>開発用</summary>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, paddingTop: 10 }}>
+              <button onClick={() => exportPhoneLog().then((ok) => ok || alert('まだスマホ版の記録がありません'))} style={linkStyle}>
+                直近の記録を書き出す
+              </button>
+              <button
+                onClick={() => {
+                  unlockVoice()
+                  go({ name: 'phone', where: 'treadmill', sim: 10 })
+                }}
+                style={linkStyle}
+              >
+                模擬データで試す（センサーの代わりに作った値を流す）
+              </button>
+              <UploadKeyButton />
+            </div>
+          </details>
         </div>
         <input
           ref={slowRef}
