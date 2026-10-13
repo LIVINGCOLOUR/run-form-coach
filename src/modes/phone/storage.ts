@@ -1,5 +1,6 @@
 import { shareJson } from '../../core/exportLog'
 import { allRecords, PHONE_LOGS, PHONE_SESSIONS, putRecord } from '../../core/storage'
+import type { UploadPayload } from '../../core/upload/queue'
 import type { PhoneLog } from './log'
 import type { PhoneSession } from './session'
 
@@ -18,10 +19,16 @@ export async function loadPhoneLog(id?: string): Promise<PhoneLog | undefined> {
 
 // 調整用の記録をファイルにして渡す（カメラ版と同じ形：{ log, session }）。ファイル名は rfc-phone-年月日-時分.json
 export async function exportPhoneLog(logId?: string): Promise<boolean> {
+  const p = await phoneLogPayload(logId)
+  return p ? shareJson(p.name, p.data) : false
+}
+
+// 書き出しと、Mac へ送る記録（core/upload）の中身。npm run compare にそのまま渡せる形
+export async function phoneLogPayload(logId?: string): Promise<UploadPayload | undefined> {
   const log = await loadPhoneLog(logId)
-  if (!log) return false
+  if (!log) return undefined
   const session = (await loadPhoneSessions()).find((s) => s.logId === log.id)
-  return shareJson(phoneLogName(log.startedAt), { log, session })
+  return { name: phoneLogName(log.startedAt), data: { log, session } }
 }
 
 export function phoneLogName(startedAt: number): string {

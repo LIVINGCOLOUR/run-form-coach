@@ -3,6 +3,7 @@ import type { ItemKey, Session } from '../core/types'
 import { ShareBar } from '../ui/ShareBar'
 import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
+import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
 
 const ITEMS: ItemKey[] = ['head', 'trunk', 'body', 'hip']
@@ -148,6 +149,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
       )}
 
       <div style={{ flexGrow: 1 }} />
+      {s.logId && <UploadState kind="camera" logId={s.logId} startedAt={s.startedAt} />}
       {s.logId && (
         <button onClick={() => exportLog(s.logId)} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
           調整用の記録を書き出す（骨格の数字だけ・映像なし）

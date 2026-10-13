@@ -9,6 +9,7 @@ import { MotionDetector, bodyVisible } from '../motion'
 import { L } from '../landmarks'
 import { overCue } from '../scoring'
 import { gravityAvailable, gravityPitch, gravityRoll, phoneStillSec } from '../gravity'
+import { queueUpload } from '../../../core/upload/uploads'
 import { loadBaselines, loadProgress, loadSettings, saveBaseline, saveLog, saveProgress, saveSession } from '../../../core/storage'
 import { activeItems, afterRun, startPhrase } from '../../../core/level'
 import { LogRecorder } from '../log'
@@ -130,10 +131,12 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         await saveSession(s)
         saveProgress(afterRun(progress, s))
         await saveLog(rec.log).catch(() => {})
+        queueUpload('camera', rec.log.id, rec.log.startedAt)
         onDone(s.id)
       } else {
         // 走りが始まらなかったときこそ調整に使うので、記録は残す
         await saveLog(rec.log).catch(() => {})
+        queueUpload('camera', rec.log.id, rec.log.startedAt)
         onDone()
       }
     }

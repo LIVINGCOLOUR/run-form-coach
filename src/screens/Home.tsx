@@ -19,6 +19,8 @@ import { prevFormTest } from '../modes/phone/formtest'
 import { FORM_TEST, PRACTICE } from '../modes/phone/params'
 import { requestLocation, requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
 import { exportPhoneLog } from '../modes/phone/storage'
+import { flushUploads } from '../core/upload/uploads'
+import { UploadPanel } from '../ui/Upload'
 
 const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', body: '体全体の前傾', hip: '腰の下がり' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
@@ -51,6 +53,10 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   const fileRef = useRef<HTMLInputElement>(null)
   const slowRef = useRef<HTMLInputElement>(null)
   const k = useMorph(ideal)
+  // ホームを開いたら、送れていない記録を送ってみる
+  useEffect(() => {
+    void flushUploads()
+  }, [])
 
   const last = sessions[0]
   const prev = sessions[1]
@@ -339,6 +345,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
               模擬データで試す
             </button>
           </div>
+          <UploadPanel />
         </div>
         <input
           ref={slowRef}

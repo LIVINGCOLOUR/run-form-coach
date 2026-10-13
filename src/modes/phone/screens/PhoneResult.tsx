@@ -5,6 +5,7 @@ import type { MountIssue } from '../mount'
 import { FATIGUE } from '../params'
 import type { PhoneSession } from '../session'
 import { exportPhoneLog } from '../storage'
+import { UploadState } from '../../../ui/Upload'
 import { FormTestCard, PracticeCard } from './PhoneProgress'
 
 // スマホ版の結果。カメラ版の結果（src/screens/Result.tsx）は姿勢の項目と走り姿を前提にしているので、別に持つ
@@ -147,6 +148,7 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
       )}
 
       <div style={{ flexGrow: 1 }} />
+      {s.logId && <UploadState kind="phone" logId={s.logId} startedAt={s.startedAt} />}
       {s.logId && (
         <button onClick={() => exportPhoneLog(s.logId).then((ok) => ok || alert('記録が見つかりません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
           調整用の記録を書き出す（加速度・ジャイロと1秒ごとの判定）

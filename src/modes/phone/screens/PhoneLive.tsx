@@ -14,6 +14,7 @@ import { prevFormTest } from '../formtest'
 import type { SpeedGate } from '../speed'
 import { demoRun } from '../simulate'
 import { savePhoneLog, savePhoneSession } from '../storage'
+import { queueUpload } from '../../../core/upload/uploads'
 
 // スマホ版の走る画面（ウェブ）。スマホを腰のベルトに付けて走る。画面はつけたまま使う（消えないようにしておく）
 // 声は共通のしくみ（engine.ts）が決め、言葉と音声は phrases.ts のものを使う
@@ -107,6 +108,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       if (session) await savePhoneSession(session).catch(() => {})
       // 走りが始まらなかったときこそ調整に使うので、記録は残す
       await savePhoneLog(log).catch(() => {})
+      queueUpload('phone', log.id, log.startedAt)
       onDone(session?.id)
     }
     finishRef.current = finish

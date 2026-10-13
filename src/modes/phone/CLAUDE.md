@@ -21,7 +21,7 @@
 - 線（`PHONE_LIMITS`）は、ピッチの5%（Heiderscheit 2011）以外は根拠のない仮の値
 - 角速度は rad/s で受け取る。Web の DeviceMotion の rotationRate は deg/s なので、`sensor.ts` の `toMeasure` で直す（alpha→z、beta→x、gamma→y）。加速度は accelerationIncludingGravity をそのまま渡す（3つの軸の符号がそろって逆の機種でも、見る役の値は変わらない）
 - 画面（ウェブ）：ホームの「スマホ版をはじめる」で、動きのセンサーの許可と画面が消えない仕組み（Wake Lock）を求め、`screens/PhoneLive.tsx` で測って声をかける。結果は `screens/PhoneResult.tsx`（カメラ版の結果とは別）。いつもと違う度合いと崩れ始め、上下動・ブレーキ・有効接地時間の走り始めからの変化を1分ごとのグラフで出す（良し悪しは言わない）。1回の走りの中身は画面から切り離した `session.ts` の `PhoneRun`。声にする項目はピッチだけ（`PHONE_VOICED`）。ブレーキ・上下動は、大きく崩れても声をかけない（しくみの `muteOthers`）。付け方の確認の声は別にかかる
-- 記録：`log.ts`。生の値（届いたコマすべて：t・ふつうの時刻 wallMs・加速度・角速度・しくみの状態）と1秒ごとの判定の値（測った値・線と比べた値・付け方の手がかり・疲れの見分けの材料）と疲れの見分けの結果（`fatigue`）を残し、`storage.ts` の `exportPhoneLog` でカメラ版と同じ形（`{ log, session }`）に書き出す。列の意味はファイルの `units` に入る
+- 記録：`log.ts`。生の値（届いたコマすべて：t・ふつうの時刻 wallMs・加速度・角速度・しくみの状態）と1秒ごとの判定の値（測った値・線と比べた値・付け方の手がかり・疲れの見分けの材料）と疲れの見分けの結果（`fatigue`）を残し、`storage.ts` の `exportPhoneLog` でカメラ版と同じ形（`{ log, session }`）に書き出す。列の意味はファイルの `units` に入る。送る鍵を入れた端末では、走り終わると同じ中身を Mac へ送る（`core/upload/`、`npm run logs`）
 - カメラ版と比べる道具：`compare.ts`（`npm run compare -- <スマホ版の書き出し> <カメラ版の書き出し>`、`scripts/compare-runs.mjs`）。2つの記録をふつうの時刻に直し、動きの強さ（加速度・腰の高さの揺れ）の相関で2台の時計のずれを直して、区間ごとにピッチ・上下動・ブレーキ・付け方の確認を並べる。カメラ版の記録には、performance.now() とふつうの時刻の対応（`clock`）が入る。手順は `docs/phone-test1.md`。確かめたのは模擬データだけ
 - ピッチの知らせ：言葉は初めの1回だけで、あとは基準のテンポのメトロノーム（`core/metronome.ts`、Web Audio の時刻で拍を予約）を最大 `TONE.bars` 小節。戻ったら止め、くり返すほど間をあける（`TONE`）。しくみの `ItemSpec.tone` と `tone` の知らせで出し、カメラ版の項目には付けていない。声の間は拍を鳴らさない
 - 基準：仮の基準（30秒〜3分）で判定を始め、5〜12分の平均ができたら置き換える（`PHONE_REF`。仮の基準から5%より下がった秒は入れない）。メトロノームのテンポも新しい基準になる

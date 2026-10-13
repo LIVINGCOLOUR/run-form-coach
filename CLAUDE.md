@@ -13,6 +13,7 @@
 | `hardware/sensor/` | センサーの機器（ファームウェア・書き込みの道具・作り方）。決まりは `hardware/sensor/CLAUDE.md`。アプリ側はまだない |
 | `src/screens/`・`src/ui/`・`src/theory/` | アプリ全体の画面（ホーム・結果）と、フォームの見方のページ |
 | `docs/`・`sim/`・`video/`・`scripts/` | 文書、仮想実験、紹介動画、音声などを作るスクリプト |
+| `api/` | Vercel の関数。`upload.ts` は、記録を送るための書き込み用 URL を出す（送る鍵 `UPLOAD_KEY` を確かめる） |
 
 | 知りたいこと | 読むもの |
 |---|---|
@@ -40,6 +41,7 @@
 - 言葉を足したり変えたりしたら、音声も作る（`npm run voices -- female <id>`、Vertex のプロジェクトは runrun1010）。
 - コメントと画面の言葉は、やさしい日本語で、周りの書き方に合わせる。文書は経緯ではなく今の正しい内容を書く。
 - 終わりの確認：`npx tsc --noEmit -p tsconfig.app.json`、`npx vitest run`、`npm run build`。
+- 走った記録を Mac へ送る（テスト期間用）：送る鍵を入れた端末だけ、走り終わったら `src/core/upload/` が記録を gzip にして Vercel Blob（runs/）へ直接送る。電波がなければ端末に残し、ホームを開いたとき・つながったときに送り直す。Mac では `npm run logs` で一覧を出し、まだのものを `RFC_RUNS_DIR`（既定 ~/Developer/research-data/runs/）に取ってくる（`npm run compare` にそのまま渡せる形）
 - 仮想実験は `sim/`（`npx vitest run --config sim/vitest.config.ts`）。研究データはリポジトリに入れず、置き場所を環境変数で渡す。
 
 ## 守ること

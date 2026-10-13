@@ -13,10 +13,12 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "voices": "node scripts/gen-voices.mjs",
-    "compare": "node scripts/compare-runs.mjs"
+    "compare": "node scripts/compare-runs.mjs",
+    "logs": "node scripts/fetch-logs.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
+    "@vercel/blob": "2.8.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
