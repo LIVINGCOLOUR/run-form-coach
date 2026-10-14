@@ -320,7 +320,7 @@ export function simulateJumps(s: { seconds: number; orientation?: Vec3; seed?: n
 
 // 崩しの撮影（drill.ts）の段に合わせた模擬の走り。0 秒が誘導の始まり。
 // 立つ・ジャンプ・休みは止まって、走る区間は区間ごとに値を変える（ピッチを落とす：155、弾む：上下動 12cm、
-// かかとから前に：ブレーキ 0.45、付け方の区間はその付け方）。頭・猫背などの姿勢は、腰のスマホの模擬では作れないのでふつうと同じ
+// かかとから前に：ブレーキ 0.45、付け方の区間はその付け方）。頭・目線・猫背・腕などの姿勢は、腰のスマホの模擬では作れないのでふつうと同じ
 export function demoDrill(phases: { kind: string; start: number; sec: number; step?: { key: string } }[]): PhoneMeasure[] {
   const o: Vec3 = [90, 0, 0]
   const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, cadence: 172, bounceCm: 8, brakingMs: 0.3, orientation: o }

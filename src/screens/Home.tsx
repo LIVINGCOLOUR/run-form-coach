@@ -135,8 +135,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
     setWhere(w)
     savePhoneWhere(w)
   }
-  // 崩しの撮影（トレッドミルだけ）：ふつう版か短い版か、最後に付け方の区間も走るか
-  const [drill, setDrill] = useState<DrillOptions>({ version: 'full', extra: true })
+  // 崩しの撮影（トレッドミルだけ）：ふつう版か短い版か、上半身だけにするか、最後に付け方の区間も走るか
+  const [drill, setDrill] = useState<DrillOptions>({ version: 'full', extra: true, upper: false })
   const drillMin = (o: DrillOptions) => Math.round(drillPlan(o).total / 60)
   const testDue = testDays !== null && testDays >= FORM_TEST.everyDays
   const phoneActions = [
@@ -152,12 +152,12 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
       due: testDue,
       start: () => startPhone(where, { kind: 'test' }),
     },
-    // トレッドミルのときだけ：わざと崩した走りを、声の指示どおりに順に走る（横のカメラで動画も撮る）
+    // トレッドミルのときだけ：わざと崩した走りを、声の指示どおりに順に走る（横の iPhone で全身を録画する）
     ...(where === 'treadmill'
       ? [
           {
             title: '崩しの撮影（声で指示）',
-            note: `頭を前に・猫背・ピッチを落とす…を、声の指示どおりに順に走って記録します。約${drillMin(drill)}分`,
+            note: `横の iPhone で全身を録画しながら、${drill.upper ? '頭を前に・下を向く・腕を振らない…' : '頭を前に・腕を振らない・ピッチを落とす…'}を声の指示どおりに順に走ります。約${drillMin(drill)}分`,
             drill: true,
             start: () => startPhone(where, { kind: 'drill', drill }),
           },
@@ -363,7 +363,11 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
                       ))}
                     </div>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                      <input type="checkbox" checked={drill.extra} onChange={(e) => setDrill({ ...drill, extra: e.target.checked })} style={{ accentColor: 'var(--accent)', width: 18, height: 18 }} />
+                      <input type="checkbox" checked={!!drill.upper} onChange={(e) => setDrill({ ...drill, upper: e.target.checked })} style={{ accentColor: 'var(--accent)', width: 18, height: 18 }} />
+                      上半身だけ（頭・目線・背中・腕。脚に負担のかかる区間は走らない）
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: drill.upper ? 0.45 : 1 }}>
+                      <input type="checkbox" checked={drill.extra && !drill.upper} disabled={!!drill.upper} onChange={(e) => setDrill({ ...drill, extra: e.target.checked })} style={{ accentColor: 'var(--accent)', width: 18, height: 18 }} />
                       最後に付け方の区間も（ゆるい・手・ポケット）
                     </label>
                   </div>
@@ -408,11 +412,11 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
               <button
                 onClick={() => {
                   unlockVoice()
-                  go({ name: 'phone', where: 'treadmill', sim: 20, kind: { kind: 'drill', drill: { version: 'short', extra: true } } })
+                  go({ name: 'phone', where: 'treadmill', sim: 20, kind: { kind: 'drill', drill: { ...drill, version: 'short' } } })
                 }}
                 style={linkStyle}
               >
-                模擬データで崩しの撮影を試す（短い版を20倍の速さで）
+                模擬データで崩しの撮影を試す（上の選び方の短い版を20倍の速さで）
               </button>
               <UploadKeyButton />
             </div>

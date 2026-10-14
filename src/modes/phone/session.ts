@@ -117,7 +117,7 @@ export class PhoneRun {
     if (kind)
       this.rec.event(
         clock.perfMs / 1000,
-        kind.kind === 'practice' ? `kind:practice:${kind.plan.n}:${kind.plan.base === null ? 'none' : kind.plan.base.toFixed(1)}` : kind.kind === 'drill' ? `kind:drill:${kind.drill.version}:${kind.drill.extra ? 'extra' : 'base'}` : 'kind:test',
+        kind.kind === 'practice' ? `kind:practice:${kind.plan.n}:${kind.plan.base === null ? 'none' : kind.plan.base.toFixed(1)}` : kind.kind === 'drill' ? `kind:drill:${kind.drill.version}:${kind.drill.upper ? 'upper' : kind.drill.extra ? 'extra' : 'base'}` : 'kind:test',
       )
   }
 

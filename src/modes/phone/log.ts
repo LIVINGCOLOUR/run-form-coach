@@ -68,7 +68,7 @@ const UNITS = {
   gate: `速さで判定を止めた理由（${SPEED_GATES.map((s, i) => `${i}=${s ?? '止めていない'}`).join('、')}。noGps=GPS が取れない、noBase=基準の速さを作れなかった、slow・fast=基準の速さから外れた）。トレッドミルは null`,
   'gps:accuracy,speedDevice,stepM,raw,speed,used,altitude,altitudeAccuracy':
     '位置が届くたび（外だけ）：横の誤差 m・端末が出した速さ m/s・前に使った点からの距離 m・ならす前の速さ m/s・ならした速さ m/s・速さに使ったか（1/0）・高さ m・高さの誤差 m',
-  events: '話した言葉、state:状態（しくみの状態の切り替え）、tone:on:項目:テンポ（歩/分）・tone:off:項目（メトロノームを鳴らす・止める）、ref:later:ピッチ（基準を5〜12分の平均に置き換えた）、ref:speed:速さ（基準の速さ m/s。作れなければ none）、gate:on:理由・gate:off（速さで判定を止めた・戻した）、kind:practice:何回目:自分のピッチ・kind:test（ピッチを上げる練習・フォームのテストの走り）。練習のメトロノームは tone:on:practice:テンポ。崩しの撮影（drill.ts）は kind:drill:full|short:extra|base と、区間の印 protocol:区間:start・protocol:区間:end（jump1・still・jump2 は走る前・あとのジャンプと立つ間）・protocol:stopped（途中でやめた）・protocol:done',
+  events: '話した言葉、state:状態（しくみの状態の切り替え）、tone:on:項目:テンポ（歩/分）・tone:off:項目（メトロノームを鳴らす・止める）、ref:later:ピッチ（基準を5〜12分の平均に置き換えた）、ref:speed:速さ（基準の速さ m/s。作れなければ none）、gate:on:理由・gate:off（速さで判定を止めた・戻した）、kind:practice:何回目:自分のピッチ・kind:test（ピッチを上げる練習・フォームのテストの走り）。練習のメトロノームは tone:on:practice:テンポ。崩しの撮影（drill.ts）は kind:drill:full|short:extra|base|upper（upper は上半身だけ）と、区間の印 protocol:区間:start・protocol:区間:end（jump1・still・jump2 は走る前・あとのジャンプと立つ間）・protocol:stopped（途中でやめた）・protocol:done',
 }
 
 const r = (x: number, k: number) => Math.round(x * k) / k

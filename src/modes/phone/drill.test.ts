@@ -10,10 +10,10 @@ import { demoDrill } from './simulate'
 const runsOf = (o: Parameters<typeof drillPlan>[0]) => drillPlan(o).phases.filter((p) => p.kind === 'run')
 
 describe('崩しの撮影：区間の並び', () => {
-  it('ふつう版：ふつう6分 → 崩し8つ（ピッチは2分）→ ふつう2分、区間のあいだに15秒の休み', () => {
+  it('ふつう版：ふつう6分 → 上半身の崩し6つ → 脚の崩し5つ（ピッチは2分）→ ふつう2分、区間のあいだに15秒の休み', () => {
     const runs = runsOf({ version: 'full', extra: false })
-    expect(runs.map((p) => p.mark)).toEqual(['normal1', 'head', 'hunch', 'lean', 'sit', 'slow', 'bouncy', 'heel', 'flat', 'normal2'])
-    expect(runs.map((p) => p.sec)).toEqual([360, 60, 60, 60, 60, 120, 60, 60, 60, 120])
+    expect(runs.map((p) => p.mark)).toEqual(['normal1', 'head', 'down', 'hunch', 'lean', 'armstill', 'armcross', 'sit', 'slow', 'bouncy', 'heel', 'flat', 'normal2'])
+    expect(runs.map((p) => p.sec)).toEqual([360, 60, 60, 60, 60, 60, 60, 60, 120, 60, 60, 60, 120])
     const { phases } = drillPlan({ version: 'full', extra: false })
     expect(phases.map((p) => p.kind).slice(0, 5)).toEqual(['setup', 'jump', 'still', 'belt', 'run'])
     expect(phases.filter((p) => p.kind === 'rest').every((p) => p.sec === DRILL_TIME.rest)).toBe(true)
@@ -24,13 +24,23 @@ describe('崩しの撮影：区間の並び', () => {
 
   it('短い版：ふつう5分、崩しは30秒（ピッチは1分）、最後のふつう1分。付け方の区間を足すと、その前の休みは長い', () => {
     const runs = runsOf({ version: 'short', extra: true })
-    expect(runs.map((p) => p.mark)).toEqual(['normal1', 'head', 'hunch', 'lean', 'sit', 'slow', 'bouncy', 'heel', 'flat', 'normal2', 'loose', 'hand', 'pocket'])
-    expect(runs.map((p) => p.sec)).toEqual([300, 30, 30, 30, 30, 60, 30, 30, 30, 60, 30, 30, 30])
+    expect(runs.map((p) => p.mark)).toEqual(['normal1', 'head', 'down', 'hunch', 'lean', 'armstill', 'armcross', 'sit', 'slow', 'bouncy', 'heel', 'flat', 'normal2', 'loose', 'hand', 'pocket'])
+    expect(runs.map((p) => p.sec)).toEqual([300, 30, 30, 30, 30, 30, 30, 30, 60, 30, 30, 30, 60, 30, 30, 30])
     const { phases } = drillPlan({ version: 'short', extra: true })
     const restBefore = (key: string) => phases[phases.findIndex((p) => p.mark === key) - 1]
     expect(restBefore('loose').sec).toBe(DRILL_TIME.restMount)
     expect(restBefore('head').sec).toBe(DRILL_TIME.rest)
     expect(drillSteps({ version: 'short', extra: false }).some((s) => s.extra)).toBe(false)
+  })
+
+  it('上半身だけ：脚に負担のかかる区間と付け方の区間は走らない（付け方を選んでいても）。最後はふつうに戻してジャンプ', () => {
+    const runs = runsOf({ version: 'full', extra: true, upper: true })
+    expect(runs.map((p) => p.mark)).toEqual(['normal1', 'head', 'down', 'hunch', 'lean', 'armstill', 'armcross', 'normal2'])
+    expect(runs.map((p) => p.sec)).toEqual([360, 60, 60, 60, 60, 60, 60, 120])
+    const { phases } = drillPlan({ version: 'full', extra: true, upper: true })
+    expect(phases.slice(-2).map((p) => p.kind)).toEqual(['endJump', 'done'])
+    expect(phases.filter((p) => p.kind === 'rest').every((p) => p.sec === DRILL_TIME.rest)).toBe(true)
+    expect(runsOf({ version: 'short', extra: false, upper: true }).map((p) => p.sec)).toEqual([300, 30, 30, 30, 30, 30, 30, 60])
   })
 })
 
@@ -90,9 +100,11 @@ describe('崩しの撮影：時刻 → いまの区間と声', () => {
 })
 
 // 模擬の走りを流し込み、誘導が最後まで進み、記録に印が残り、compare.ts がその印で区間を決めるか
-describe('崩しの撮影：模擬データで最後まで', () => {
+describe.each([
+  { label: '短い版・付け方の区間つき', o: { version: 'short', extra: true } as const },
+  { label: '短い版・上半身だけ', o: { version: 'short', extra: false, upper: true } as const },
+])('崩しの撮影：模擬データで最後まで（$label）', ({ o }) => {
   const base = 500
-  const o = { version: 'short', extra: true } as const
   const run = new PhoneRun({ perfMs: base * 1000, epochMs: 1_760_000_000_000 }, { userAgent: 'test', intervalMs: 16.7 }, 'treadmill', { kind: 'drill', drill: o })
   const data = demoDrill(run.drill!.phases)
   const said: { t: number; text: string }[] = []
@@ -122,7 +134,7 @@ describe('崩しの撮影：模擬データで最後まで', () => {
       ...steps.flatMap((s) => [`protocol:${s.key}:start`, `protocol:${s.key}:end`]),
       'protocol:jump2:start', 'protocol:jump2:end', 'protocol:done',
     ])
-    expect(events).toContain('kind:drill:short:extra')
+    expect(events).toContain(o.upper ? 'kind:drill:short:upper' : 'kind:drill:short:extra')
     expect(session?.kind).toBe('drill')
     expect(said.map((s) => s.text)).toContain(PHRASES.drillDone)
   })
@@ -133,6 +145,11 @@ describe('崩しの撮影：模擬データで最後まで', () => {
     const d = run.drill!
     const guideTexts = new Set(Object.entries(PHRASES).filter(([id]) => id.startsWith('drill')).map(([, v]) => v as string))
     const other = said.filter((s) => !guideTexts.has(s.text))
+    // 上半身だけの模擬の走りは、どの区間もピッチ・付け方がふつうと同じなので、ほかの声はかからない
+    if (o.upper) {
+      expect(other).toEqual([])
+      return
+    }
     expect(other.length).toBeGreaterThan(0)
     for (const s of other) expect(d.busy(s.t)).toBe(false)
     // ピッチを落とす区間で、ピッチの声がかかる（模擬データでは 172 → 155）
@@ -156,7 +173,8 @@ describe('崩しの撮影：模擬データで最後まで', () => {
     const ph = readPhone(JSON.parse(JSON.stringify({ log, session })))
     const { segments, warnings } = findSegments(ph)
     expect(segments.map((s) => s.step?.key)).toEqual(steps.map((s) => s.key))
-    expect(segments.find((s) => s.step?.key === 'hand')?.step?.expect).toBe('notWaist')
+    if (o.extra) expect(segments.find((s) => s.step?.key === 'hand')?.step?.expect).toBe('notWaist')
+    if (o.upper) expect(segments.find((s) => s.step?.key === 'armcross')?.step?.name).toBe('腕を横に振る')
     const plan = run.drill!.phases.filter((p) => p.kind === 'run')
     segments.forEach((s, i) => {
       expect(s.end - s.start).toBeCloseTo(plan[i].sec, 3)
