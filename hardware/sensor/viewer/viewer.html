@@ -25,21 +25,49 @@
   <tr><th>加速度 [g]</th><td id="ax">-</td><td id="ay">-</td><td id="az">-</td></tr>
   <tr><th>ジャイロ [dps]</th><td id="gx">-</td><td id="gy">-</td><td id="gz">-</td></tr>
 </table>
-<div id="rate" class="note">受信：- 回/秒</div>
+<div id="rate" class="note">受信：- サンプル/秒</div>
 <div class="note">
   置いたまま動かさないと、加速度のどれか1つが約 1.00（重力）、ジャイロはほぼ 0 になります。<br>
-  受信が 1秒に約50回なら正常です。
+  受信が 1秒に約100サンプル（03_ble_imu の SAMPLE_HZ を 50 にしたときは約50）で、「抜け」が 0 のままなら正常です。<br>
+  1回の通知に何サンプルかまとめて届くので、通知の回数はサンプル数より少なくて構いません。
 </div>
+<script id="parser">
+// 03_ble_imu が送る1回の通知を、サンプルの並びに戻す（形はファームの先頭のコメントと同じ）
+//   0-1 先頭の通し番号 uint16 / 2-5 先頭の時刻 uint32 ms / 6- 1件13バイト × N
+//   1件：時刻の差 uint8 ms、ジャイロ xyz int16、加速度 xyz int16（すべてリトルエンディアン）
+const G_SCALE = 0.07;     // dps / 1
+const A_SCALE = 0.000244; // g / 1
+const HEADER_LEN = 6;
+const SAMPLE_LEN = 13;
+
+function parsePacket(v) {
+  const seq = v.getUint16(0, true);
+  const t0 = v.getUint32(2, true);
+  const n = Math.floor((v.byteLength - HEADER_LEN) / SAMPLE_LEN);
+  const samples = [];
+  for (let k = 0; k < n; k++) {
+    const o = HEADER_LEN + k * SAMPLE_LEN;
+    samples.push({
+      seq: (seq + k) & 0xffff,
+      t: t0 + v.getUint8(o),
+      g: [0, 1, 2].map((i) => v.getInt16(o + 1 + i * 2, true) * G_SCALE),
+      a: [0, 1, 2].map((i) => v.getInt16(o + 7 + i * 2, true) * A_SCALE),
+    });
+  }
+  return { seq, n, samples };
+}
+</script>
 <script>
 const SERVICE = 0xffe0;
 const CHAR = 0xffe1;
-const G_SCALE = 0.07;     // dps / 1
-const A_SCALE = 0.000244; // g / 1
 
 const $ = (id) => document.getElementById(id);
 let rows = [];
 let recording = false;
-let count = 0;
+let count = 0;    // この1秒に届いたサンプル数
+let packets = 0;  // この1秒に届いた通知の回数
+let lost = 0;     // 接続してから抜けたサンプル数
+let expectedSeq = null;
 
 $('connect').onclick = async () => {
   if (!navigator.bluetooth) {
@@ -59,6 +87,8 @@ $('connect').onclick = async () => {
     const service = await server.getPrimaryService(SERVICE);
     const ch = await service.getCharacteristic(CHAR);
     ch.addEventListener('characteristicvaluechanged', onData);
+    expectedSeq = null;
+    lost = 0;
     await ch.startNotifications();
     $('status').textContent = '接続しました：' + device.name;
     $('record').disabled = false;
@@ -68,19 +98,31 @@ $('connect').onclick = async () => {
 };
 
 function onData(event) {
-  const v = event.target.value;
-  const t = v.getUint32(0, true);
-  const g = [0, 1, 2].map((i) => v.getInt16(4 + i * 2, true) * G_SCALE);
-  const a = [0, 1, 2].map((i) => v.getInt16(10 + i * 2, true) * A_SCALE);
-  ['ax', 'ay', 'az'].forEach((id, i) => ($(id).textContent = a[i].toFixed(2)));
-  ['gx', 'gy', 'gz'].forEach((id, i) => ($(id).textContent = g[i].toFixed(1)));
-  count++;
-  if (recording) rows.push([t, ...a.map((x) => x.toFixed(4)), ...g.map((x) => x.toFixed(2))]);
+  const { seq, samples } = parsePacket(event.target.value);
+  if (samples.length === 0) {
+    $('status').textContent = '形の違うデータが届いています。XIAO に今の 03_ble_imu を書き込み直してください';
+    return;
+  }
+  if (expectedSeq !== null) {
+    const gap = (seq - expectedSeq) & 0xffff;
+    if (gap !== 0 && gap < 0x8000) lost += gap; // 通し番号が飛んだぶんが抜け
+  }
+  expectedSeq = (seq + samples.length) & 0xffff;
+  for (const s of samples) {
+    if (recording) rows.push([s.t, ...s.a.map((x) => x.toFixed(4)), ...s.g.map((x) => x.toFixed(2))]);
+  }
+  const last = samples[samples.length - 1];
+  ['ax', 'ay', 'az'].forEach((id, i) => ($(id).textContent = last.a[i].toFixed(2)));
+  ['gx', 'gy', 'gz'].forEach((id, i) => ($(id).textContent = last.g[i].toFixed(1)));
+  count += samples.length;
+  packets++;
 }
 
 setInterval(() => {
-  $('rate').textContent = '受信：' + count + ' 回/秒' + (recording ? '（記録中：' + rows.length + ' 件）' : '');
+  $('rate').textContent = '受信：' + count + ' サンプル/秒（通知 ' + packets + ' 回/秒）　抜け：' + lost + ' 件' +
+    (recording ? '　（記録中：' + rows.length + ' 件）' : '');
   count = 0;
+  packets = 0;
 }, 1000);
 
 $('record').onclick = () => {
