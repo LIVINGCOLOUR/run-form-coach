@@ -321,15 +321,15 @@ ax[g], ay[g], az[g], gx[dps], gy[dps], gz[dps]
 <p>何個目かの番号を付けて書き込むと、その番号の名前（RFC-IMU-2 など）になります。プログラムを書き換える必要はありません。</p>
 <pre>tools/flash.sh 03_ble_imu 2     # 2個目。3個目なら 3、…</pre>
 <p><code>tools/viewer.sh</code> で、一覧に <b>RFC-IMU-2</b> が出て、1秒に約100サンプル・抜け 0 件・「加速度の範囲：±16 g」になるのを確かめます（手順6と同じ）。</p>
-<p><b>番号と付ける場所を決めて、ラベルを貼ります</b>（案）。袋の外にも同じラベルを貼ると、付けるときに迷いません。</p>
+<p><b>番号と付ける場所</b>は頭から順に決めています。ラベルを貼り、袋の外にも同じラベルを貼ると、付けるときに迷いません。番号は書き込むときに決まるので、付ける場所を替えるときは、その番号で書き込み直します。</p>
 <table>
-  <tr><th>名前</th><th>付ける場所</th><th>メモ</th></tr>
-  <tr><td>RFC-IMU-2</td><td>胸</td><td rowspan="2">先に2個で「胸と首の差」（猫背）を試す</td></tr>
-  <tr><td>RFC-IMU-3</td><td>首</td></tr>
-  <tr><td>RFC-IMU-4</td><td>左足首</td><td rowspan="2">着地の衝撃を測る</td></tr>
-  <tr><td>RFC-IMU-5</td><td>右足首</td></tr>
-  <tr><td>RFC-IMU-6</td><td>左手首</td><td></td></tr>
-  <tr><td>RFC-IMU-1</td><td>右手首</td><td>1個目を、空中配線・電池つきで作り直したとき</td></tr>
+  <tr><th>名前</th><th>付ける場所</th></tr>
+  <tr><td>RFC-IMU-1</td><td>頭（帽子の後ろ、または首の付け根）</td></tr>
+  <tr><td>RFC-IMU-2</td><td>胸</td></tr>
+  <tr><td>RFC-IMU-3</td><td>左手首</td></tr>
+  <tr><td>RFC-IMU-4</td><td>右手首</td></tr>
+  <tr><td>RFC-IMU-5</td><td>左足首</td></tr>
+  <tr><td>RFC-IMU-6</td><td>右足首</td></tr>
 </table>
 <p class="small">ラベルには、体に付けたときの<b>上（頭の方向）を指す矢印</b>も書いておきます。毎回同じ向きに付けると、記録どうしを比べられます。</p>
 
