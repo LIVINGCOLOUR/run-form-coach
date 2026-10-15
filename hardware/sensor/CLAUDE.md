@@ -1,13 +1,15 @@
 # センサーの機器（ランフォームコーチのセンサー版の試作）
 
-両手首・両足首・首・胸の6か所に付ける IMU トラッカーを自作する。1個目の作り方は `docs/manual.pdf`（元は `docs/manual.html`）。
+両手首・両足首・首・胸の6か所に付ける IMU トラッカーを自作する。作り方（1個目はブレッドボード、2個目からは空中配線・電池つき）は `docs/manual.pdf`（元は `docs/manual.html`。PDF は `tools/make_pdf.sh` で作り直す）。
 
 - 構成：Seeed XIAO nRF52840（無印、技適 211-220207）＋ 秋月 AE-LSM6DSV16X（I2C。基板の下のふちの印字「6A」と「I2C」をふさぐ。I2C は接点3つで、すき間2つとも。基板に J1 などの番号の印字はない）。小さくするときは白猫屋の LSM6DSV 基板（ピンの並びと I2C 対応をショップに確かめてから）
 - 無線：BLE でスマホ（今は Mac の Chrome）に送る。XIAO の技適の範囲で使う。SlimeVR の Smol Slime の独自無線（ESB）は技適の面でグレーなので使わない
-- 送る形：100Hz（`SAMPLE_HZ` で 50 にもできる）で測ってリングバッファにため、1回の通知にまとめる。先頭に通し番号 uint16 と時刻 uint32 ms、続けて1件13バイト（時刻の差 uint8 ms、ジャイロ xyz int16 0.07 dps、加速度 xyz int16 0.000244 g）を N 件。サービス 0xFFE0、キャラクタリスティック 0xFFE1。`firmware/03_ble_imu`。受ける側のパーサの確認は `node viewer/test_parse.mjs`
+- 送る形：100Hz（`SAMPLE_HZ` で 50 にもできる）で測ってリングバッファにため、1回の通知にまとめる。先頭に通し番号 uint16、時刻 uint32 ms、加速度の範囲 uint8（g、8 か 16）、続けて1件13バイト（時刻の差 uint8 ms、ジャイロ xyz int16 0.07 dps、加速度 xyz int16 0.000061×範囲/2 g）を N 件。サービス 0xFFE0、キャラクタリスティック 0xFFE1。電池の電圧は 0xFFE2（uint16 mV、読み取り＋通知、10秒ごと）。`firmware/03_ble_imu`。受ける側のパーサの確認は `node viewer/test_parse.mjs`
+- 加速度の範囲は全部の個体で ±16g（足首の着地は 10g を超えうる）。ジャイロは ±2000dps
+- 電池：XIAO の P0.14 はいつも LOW（Seeed の注意。HIGH のまま充電すると P0.31 が壊れるおそれ。ボードのパッケージは起動時に HIGH にするので、どのスケッチも setup() の最初で LOW に直す）。充電電流は P0.13 を触らず約 50mA のまま。03_ble_imu は10分つながらないと System OFF（リセットボタンか USB で起きる）
 - 1件ずつ通知していたときは、Mac の Chrome に 1秒に約16回（接続の間隔ごとに1件）しか届かなかった。だからまとめて送る
-- 書き込みは `tools/flash.sh <名前>`（Mac の Arduino IDE は、Rosetta と python の問題で止まる可能性が高いので使わない）
-- 進め方：1個 → 2個（胸と首の差で猫背）→ 電池（402030 型 200mAh、保護回路・PSE 付き）→ 小さくする → 6個
+- 書き込みは `tools/flash.sh <名前> [番号]`（`03_ble_imu 2` で RFC-IMU-2。`--compile-only` で書き込まずにコンパイルだけ）。Mac の Arduino IDE は、Rosetta と python の問題で止まる可能性が高いので使わない
+- 進め方：1個（ブレッドボード）→ 2個目から空中配線・電池つき（OCTelect 401030 110mAh、保護回路付き）。まず胸と首の2個で猫背 → 足首 → 手首で6個
 
 ## アプリとのつなぎ
 

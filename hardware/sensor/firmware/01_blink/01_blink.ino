@@ -6,6 +6,9 @@
 int count = 0;
 
 void setup() {
+  // 電池をつないだときのため：P0.14 を LOW にしておく（Seeed の注意。HIGH のまま充電すると P0.31 が壊れるおそれ）
+  pinMode(VBAT_ENABLE, OUTPUT);
+  digitalWrite(VBAT_ENABLE, LOW);
   pinMode(LED_BUILTIN, OUTPUT);
   Serial.begin(115200);
 }
