@@ -1,5 +1,7 @@
 import React from 'react'
 import { useMemo } from 'react'
+import type { ReactNode } from 'react'
+import type { Frame } from '../../src/core/types'
 import { demoStride, lerpFrame, paths } from '../../src/modes/camera/ui/figure'
 import { C, jp } from './theme'
 
@@ -18,6 +20,8 @@ export function Figure({
   drop,
   legColor = C.limb,
   over = 0,
+  arm,
+  overlay,
 }: {
   frame: number
   lean: number
@@ -29,14 +33,17 @@ export function Figure({
   drop?: number
   legColor?: string
   over?: number
+  arm?: number // 腕振りの大きさ（1 = 見本）。2本目の動画のセンサーの場面で使う
+  overlay?: (fr: Frame) => ReactNode // 骨格の上に描き足すもの（腰のスマホ、センサーなど）。座標は骨格と同じ
 }) {
-  const strides = useMemo(() => demoStride({ lean, head, drop: drop ?? (lean > 12 ? 6 : 0), over }), [lean, head, drop, over])
+  const strides = useMemo(() => demoStride({ lean, head, drop: drop ?? (lean > 12 ? 6 : 0), over, arm }), [lean, head, drop, over, arm])
   const ghostStrides = useMemo(() => (ghost ? demoStride({ lean: ghost.lean, head: ghost.head, drop: 0 }) : null), [ghost])
   const t = frame * SLOW
   const n = strides.length
   const i = Math.floor(t) % n
   const k = t - Math.floor(t)
-  const p = paths(lerpFrame(strides[i], strides[(i + 1) % n], k), true)
+  const fr = lerpFrame(strides[i], strides[(i + 1) % n], k)
+  const p = paths(fr, true)
   const g = ghostStrides ? paths(lerpFrame(ghostStrides[i], ghostStrides[(i + 1) % n], k), true) : null
   return (
     <g transform={transform}>
@@ -60,6 +67,7 @@ export function Figure({
           <circle cx={g.hx} cy={g.hy} r={26} />
         </g>
       )}
+      {overlay?.(fr)}
     </g>
   )
 }

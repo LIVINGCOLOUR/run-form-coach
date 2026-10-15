@@ -5,7 +5,9 @@
   "scripts": {
     "narration": "node scripts/gen-narration.mjs",
     "studio": "remotion studio src/index.ts",
-    "render": "remotion render src/index.ts Promo out/run-form-coach-promo.mp4"
+    "render": "remotion render src/index.ts Promo out/run-form-coach-promo.mp4",
+    "narration:modes": "node scripts/gen-narration-modes.mjs",
+    "render:modes": "remotion render src/index.ts Modes out/run-form-coach-modes.mp4"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.533",

@@ -176,7 +176,7 @@ export function STime({ items }: { items: Item[] }) {
 }
 
 // 5. 締め：フォームを整えて、一緒にタイムを縮めよう
-export function SEnd2({ items }: { items: Item[] }) {
+export function SEnd2({ items, tagline = '置いて、立って、走るだけ。', size = 112 }: { items: Item[]; tagline?: string; size?: number }) {
   const f = useCurrentFrame()
   void items
   const a = pop(f, 4)
@@ -186,7 +186,7 @@ export function SEnd2({ items }: { items: Item[] }) {
   return (
     <Bg>
       <div style={{ position: 'absolute', left: 80, right: 60, top: 640, opacity: out }}>
-        <div style={{ fontWeight: 900, fontSize: 112, letterSpacing: -3, lineHeight: 1.25 }}>
+        <div style={{ fontWeight: 900, fontSize: size, letterSpacing: -3, lineHeight: 1.25 }}>
           <div style={{ opacity: a, transform: `translateY(${(1 - a) * 40}px)` }}>フォームを整えて、</div>
           <div style={{ opacity: b, transform: `translateY(${(1 - b) * 40}px)`, color: C.accent }}>
             一緒に
@@ -202,7 +202,7 @@ export function SEnd2({ items }: { items: Item[] }) {
           <path d="M14 2v4M14 22v4" />
         </svg>
         <div style={{ fontFamily: num, fontWeight: 700, fontSize: 124, letterSpacing: 14 }}>RUN FORM COACH</div>
-        <div style={{ fontSize: 52, fontWeight: 700 }}>置いて、立って、走るだけ。</div>
+        <div style={{ fontSize: 52, fontWeight: 700 }}>{tagline}</div>
         <div style={{ fontFamily: num, fontSize: 40, color: C.muted, marginTop: 30 }}>run-form-coach.vercel.app</div>
         <div style={{ fontSize: 28, color: C.faint }}>※開発中の機能を含みます</div>
       </div>
