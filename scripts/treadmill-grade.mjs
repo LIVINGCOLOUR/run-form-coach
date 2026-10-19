@@ -16,6 +16,8 @@
 //                          通し直す。同じ走りで、間引いたときに声が遅れる・抜けるかを比べるため
 //   --replay-from jog|start  通し直すのを、ジョグの前の「速さを上げる」からにする（既定 jog）か、記録の始めからにするか。
 //                          歩きを「走っている」と見ていたら、走り始めの自分の基準が歩きでできてしまうので、既定ではジョグから作り直す
+//   --running steps        カメラ版で、「走っている」を歩数（ピッチ）だけで決め直す。撮ったときの、その場で走るフリの見分け
+//                          （RUNNING.inPlaceForTesting）を切ったらどうなるかを見る。--replay-from start と合わせて、歩きで始まらないかを確かめる
 //   --out ファイル         Markdown をファイルにも書く
 //
 // 判定に通し直すところ（scripts/treadmill/replay.ts）は src/ の判定のコードをそのまま使う（rolldown で1つにまとめて読む）
@@ -48,10 +50,11 @@ const itemsAll = opt('--items') === 'all'
 const noReplay = flag('--no-replay')
 const thin = flag('--thin')
 const replayFrom = opt('--replay-from') ?? 'jog'
+const running = opt('--running') ?? 'logged'
 const outFile = opt('--out')
 const [drillPath, ...logPaths] = args
 if (!drillPath || !logPaths.length || logPaths.length > 2) {
-  console.error('使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [--set 名前=値] [--grace 秒] [--camera-offset 秒] [--phone-offset 秒] [--items all] [--no-replay] [--thin] [--out ファイル]')
+  console.error('使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [--set 名前=値] [--grace 秒] [--camera-offset 秒] [--phone-offset 秒] [--items all] [--no-replay] [--thin] [--replay-from jog|start] [--running steps] [--out ファイル]')
   process.exit(1)
 }
 
@@ -86,6 +89,10 @@ if (!['jog', 'start'].includes(replayFrom)) {
   console.error('--replay-from は jog か start です')
   process.exit(1)
 }
+if (!['logged', 'steps'].includes(running)) {
+  console.error('--running は steps だけです（付けなければ、撮ったときの「走っている」のまま）')
+  process.exit(1)
+}
 
 
 const fmt = (x, d = 1) => (x === null || x === undefined || !Number.isFinite(x) ? '—' : x.toFixed(d))
@@ -99,6 +106,7 @@ if (cam) p(`- カメラ版: \`${cam.path}\``)
 if (phone) p(`- スマホ版: \`${phone.path}\``)
 p(`- 崩しの区間が終わってから ${grace} 秒までに出た声は、その崩しを見つけたと数える（\`--grace\`）`)
 if (sets.length) p(`- 線の上書き: ${sets.map((s) => `\`${s}\``).join('、')}`)
+if (!noReplay && running === 'steps') p('- カメラ版の「走っている」は、歩数（ピッチ）だけで決め直した（`--running steps`。その場で走るフリの見分けを切ったとき）')
 if (!noReplay) p(replayFrom === 'jog' && jogFrom !== null ? `- 通し直しは、ジョグの前の「速さを上げる」（${clock(jogFrom)}）から（歩いている間の値は通さず、走り始めの自分の基準をジョグで作る）。記録の始めから通すときは \`--replay-from start\`` : '- 通し直しは、記録の始めから')
 p()
 
@@ -121,14 +129,20 @@ function prepare(f, kind) {
   const sources = [{ name: 'そのとき', cues: cuesOf(R.loggedEvents(f.data).events, off) }]
   const warnings = []
   const fromMs = replayFrom === 'jog' && jogFrom !== null ? jogFrom + off : undefined
-  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs, thin }) : (d) => R.replayPhone(d, { fromMs })
+  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs, thin, running }) : (d) => R.replayPhone(d, { fromMs })
   const canReplay = kind === 'camera' ? inv.measures > 0 : inv.frames > 0
+  let faithful = null
+  let now = null
   if (!noReplay && canReplay) {
-    const r = replay(f.data)
-    warnings.push(...r.warnings)
-    sources.push({ name: 'いまの線', cues: cuesOf(r.events, off), items: r.items })
+    now = replay(f.data)
+    warnings.push(...now.warnings)
+    sources.push({ name: 'いまの線', cues: cuesOf(now.events, off), items: now.items })
+    // 通し直しの確かめは、撮ったときと同じ条件（記録の始めから・撮ったときの項目・間引きも走っているかもそのまま）で通したものと比べる。
+    // ジョグから通し直すと、撮ったときと基準が違うので、声が合わなくて当たり前になる
+    const same = fromMs === undefined && !itemsAll && !thin && running === 'logged'
+    faithful = same ? now : kind === 'camera' ? R.replayCamera(f.data, { items: 'logged' }) : R.replayPhone(f.data)
   }
-  devices.push({ kind, f, inv, off, sources, warnings, replay: !noReplay && canReplay ? replay : null })
+  devices.push({ kind, f, inv, off, sources, warnings, faithful, now, replay: !noReplay && canReplay ? replay : null })
 }
 prepare(cam, 'camera')
 prepare(phone, 'phone')
@@ -143,7 +157,11 @@ if (sets.length && devices.some((d) => d.replay)) {
   }
   p(`線を書き換えた: ${changed.map((c) => `${c.path} ${c.before} → ${c.after}`).join('、')}`)
   p()
-  for (const d of devices) if (d.replay) d.sources.push({ name: '上書き', cues: cuesOf(d.replay(d.f.data).events, d.off) })
+  for (const d of devices) {
+    if (!d.replay) continue
+    d.over = d.replay(d.f.data)
+    d.sources.push({ name: '上書き', cues: cuesOf(d.over.events, d.off) })
+  }
 }
 
 // ---- 記録の中身 ----
@@ -257,13 +275,35 @@ for (const d of devices) {
   if (d.kind === 'phone') row('付け方の確認の声（ずっと腰に付けているので、出たら誤り）', (s) => `${s.mount}`)
   p()
   // そのときの声と、いまの線で通し直した声が合っているか（コードが変わっていなければ、ほぼ同じになるはず）
-  const now = d.sources.find((s) => s.name === 'いまの線')
-  if (now) {
+  if (d.faithful) {
     const logged = d.sources[0].cues.filter(voiced)
-    const re = now.cues.filter(voiced)
+    const re = cuesOf(d.faithful.events, d.off).filter(voiced)
     const match = logged.filter((c) => re.some((x) => x.item === c.item && Math.abs(x.T - c.T) <= 2000)).length
-    p(`通し直しの確かめ：そのときの声 ${logged.length} 回のうち、いまの線で通し直しても ±2秒以内に同じ項目で出たもの ${match} 回（通し直しの声は ${re.length} 回）。大きく違うときは、撮ったあとに判定のコードが変わったか、通し直しが撮ったときと違う`)
+    const how = d.faithful === d.now ? 'いまの線で通し直しても' : '撮ったときと同じ条件（記録の始めから、撮ったときの項目で）で通し直すと'
+    p(`通し直しの確かめ：そのときの声 ${logged.length} 回のうち、${how} ±2秒以内に同じ項目で出たもの ${match} 回（通し直しの声は ${re.length} 回）。大きく違うときは、撮ったあとに判定のコードが変わったか、通し直しが撮ったときと違う`)
     p()
+  }
+  // 走り始めの自分の基準を、どの区間で作ったか（カメラ版）。歩きや崩しの区間が混ざっていると、ふつうに走っても声が出る・崩しを見逃す
+  if (d.kind === 'camera') {
+    const where = (T) => {
+      const s = sections.find((x) => T >= x.start && T < x.end)
+      return s ? (s.kind === 'gap' ? '戻し' : s.name) : '区間の間'
+    }
+    const span = (a, b) => [...new Set(sections.filter((x) => x.end > a && x.start <= b).map((x) => (x.kind === 'gap' ? '戻し' : x.name)))].join('・') || '区間の外'
+    const rows = [['そのとき（記録の始めから通し直した値）', d.faithful], ...(d.now && d.now !== d.faithful ? [['いまの線', d.now]] : []), ...(d.over ? [['上書き', d.over]] : [])]
+    if (rows.some(([, r]) => r)) {
+      p('| 基準 | 走り始めた | 基準を作った間 | 首 | 上体 | 体全体 | 腰の高さ |')
+      p('|---|---|---|---|---|---|---|')
+      for (const [nm, r] of rows) {
+        if (!r) continue
+        const run = r.runStartT === null ? '—' : `${clock(r.runStartT - d.off)}（${where(r.runStartT - d.off)}）`
+        const ref = r.ref
+        p(`| ${nm} | ${run} | ${ref ? `${clock(ref.from - d.off)}〜${clock(ref.to - d.off)}（${span(ref.from - d.off, ref.to - d.off)}）` : 'できなかった'} | ${ref ? fmt(ref.neck) : '—'}° | ${ref ? fmt(ref.trunk) : '—'}° | ${ref ? fmt(ref.body) : '—'}° | ${ref && ref.hipRatio !== null ? fmt(ref.hipRatio, 3) : '—'} |`)
+      }
+      p()
+      p('基準を作った間に「歩く」や崩しの区間が入っていたら、その基準はジョグのふつうの姿勢ではない（歩きは上体も体全体も立っているので、ふつうに走るだけで「倒れすぎ」になる）')
+      p()
+    }
   }
 }
 

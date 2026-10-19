@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildPlan, DEFAULT_STEPS, len } from './plan.mjs'
 
 describe('トレッドミルの区間の時刻表', () => {
-  it('既定：歩き7分 → ジャンプ → ジョグ20分（ふつう3分・崩しと戻し30秒ずつ8回・残り）→ 歩き3分', () => {
+  it('既定：歩き7分 → ジャンプ → ジョグ20分（ふつう4分・崩しと戻し30秒ずつ8回・残り）→ 歩き3分', () => {
     const p = buildPlan()
     const by = (kind) => p.sections.filter((s) => s.kind === kind)
     expect(by('walk')[0].plannedSec).toBe(420)

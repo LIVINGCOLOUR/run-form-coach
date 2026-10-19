@@ -7,24 +7,26 @@
 //   限り：ふだんの記録では、撮ったときに骨格を取らなかったコマ（安定して走っている間は10秒のうち3秒だけ取る）は記録にないので、
 //   線を変えて「もっと細かく見たはず」になっても、その分の値は足せない。
 //   全コマ記録（?full=1 で撮った、log.full のある記録）は走っている間の毎コマがあるので、この限りはない。
-//   thin を付けると、全コマの記録をふだんの間引き（Live.tsx と同じく、コーチが要ると言ったコマだけ見る）に通し直せる
+//   thin を付けると、全コマの記録をふだんの間引き（Live.tsx と同じく、コーチが要ると言ったコマだけ見る）に通し直せる。
+//   running: 'steps' を付けると、「走っている」を歩数（ピッチ RUNNING.runSpm 以上）だけで決め直す（記録の by 列が steps のコマだけ走っている）。
+//   撮ったときの、その場で走るフリの見分け（RUNNING.inPlaceForTesting）を切ったらどうなるかを見るため
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
 import { LIMITS, REL_LIMITS, HEAD_ABS } from '../../src/modes/camera/params'
-import { ABSENCE, CUE as CUE_P, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
+import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
 import { CUE, RECOVER, SAY, PHRASES } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'
 import type { ItemKey, RunLog, Session } from '../../src/core/types'
 import type { Measure } from '../../src/modes/camera/types'
 import { PhoneRun } from '../../src/modes/phone/session'
 import { PHONE_CUE } from '../../src/modes/phone/analyzer'
-import { PHONE_LIMITS } from '../../src/modes/phone/params'
+import { MOUNT, PHONE_LIMITS } from '../../src/modes/phone/params'
 import type { PhoneLog } from '../../src/modes/phone/log'
 import type { DrillOptions } from '../../src/modes/phone/drill'
 
 // --set で書き換えられる入れ物
 export const PARAMS: Record<string, Record<string, unknown>> = {
-  LIMITS, REL_LIMITS, HEAD_ABS, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, PHONE_LIMITS,
+  LIMITS, REL_LIMITS, HEAD_ABS, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
 }
 // 短い名前 → 入れ物の場所
 export const ALIASES: Record<string, string> = {
@@ -127,11 +129,13 @@ export interface ReplayOut {
   items: string[] // 声をかける項目
   warnings: string[]
   runStartT: number | null // 走り始めた（しくみが running になった）時刻
+  // 走り始めの自分の基準（HIP_REF の区間）を作った時刻（ふつうの時刻）と、その値。カメラ版だけ。基準ができなければ null
+  ref?: { from: number; to: number; neck: number; trunk: number; body: number; headLean: number; hipRatio: number | null } | null
 }
 
 // fromMs：この時刻（その端末の時計、ms）より前のコマは通さない（歩いている間にしくみが走り始めていても、基準をジョグで作り直すため）
 // thin：全コマ記録を、ふだんの間引きに通し直す（コーチが要らないと言ったコマは、撮ったときの onSkip と同じく時間だけ進める）
-export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fromMs?: number; thin?: boolean } = {}): ReplayOut {
+export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fromMs?: number; thin?: boolean; running?: 'logged' | 'steps' } = {}): ReplayOut {
   const { log, session } = unwrap<RunLog>(file)
   const s = session as Session | undefined
   const warnings: string[] = []
@@ -141,6 +145,9 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     return i
   }
   const [it, ip, iv, imov, ineck, itrunk, ibody, ihip, iyaw, ilean] = ['t', 'phase', 'visible', 'moving', 'neck', 'trunk', 'body', 'hipRatio', 'yaw', 'headLean'].map(col)
+  // by 列：0 = 走っていない、1 = 歩数で走っている、2 = その場で走るフリ（src/modes/camera/log.ts の BY）
+  const iby = opts.running === 'steps' ? col('by') : -1
+  const BY_STEPS = 1
   const runPhase = log.phases.indexOf('run')
   const c = log.clock
   if (!c) warnings.push('記録に時計の対応（clock）がありません（動画で試した記録）。時刻は startedAt から数えます')
@@ -152,6 +159,9 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   const coach = new Coach({ pause: RUNNING.pauseEnabled, items })
   const events: Ev[] = []
   let runStartT: number | null = null
+  // 基準の区間（1秒の記録の t が HIP_REF.from〜to）に入った・出た時刻
+  let refFrom: number | null = null
+  let refTo: number | null = null
   const rows = log.rows.filter((r) => r[ip] === runPhase && (opts.fromMs === undefined || toT(r[it]) >= opts.fromMs)).sort((a, b) => a[it] - b[it])
   if (!rows.length) warnings.push('走る段（phase=run）のコマがありません')
   let lastT: number | null = null
@@ -159,6 +169,11 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   let lastMoving = false
   let ended = false
   const handle = (ev: ReturnType<Coach['update']>, t: number) => {
+    const last = coach.samples[coach.samples.length - 1]
+    if (last && last.t >= HIP_REF.from && last.t <= HIP_REF.to) {
+      refFrom ??= toT(t)
+      refTo = toT(t)
+    }
     for (const e of ev) {
       if (e.type === 'speak') events.push({ T: toT(t), text: e.text })
       if (e.type === 'state' && e.state === 'running' && runStartT === null) runStartT = toT(t)
@@ -182,14 +197,17 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
       continue
     }
     const visible = r[iv] === 1
-    const moving = r[imov] === 1
+    const moving = opts.running === 'steps' ? r[iby] === BY_STEPS : r[imov] === 1
     const m: Measure | undefined = visible && r[ineck] !== -999 ? { neck: r[ineck], trunk: r[itrunk], body: r[ibody], hipRatio: r[ihip], yaw: r[iyaw], headLean: r[ilean], dir: 1 } : undefined
     handle(coach.update({ t, present: visible, moving, m }), t)
     lastT = t
     lastPresent = visible
     lastMoving = moving
   }
-  return { events, items: items ?? ['head', 'trunk', 'body', 'hip'], warnings, runStartT }
+  const lr = coach.leanRef
+  const hipRef = (coach as unknown as { analyzer: { hipRef: number | null } }).analyzer.hipRef
+  const ref = lr && refFrom !== null && refTo !== null ? { from: refFrom, to: refTo, neck: lr.neck, trunk: lr.trunk, body: lr.body, headLean: lr.headLean, hipRatio: hipRef } : null
+  return { events, items: items ?? ['head', 'trunk', 'body', 'hip'], warnings, runStartT, ref }
 }
 
 // ---- スマホ版：生の値を PhoneRun にもう一度通す ----
