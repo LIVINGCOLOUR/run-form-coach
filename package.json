@@ -8,13 +8,16 @@
     "predev": "npm run copy-wasm",
     "prebuild": "npm run copy-wasm",
     "dev": "vite --host",
+    "dev:https": "npm run copy-wasm && vite --config vite.https.config.mjs",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "lint": "oxlint",
     "preview": "vite preview",
     "voices": "node scripts/gen-voices.mjs",
     "compare": "node scripts/compare-runs.mjs",
-    "logs": "node scripts/fetch-logs.mjs"
+    "logs": "node scripts/fetch-logs.mjs",
+    "drill": "node scripts/treadmill-drill.mjs",
+    "grade": "node scripts/treadmill-grade.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
