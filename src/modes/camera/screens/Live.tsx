@@ -453,7 +453,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         }
       }
 
-      if (screenMode === 'show') draw(frame, w, h, hot)
+      if (screenMode === 'show' || phase === 'setup') draw(frame, w, h, hot)
       else draw(null, w, h, hot)
 
       if (rec.log.rows.length < 80000) {
@@ -496,8 +496,9 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 背面カメラで画面は見えないので、置き方・基準・走行中のすべてで真っ暗にする（案内は声で行う）
-  const dark = screenMode === 'dark' && (hud.phase === 'setup' || hud.phase === 'baseline' || hud.phase === 'run')
+  // 背面カメラで画面は見えないので、基準・走行中は真っ暗にする（案内は声で行う）。
+  // 置き方のときだけは、置く人が画面をのぞいて全身が入るか確かめられるよう、映像と骨格を出す
+  const dark = screenMode === 'dark' && (hud.phase === 'baseline' || hud.phase === 'run')
   const darkLabel = hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.state === 'waiting' ? 'READY' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
   const darkText =
     hud.phase === 'setup' ? '置き方を声で案内します' : hud.phase === 'baseline' ? 'まっすぐ立って、3秒止まってください' : hud.state === 'waiting' ? '走り出すと始まります' : hud.state === 'paused' ? '一時停止中' : '画面を消しても、声でお知らせします'
