@@ -41,8 +41,12 @@ const f2 = (x) => (Number.isFinite(x) ? x.toFixed(2) : '-')
 const pct = (x) => `${Math.round(x * 100)}%`
 const yn = (b) => (b ? '○' : '×')
 const out = { lines: J.LINES, clips: [] }
+// 悪い例 − よい例の差。頭はアプリが使う値（首の角度の増えと頭の位置の増えの小さいほう）、カッコ内は首の角度・頭の位置それぞれの増え。
+// 起きすぎ（後ろ）は、上体・体全体の差が負の側で線を越えたかを見る。顎の「補正」は、上体の変化を足したもの
+const diffText = (d) =>
+  `頭 ${f1(d.head)}° ${yn(d.cues.head)}（首 ${f1(d.neck)}・頭の位置 ${f1(d.headLean)}）／上体 ${f1(d.trunk)}° 前${yn(d.cues.trunk)}後${yn(d.cues.trunkBack)}／体全体 ${f1(d.body)}° 前${yn(d.cues.body)}後${yn(d.cues.bodyBack)}／腰の下がり ${f1(d.hip)}% ${yn(d.cues.hip)}／顎 ${f1(d.chin)}°（補正 ${f1(d.chinAdj)}°）／着地の足 ${f2(d.footAhead)}／着地のすね ${f1(d.shank)}°`
 
-console.log(`声をかける線：頭 +${J.LINES.head}°、上体 +${J.LINES.trunkRel}°、体全体 +${J.LINES.bodyRel}°、腰 ${J.LINES.hip}%（走り始めの自分から）／決まった線：上体 ${J.LINES.trunkAbs}°、体全体 ${J.LINES.bodyAbs}°、頭の位置 ${J.LINES.headAbs}°\n`)
+console.log(`声をかける線：頭 +${J.LINES.head}°、上体 +${J.LINES.trunkRel}°／−${J.LINES.trunkBackRel}°、体全体 +${J.LINES.bodyRel}°／−${J.LINES.bodyBackRel}°、腰 ${J.LINES.hip}%（走り始めの自分から）／決まった線：上体 ${J.LINES.trunkAbs}°、体全体 ${J.LINES.bodyAbs}°、頭の位置 ${J.LINES.headAbs}°${J.LINES.headAbsOn ? '' : '（切っている）'}\n`)
 const stats = {}
 for (const c of config.clips) {
   const lm = JSON.parse(readFileSync(join(lmDir, `${c.id}.json`), 'utf8'))
@@ -80,7 +84,7 @@ for (const c of config.clips) {
       const g2b = J.coachSim(ticks, [...[good].map((w) => ({ from: w.from, to: w.to, sec: 240 })), { from: bad.from, to: bad.to, sec: 60 }])
       const after = g2b.cues.filter((x) => x.t >= g2b.switchAt[1]).map((x) => `${x.item}@+${f1(x.t - g2b.switchAt[1])}s`)
       const before = g2b.cues.filter((x) => x.t < g2b.switchAt[1]).map((x) => `${x.item}@${x.t}s`)
-      console.log(`- ${bad.name} − ${good.name}：頭 ${f1(d.head)}° ${yn(d.cues.head)}／上体 ${f1(d.trunk)}° ${yn(d.cues.trunk)}／体全体 ${f1(d.body)}° ${yn(d.cues.body)}／腰の下がり ${f1(d.hip)}% ${yn(d.cues.hip)}／顎 ${f1(d.chin)}°／着地の足 ${f2(d.footAhead)}／着地のすね ${f1(d.shank)}°`)
+      console.log(`- ${bad.name} − ${good.name}：${diffText(d)}`)
       console.log(`  コーチに通す（よい例240秒→悪い例60秒）：悪い例で ${after.join(', ') || '声なし'}${before.length ? `（よい例の間に ${before.join(', ')}）` : ''}`)
       rec.compare.push({ bad: bad.name, good: good.name, ...d })
       rec.sim.push({ kind: 'good→bad', bad: bad.name, good: good.name, after, before })
@@ -106,7 +110,7 @@ for (const p of config.pairs ?? []) {
   const good = stats[p.good].byRole.good[0]
   const d = { ...J.compare(bad.s, good.s), footAhead: (bad.ct?.footAhead ?? NaN) - (good.ct?.footAhead ?? NaN), shank: (bad.ct?.shank ?? NaN) - (good.ct?.shank ?? NaN) }
   console.log(`## 組 ${p.bad} − ${p.good}（${p.note ?? ''}）`)
-  console.log(`- 頭 ${f1(d.head)}° ${yn(d.cues.head)}／上体 ${f1(d.trunk)}° ${yn(d.cues.trunk)}／体全体 ${f1(d.body)}° ${yn(d.cues.body)}／腰の下がり ${f1(d.hip)}% ${yn(d.cues.hip)}／顎 ${f1(d.chin)}°／着地の足 ${f2(d.footAhead)}／着地のすね ${f1(d.shank)}°`)
+  console.log(`- ${diffText(d)}`)
   // コーチに通す：よい例の動画のあとに、悪い例の動画を時刻をずらしてつなぐ（それぞれいちばん長い区間）
   const longest = (id, role) => config.clips.find((c) => c.id === id).windows.filter((w) => w.role === role).reduce((a, b) => (b.to - b.from > a.to - a.from ? b : a))
   const gw = longest(p.good, 'good')

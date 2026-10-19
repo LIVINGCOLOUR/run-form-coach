@@ -16,8 +16,8 @@ export const FPS = 15
 export const BASE: Placement = { yaw: 0, dist: 1.2, height: 0.8, roll: 0, vfov: 106, k1: 0 }
 export const BASE_NOISE: Noise = { sigma: 0.01, collapse: 0.3, swapPerSec: 0.5 }
 
-// 1コマの記録：t, 見えたか, 走っているか, neck, headLean, yaw, trunk, body, hipRatio, dir
-const F = 10
+// 1コマの記録：t, 見えたか, 走っているか, neck, headLean, yaw, trunk, body, hipRatio, dir, chin
+const F = 11
 export interface Stream {
   n: number
   d: Float32Array
@@ -80,6 +80,7 @@ export function film(o: FilmOpts): Stream {
       d[j + 7] = m.body + ex.body
       d[j + 8] = m.hipRatio
       d[j + 9] = m.dir
+      d[j + 10] = m.chin
     }
   }
   return { n, d }
@@ -90,7 +91,7 @@ export interface Replay {
   runFrom: number // 走り始め（コーチが走っているとみなした時刻）
   refAt: number | null // 走り始めの基準ができた時刻
   quietSec: [number, number][] // 声なしで見守っていた時間（絶対の時刻）
-  values: { t: number; head?: number; trunk?: number; body?: number; hip?: number }[] // 1秒ごとの判定の値
+  values: { t: number; head?: number; trunk?: number; body?: number; hip?: number; trunkBack?: number; bodyBack?: number; chin?: number }[] // 1秒ごとの判定の値
 }
 
 // thin：アプリのふだんの間引き（false なら全コマ記録 ?full=1 と同じ）
@@ -116,7 +117,7 @@ export function replay(s: Stream, opts: { items?: ItemKey[]; thin?: boolean; mut
       const present = s.d[j + 1] === 1
       const moving = present && s.d[j + 2] === 1
       const m = present
-        ? { neck: s.d[j + 3], headLean: s.d[j + 4], yaw: s.d[j + 5], trunk: s.d[j + 6], body: s.d[j + 7], hipRatio: s.d[j + 8], dir: (s.d[j + 9] >= 0 ? 1 : -1) as 1 | -1 }
+        ? { neck: s.d[j + 3], headLean: s.d[j + 4], yaw: s.d[j + 5], trunk: s.d[j + 6], body: s.d[j + 7], hipRatio: s.d[j + 8], dir: (s.d[j + 9] >= 0 ? 1 : -1) as 1 | -1, chin: s.d[j + 10] }
         : undefined
       coach.update({ t, present, moving, m })
       lastPresent = present
@@ -133,7 +134,7 @@ export function replay(s: Stream, opts: { items?: ItemKey[]; thin?: boolean; mut
       nSamples = coach.samples.length
       const sm = coach.samples[nSamples - 1]
       const tt = runFrom + sm.t
-      values.push({ t: tt, head: coach.leanRef ? sm.head : undefined, trunk: sm.judge?.trunk ?? sm.trunk, body: sm.judge?.body ?? sm.body, hip: sm.hipDrop })
+      values.push({ t: tt, head: coach.leanRef ? sm.head : undefined, trunk: sm.judge?.trunk ?? sm.trunk, body: sm.judge?.body ?? sm.body, hip: sm.hipDrop, trunkBack: sm.back?.trunk, bodyBack: sm.back?.body, chin: sm.chin })
     }
   }
   if (quietFrom >= 0) quietSec.push([quietFrom, s.d[(s.n - 1) * F]])

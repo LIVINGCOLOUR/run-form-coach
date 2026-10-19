@@ -1,12 +1,12 @@
 import type { Screen } from '../App'
-import type { ItemKey, Session } from '../core/types'
+import { ITEM_KEYS, type ItemKey, type Session } from '../core/types'
 import { ShareBar } from '../ui/ShareBar'
 import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
 
-const ITEMS: ItemKey[] = ['head', 'trunk', 'body', 'hip']
+const ITEMS: ItemKey[] = ITEM_KEYS
 
 export function Result({ session: s, sessions, go }: { session: Session; sessions: Session[]; go: (x: Screen) => void }) {
   const idx = sessions.findIndex((x) => x.id === s.id)
@@ -195,7 +195,7 @@ function Timeline({ s }: { s: Session }) {
       else bands.push({ a: p.t, b: p.t })
     }
   }
-  const cueTimes = s.cues.filter((c) => ['head', 'trunk', 'body', 'hip'].includes(c.item)).map((c) => c.t)
+  const cueTimes = s.cues.filter((c) => ITEMS.includes(c.item as ItemKey)).map((c) => c.t)
   return (
     <svg width="100%" viewBox={`0 0 ${W} ${H + 36}`} aria-label="姿勢スコアの推移">
       {bands.map((b, i) => (

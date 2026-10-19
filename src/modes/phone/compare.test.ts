@@ -141,7 +141,7 @@ function cameraFile(clock: boolean) {
         [L.rightFoot]: pt(hipX + ra + 20, hipY + 300),
       }
       const t = perf0 + (tt - startTrue) // カメラの performance.now() の秒
-      const head = [t, 2, 1, p.kind === 'run' ? 1 : 0, 1, p.kind === 'run' ? Math.round(p.cadence!) : -1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      const head = [t, 2, 1, p.kind === 'run' ? 1 : 0, 1, p.kind === 'run' ? Math.round(p.cadence!) : -1, ...Array<number>(LOG_COLUMNS.length - 7).fill(0)]
       rows.push([...head, ...LOG_POINTS.flatMap((i) => pts[i])])
     }
     t0 += p.sec

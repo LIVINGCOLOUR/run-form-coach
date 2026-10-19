@@ -145,7 +145,7 @@ function tiltKeys(b: Body, keys: BodyKey[], o: V3, deg: number): Body {
 }
 const shoulderMid = (b: Body): V3 => (b.shR && b.shL ? lerp(b.shR, b.shL, 0.5) : [b.pelvis[0], b.pelvis[1] + 500, b.pelvis[2]])
 
-export type DistortKind = 'head' | 'hunch' | 'trunk' | 'body' | 'sit'
+export type DistortKind = 'head' | 'hunch' | 'trunk' | 'body' | 'sit' | 'trunkBack' | 'bodyBack' | 'uprightHead'
 
 export const DISTORT_LABEL: Record<DistortKind, string> = {
   head: '頭を前に（首の付け根で回す）',
@@ -153,11 +153,24 @@ export const DISTORT_LABEL: Record<DistortKind, string> = {
   trunk: '上体を前に倒す（股関節から）',
   body: '体全体を前に傾ける（足首から）',
   sit: '腰を落とす（膝を曲げて沈む）',
+  trunkBack: '上体を起こす（股関節から後ろへ）',
+  bodyBack: '体全体を後ろに残す（足首から後ろへ）',
+  uprightHead: '上体を起こし、頭はその場に残す（股関節から後ろへ、頭の位置そのものは変えない）',
 }
 
 // legMm：脚の長さ（腰→膝→足首、mm）。sit で使う
 export function distort(b: Body, kind: DistortKind, amount: number, legMm: number, groundY: number): Body {
   if (!amount) return b
+  if (kind === 'trunkBack') return distort(b, 'trunk', -amount, legMm, groundY)
+  if (kind === 'bodyBack') return distort(b, 'body', -amount, legMm, groundY)
+  if (kind === 'uprightHead') {
+    // 肩だけを後ろへ回し、頭（耳・鼻）は、肩の中心が動いた分だけ平行に動かす（頭の向きと、肩→耳の傾きはそのまま）
+    const out = tiltKeys(b, ['shR', 'shL'], b.pelvis, -amount)
+    const a = shoulderMid(b)
+    const c = shoulderMid(out)
+    for (const k of headKeys) if (b[k]) (out[k] as V3) = add(b[k] as V3, sub(c, a))
+    return out
+  }
   if (kind === 'head') {
     const sh = shoulderMid(b)
     return tiltKeys(b, headKeys, [sh[0], sh[1] + 50, sh[2]], amount)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { RUNNING } from '../../../core/params'
 import { BASELINE, CORRECT, SETUP } from '../params'
-import type { Baseline, Frame, ItemKey, Sample } from '../../../core/types'
+import { ITEM_KEYS, type Baseline, type Frame, type ItemKey, type Sample } from '../../../core/types'
 import type { Measure } from '../types'
 import { Coach, judged, type CoachEvent, type CoachState } from '../coach'
 import { facing, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../geometry'
@@ -39,7 +39,7 @@ interface Hud {
 const SPAN_MIN = SETUP.spanMin
 const bodySpan = (f: Frame, h: number) => (Math.max(f[L.leftAnkle].y, f[L.rightAnkle].y, f[L.leftHeel].y, f[L.rightHeel].y) - f[L.nose].y) / h
 
-const ITEM_TEXT: Record<ItemKey, string> = { head: '頭が前に出ています', trunk: '上体が倒れすぎています', body: '体が倒れすぎています', hip: '腰が落ちています' }
+const ITEM_TEXT: Record<ItemKey, string> = { head: '頭が前に出ています', trunk: '上体が倒れすぎています', trunkBack: '上体が起きています', body: '体が倒れすぎています', bodyBack: '体が後ろに残っています', hip: '腰が落ちています' }
 
 export function Live({ video: file, onDone }: { video?: File; onDone: (id?: string) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -447,8 +447,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           lastSample = coach.samples[coach.samples.length - 1]
           if (lastSample && !coach.quiet) {
             if (overCue('head', lastSample.head)) hot.add('head')
-            if (overCue('trunk', judged(lastSample, 'trunk'))) hot.add('trunk')
-            if (overCue('body', judged(lastSample, 'body'))) hot.add('body')
+            if (overCue('trunk', judged(lastSample, 'trunk')) || overCue('trunkBack', judged(lastSample, 'trunkBack'))) hot.add('trunk')
+            if (overCue('body', judged(lastSample, 'body')) || overCue('bodyBack', judged(lastSample, 'bodyBack'))) hot.add('body')
           }
         }
       }
@@ -550,8 +550,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
               {(
                 [
                   ['頭と背中', last.head, overCue('head', last.head)],
-                  ['体幹の前傾', last.trunk, overCue('trunk', judged(last, 'trunk'))],
-                  ['体全体の前傾', last.body, overCue('body', judged(last, 'body'))],
+                  ['体幹の前傾', last.trunk, overCue('trunk', judged(last, 'trunk')) || overCue('trunkBack', judged(last, 'trunkBack'))],
+                  ['体全体の前傾', last.body, overCue('body', judged(last, 'body')) || overCue('bodyBack', judged(last, 'bodyBack'))],
                 ] as [string, number, boolean][]
               ).map(([label, v, bad]) => (
                 <div key={label} style={{ background: 'rgba(10,12,14,0.78)', border: `1px solid ${bad ? 'var(--warn)' : 'var(--line)'}`, borderRadius: 12, padding: '8px 12px' }}>
@@ -630,10 +630,10 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             </div>
           )}
 
-          {last && hud.phase === 'run' && !hud.quiet && (['head', 'trunk', 'body', 'hip'] as ItemKey[]).some((k) => overCue(k, judged(last, k))) && (
+          {last && hud.phase === 'run' && !hud.quiet && ITEM_KEYS.some((k) => overCue(k, judged(last, k))) && (
             <div style={{ position: 'absolute', right: 16, top: 110 }}>
               <div style={{ padding: '8px 14px', borderRadius: 20, background: 'var(--warn)', color: '#0A0C0E', fontSize: 14, fontWeight: 900 }}>
-                {ITEM_TEXT[(['head', 'trunk', 'body', 'hip'] as ItemKey[]).find((k) => overCue(k, judged(last, k)))!]}
+                {ITEM_TEXT[ITEM_KEYS.find((k) => overCue(k, judged(last, k)))!]}
               </div>
             </div>
           )}

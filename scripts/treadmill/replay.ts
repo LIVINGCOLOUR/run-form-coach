@@ -13,11 +13,11 @@
 //   その場で走るフリの見分け（RUNNING.inPlaceForTesting）を入れて撮った記録を、いまの判定（切っている）で通すため
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
-import { LIMITS, REL_LIMITS, HEAD_ABS } from '../../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, HEAD_ABS, BEFORE_REF } from '../../src/modes/camera/params'
 import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
 import { CUE, RECOVER, SAY, PHRASES } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'
-import type { ItemKey, RunLog, Session } from '../../src/core/types'
+import { ITEM_KEYS, type ItemKey, type RunLog, type Session } from '../../src/core/types'
 import type { Measure } from '../../src/modes/camera/types'
 import { PhoneRun } from '../../src/modes/phone/session'
 import { PHONE_CUE } from '../../src/modes/phone/analyzer'
@@ -27,7 +27,7 @@ import type { DrillOptions } from '../../src/modes/phone/drill'
 
 // --set で書き換えられる入れ物
 export const PARAMS: Record<string, Record<string, unknown>> = {
-  LIMITS, REL_LIMITS, HEAD_ABS, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
+  LIMITS, REL_LIMITS, HEAD_ABS, BEFORE_REF, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
 }
 // 短い名前 → 入れ物の場所
 export const ALIASES: Record<string, string> = {
@@ -37,6 +37,9 @@ export const ALIASES: Record<string, string> = {
   hip: 'LIMITS.hip.cue', // 腰の下がり（%）
   trunkRel: 'REL_LIMITS.trunk.cue', // 上体：走り始めの自分からの増え（度）
   bodyRel: 'REL_LIMITS.body.cue', // 体全体：走り始めの自分からの増え（度）
+  trunkBackRel: 'REL_LIMITS.trunkBack.cue', // 上体の起きすぎ：走り始めの自分から後ろへ（度）
+  bodyBackRel: 'REL_LIMITS.bodyBack.cue', // 体全体の起きすぎ：走り始めの自分から後ろへ（度）
+  beforeBody: 'BEFORE_REF.body', // 基準ができる前に、体全体の前側を決まった線で見る秒（度以上）
   headAbs: 'HEAD_ABS.line', // 最初から頭が前に出ている（度）
   window: 'CUE.window', // 声をかける窓（秒）
   cadence: 'PHONE_LIMITS.cadence.cue', // スマホ：ピッチの下がり（%）
@@ -146,6 +149,8 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     return i
   }
   const [it, ip, iv, imov, ineck, itrunk, ibody, ihip, iyaw, ilean] = ['t', 'phase', 'visible', 'moving', 'neck', 'trunk', 'body', 'hipRatio', 'yaw', 'headLean'].map(col)
+  // 顎の列は、あとから足した（ない記録では 0。声はかけないので判定は変わらない）
+  const ichin = log.columns.indexOf('chin')
   // by 列：0 = 走っていない、1 = 歩数で走っている、2 = その場で走るフリ（src/modes/camera/log.ts の BY）
   const iby = opts.running === 'steps' ? col('by') : -1
   const BY_STEPS = 1
@@ -202,7 +207,7 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     }
     const visible = r[iv] === 1
     const moving = opts.running === 'steps' ? r[iby] === BY_STEPS : r[imov] === 1
-    const m: Measure | undefined = visible && r[ineck] !== -999 ? { neck: r[ineck], trunk: r[itrunk], body: r[ibody], hipRatio: r[ihip], yaw: r[iyaw], headLean: r[ilean], dir: 1 } : undefined
+    const m: Measure | undefined = visible && r[ineck] !== -999 ? { neck: r[ineck], trunk: r[itrunk], body: r[ibody], hipRatio: r[ihip], yaw: r[iyaw], headLean: r[ilean], chin: ichin < 0 ? 0 : r[ichin], dir: 1 } : undefined
     handle(coach.update({ t, present: visible, moving, m }), t)
     lastT = t
     lastPresent = visible
@@ -211,7 +216,7 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   const lr = coach.leanRef
   const hipRef = (coach as unknown as { analyzer: { hipRef: number | null } }).analyzer.hipRef
   const ref = lr && refFrom !== null && refTo !== null ? { from: refFrom, to: refTo, neck: lr.neck, trunk: lr.trunk, body: lr.body, headLean: lr.headLean, hipRatio: hipRef } : null
-  return { events, items: items ?? ['head', 'trunk', 'body', 'hip'], warnings, runStartT, ref }
+  return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref }
 }
 
 // ---- スマホ版：生の値を PhoneRun にもう一度通す ----

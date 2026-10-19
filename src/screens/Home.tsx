@@ -24,7 +24,7 @@ import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/s
 import { flushUploads } from '../core/upload/uploads'
 import { UploadKeyButton, UploadPanel } from '../ui/Upload'
 
-const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', body: '体全体の前傾', hip: '腰の下がり' }
+const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
 
 // 形が変わっていく割合 k を 0↔1 でなめらかに動かす

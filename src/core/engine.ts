@@ -318,13 +318,37 @@ export class CueEngine<M, S, K extends string> {
     return Math.min(TONE.fadeMax, CUE_P.cooldown + (next - TONE.fadeFrom) * TONE.fadeStep)
   }
 
+  // 声をかける項目のうち、いちばん優先の項目（優先順は見る役の items の並び）。項目ごとに、その項目を判定した秒だけで平均する。
+  // activeOnly：声をかける項目（activeItems）の線だけを見る（声なしの見守りをやめるか決めるとき）
+  private firstOver(win: Record_<K>[], r: Record_<K>, activeOnly: boolean): K | null {
+    for (const k of this.order) {
+      if (this.holdUnjudged && r.values[k] === undefined) continue
+      const vs = valuesOf(win, k)
+      if (vs.length < CUE_P.window * CUE_P.coverage) continue
+      const avg = mean(vs)
+      // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ。muteOthers なら声をかけない
+      const active = this.activeItems.includes(k)
+      if (activeOnly && (!active || this.specs[k].tone)) continue
+      const over = active ? this.over(k, avg) : !this.muteOthers && scoreOf(this.specs[k].limits, avg) < SCORE.mid
+      if (over && r.t - (this.lastCue[k] ?? -1e9) >= this.cooldown(k)) return k
+    }
+    return null
+  }
+
   private decide(r: Record_<K>): CoachEvent[] {
     const ev: CoachEvent[] = []
     const t = r.t
     // 判定しなかった項目の音は止める（holdUnjudged）
     if (this.holdUnjudged && this.toneOn !== null && r.values[this.toneOn] === undefined) this.stopTone(ev)
 
-    // 声なしで見守る時間
+    // 声なしで見守る時間。声をかける項目（音で知らせる項目のほか）が線を越えたら、すぐに見守りをやめて、下の声かけに進む
+    // （点数の平均が下がるのを待つと、小さな崩れに気づけない。カメラ版の仮想実験で、見守り中は頭を6°前に出しても見つけたのは4割だった）。
+    // 音で知らせる項目（スマホのピッチ）は、これまでどおり点数の平均が下がってから戻る（だんだん減らす知らせ方のため）
+    if (this.quiet && this.firstOver(this.within(CUE_P.window), r, true) !== null) {
+      this.quiet = false
+      this.quietEnd = t
+      this.quietLen = QUIET.first
+    }
     if (this.quiet) {
       // 間引いた分は、前の記録からの時間をこの記録の分として数える
       const prev = this.records[this.records.length - 2]
@@ -372,21 +396,13 @@ export class CueEngine<M, S, K extends string> {
     }
 
     // 崩れていたら声をかける（優先順は見る役の items の並び）。項目ごとに、その項目を判定した秒だけで平均する
-    const win = this.within(CUE_P.window)
     if (t - this.lastAnyCue >= CUE_P.gap) {
-      for (const k of this.order) {
-        if (this.holdUnjudged && r.values[k] === undefined) continue
-        const vs = valuesOf(win, k)
-        if (vs.length < CUE_P.window * CUE_P.coverage) continue
-        const avg = mean(vs)
+      const k = this.firstOver(this.within(CUE_P.window), r, false)
+      if (k !== null) {
         const lim = this.specs[k].limits
-        // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ。muteOthers なら声をかけない
-        const over = this.activeItems.includes(k) ? this.over(k, avg) : !this.muteOthers && scoreOf(lim, avg) < SCORE.mid
-        if (over && t - (this.lastCue[k] ?? -1e9) >= this.cooldown(k)) {
-          // 直ったかの線は、満点の範囲と声をかける線の真ん中（満点まで戻らなくても、はっきり戻ればほめる）
-          this.cue(ev, t, k, (lim.full + lim.cue) / 2)
-          return ev
-        }
+        // 直ったかの線は、満点の範囲と声をかける線の真ん中（満点まで戻らなくても、はっきり戻ればほめる）
+        this.cue(ev, t, k, (lim.full + lim.cue) / 2)
+        return ev
       }
     }
 

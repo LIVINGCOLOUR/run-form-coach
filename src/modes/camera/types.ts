@@ -6,6 +6,8 @@ export interface Measure {
   neck: number
   // 頭の位置そのもの：手前側の肩→耳の線の、鉛直からの前傾（度）
   headLean: number
+  // 顎：手前側の耳→鼻の線の、水平からの上向き（度。鼻が耳より下なら負）。測って記録するだけ
+  chin: number
   // スマホが体の前側から（正）か、後ろ側から（負）撮っているか（geometry の yawSign）
   yaw: number
   // 体幹の前傾（腰→肩の線と鉛直の角度。前が正）

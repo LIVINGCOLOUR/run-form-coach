@@ -8,15 +8,16 @@
 //     good→bad：よい例を240秒（その間に基準ができる）→ 悪い例を60秒。bad only：悪い例だけを240秒（決まった線と HEAD_ABS）
 //     くり返しのつなぎ目で骨格がとぶので、走っているかは「走っている」とみなして渡す（1コマずつの歩数の判定は別に数える）
 // 測るだけの値（判定には使っていない）：
-//   顎：手前側の耳→鼻の線の、水平からの上向き（度）。鼻が耳より下なら負
+//   顎：手前側の耳→鼻の線の、水平からの上向き（度。geometry の measure の chin）。鼻が耳より下なら負。
+//     アプリが記録する顎の値は、走り始めからの変化に上体の変化を足したもの（compare の chinAdj と同じ）
 //   着地：アプリのスロー分析（slowmo.ts の analyzeRun）にそのまま通した、着地の瞬間の足首の前（÷ 脚の長さ）とすねの角度
 //     （足首が膝より前に出て着くほど正）。なめらかにしない点を使う（スロー分析と同じ）。毎秒30コマ以上で取った点で見る。
 //     スローの倍率も analyzeRun が足のリズムから決める（1 でなければ、その区間はスロー再生）
 import { OneEuro } from '../../src/modes/camera/filter'
 import { bodyVisible, MotionDetector } from '../../src/modes/camera/motion'
-import { measure, nearSide } from '../../src/modes/camera/geometry'
+import { measure } from '../../src/modes/camera/geometry'
 import { L } from '../../src/modes/camera/landmarks'
-import { Coach } from '../../src/modes/camera/coach'
+import { Coach, headForward } from '../../src/modes/camera/coach'
 import { HEAD_ABS, LIMITS, REL_LIMITS } from '../../src/modes/camera/params'
 import { CUE } from '../../src/core/params'
 import { analyzeRun, type TimedFrame } from '../../src/modes/camera/slowmo'
@@ -43,8 +44,6 @@ export interface Tick {
   keyVis: number // 腰・膝・足首の確からしさの平均
 }
 
-const DEG = 180 / Math.PI
-
 // アプリの runPose → onTick と同じ順で1コマずつ測る
 export function track(c: LandmarkClip): Tick[] {
   const filters = Array.from({ length: 66 }, () => new OneEuro())
@@ -68,10 +67,7 @@ export function track(c: LandmarkClip): Tick[] {
       tick.m = m
       tick.moving = md.update(f, t)
       tick.cadence = md.cadence
-      const side = nearSide(f)
-      const ear = side === 'left' ? f[L.leftEar] : f[L.rightEar]
-      const nose = f[L.nose]
-      tick.chin = Math.atan2(ear.y - nose.y, (nose.x - ear.x) * m.dir) * DEG
+      tick.chin = m.chin
     }
     out.push(tick)
   }
@@ -183,25 +179,42 @@ export const LINES = {
   head: LIMITS.head.cue,
   trunkRel: REL_LIMITS.trunk.cue,
   bodyRel: REL_LIMITS.body.cue,
+  trunkBackRel: REL_LIMITS.trunkBack.cue,
+  bodyBackRel: REL_LIMITS.bodyBack.cue,
   hip: LIMITS.hip.cue,
   trunkAbs: LIMITS.trunk.cue,
   bodyAbs: LIMITS.body.cue,
   headAbs: HEAD_ABS.line,
+  headAbsOn: HEAD_ABS.on,
   headAbsYaw: HEAD_ABS.yawMax,
   window: CUE.window,
 }
+// head：アプリが頭に使う値（首の角度の増えと、頭の位置そのものの増えの小さいほう）。neck・headLean はそれぞれの増え
 export function compare(bad: WindowStat, good: WindowStat) {
-  const head = bad.neck - good.neck
+  const neck = bad.neck - good.neck
+  const headLean = bad.headLean - good.headLean
+  const head = headForward(neck, headLean)
   const trunk = bad.trunk - good.trunk
   const body = bad.body - good.body
   const hip = ((good.hipRatio - bad.hipRatio) / good.hipRatio) * 100 // 腰の下がり（%）。上がったときは負
+  const chin = bad.chin - good.chin
   return {
     head,
+    neck,
+    headLean,
     trunk,
     body,
     hip,
-    chin: bad.chin - good.chin,
-    cues: { head: head >= LINES.head, trunk: trunk >= LINES.trunkRel, body: body >= LINES.bodyRel, hip: hip >= LINES.hip },
+    chin,
+    chinAdj: chin + trunk, // 上体が起きた分（頭も上体といっしょに回る）を差し引いた顎
+    cues: {
+      head: head >= LINES.head,
+      trunk: trunk >= LINES.trunkRel,
+      trunkBack: -trunk >= LINES.trunkBackRel,
+      body: body >= LINES.bodyRel,
+      bodyBack: -body >= LINES.bodyBackRel,
+      hip: hip >= LINES.hip,
+    },
   }
 }
 

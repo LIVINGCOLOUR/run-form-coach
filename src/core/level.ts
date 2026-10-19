@@ -13,9 +13,11 @@ export const LEVEL_NOTE: Record<Level, string> = {
 }
 
 // 段階ごとに、新しく足す項目と、走り出す前に言うこと。最後の段階（STEPS.length）は「すべて」
+// 上体・体全体の起きすぎは、腰の段階で足す。最初の段階は「背を高く」と言うので、同じ走りで「起きすぎ」と言うと食い違う。
+// 腰が落ちる走りは、腰の高さより上体が起きる形に出ることが多い（人の動画、form-videos/notes/判定テスト.md）
 export const STEPS: { add: ItemKey[]; title: string; focus: string; up?: string }[] = [
   { add: ['trunk', 'body'], title: '胸のライトで前を照らす', focus: PHRASES.focusUpright },
-  { add: ['hip'], title: '腰を高く保つ', focus: PHRASES.focusHip, up: PHRASES.stepHip },
+  { add: ['hip', 'trunkBack', 'bodyBack'], title: '腰を高く保つ', focus: PHRASES.focusHip, up: PHRASES.stepHip },
   { add: ['head'], title: '耳を肩の真上に', focus: PHRASES.focusHead, up: PHRASES.stepHead },
 ]
 export const ALL = STEPS.length

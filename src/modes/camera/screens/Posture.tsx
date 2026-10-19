@@ -9,7 +9,7 @@ import { ShareBar } from '../../../ui/ShareBar'
 
 const CAT_LABEL: Record<Category, string> = { good: '良い', mid: 'ふつう', bad: '悪い' }
 const CAT_COLOR: Record<Category, string> = { good: '#7C8A4A', mid: '#C98A5A', bad: '#FF8A3D' }
-const ITEM_LABEL: Record<ItemKey, string> = { head: '頭', trunk: '体幹', body: '体全体', hip: '腰' }
+const ITEM_LABEL: Record<ItemKey, string> = { head: '頭', trunk: '体幹', trunkBack: '体幹', body: '体全体', bodyBack: '体全体', hip: '腰' }
 type Overlay = 'next' | 'best' | 'none'
 
 export function Posture({ session: s, sessions, go }: { session: Session; sessions: Session[]; go: (x: Screen) => void }) {

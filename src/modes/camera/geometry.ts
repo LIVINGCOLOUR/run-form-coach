@@ -105,11 +105,12 @@ export function measure(frame: Frame): Measure {
   const ankC = mid(la, ra)
   const trunk = leanFromVertical(hipC, shC, dir)
   const body = leanFromVertical(ankC, shC, dir)
-  // 頭は、手前側の肩→耳と手前側の腰→肩の差（走り始めの自分との差で見る）
+  // 頭は、手前側の肩→耳と手前側の腰→肩の差（走り始めの自分との差で見る）。顎は、手前側の耳→鼻の線の上向き
   const neckLean = leanFromVertical(shoulder, ear, dir)
   const trunkNear = leanFromVertical(hip, shoulder, dir)
+  const chin = Math.atan2(ear.y - frame[L.nose].y, (frame[L.nose].x - ear.x) * dir) * DEG
   const leg = legLength(frame)
   const hipRatio = leg > 0 ? (stance.y - mid(frame[L.leftHip], frame[L.rightHip]).y) / leg : 0
 
-  return { neck: neckLean - trunkNear, headLean: neckLean, yaw: yawSign(frame), trunk, body, hipRatio, dir }
+  return { neck: neckLean - trunkNear, headLean: neckLean, chin, yaw: yawSign(frame), trunk, body, hipRatio, dir }
 }

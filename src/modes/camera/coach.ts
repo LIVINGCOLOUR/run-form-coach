@@ -1,14 +1,14 @@
-import type { Category, Frame, ItemKey, Sample, Session, Stride } from '../../core/types'
+import { ITEM_KEYS, type Category, type Frame, type ItemKey, type Sample, type Session, type Stride } from '../../core/types'
 import type { Measure } from './types'
 import { category } from '../../core/scoring'
 import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
-import { HEAD_ABS, REL_LIMITS, STRIDE } from './params'
+import { BEFORE_REF, HEAD_ABS, REL_LIMITS, STRIDE } from './params'
 import { RunningGate } from './motion'
 import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from '../../core/engine'
 
-// カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体・腰を見る。
+// カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体（前に倒れすぎ・起きすぎ）・腰を見る。顎は測って記録するだけ。
 // 声かけのしくみ（いつ声をかけ、ほめ、黙って見守るか）は engine.ts で、どのモードでも共通。
 // ここにあるのは、カメラの測定から1秒ごとの判定の値を作る「見る役」と、走り姿のアニメーションの記録だけ
 
@@ -26,9 +26,12 @@ interface GatedInput extends CoachInput {
   steps?: boolean
 }
 
-// 測る項目。並び順が、声をかける優先順（頭 → 体幹 → 体全体 → 腰）
-const ITEMS: ItemKey[] = ['head', 'trunk', 'body', 'hip']
-export const CAMERA_ITEMS: ItemSpec<ItemKey>[] = ITEMS.map((key) => ({ key, limits: LIMITS[key], cue: CUE[key] }))
+// 測る項目。並び順が、声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰）
+export const CAMERA_ITEMS: ItemSpec<ItemKey>[] = ITEM_KEYS.map((key) => ({ key, limits: LIMITS[key], cue: CUE[key] }))
+
+type Ref = { neck: number; trunk: number; body: number; headLean: number; yaw: number; chin: number }
+const REF_KEYS = ['neck', 'trunk', 'body', 'headLean', 'yaw', 'chin'] as const
+const emptyRefs = (): Record<keyof Ref, number[]> => ({ neck: [], trunk: [], body: [], headLean: [], yaw: [], chin: [] })
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 
@@ -37,9 +40,9 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
 
   private hipRefs: number[] = []
   private hipRef: number | null = null
-  // 走り始めの自分の首の角度・上体・体全体の傾き、頭の位置そのもの、スマホの向き（HIP_REF の区間の、歩数で走っていた秒の平均）
-  private leanRefs: { neck: number[]; trunk: number[]; body: number[]; headLean: number[]; yaw: number[] } = { neck: [], trunk: [], body: [], headLean: [], yaw: [] }
-  leanRef: { neck: number; trunk: number; body: number; headLean: number; yaw: number } | null = null
+  // 走り始めの自分の首の角度・上体・体全体の傾き、頭の位置そのもの、スマホの向き、顎（HIP_REF の区間の、歩数で走っていた秒の平均）
+  private leanRefs = emptyRefs()
+  leanRef: Ref | null = null
 
   // 走り始めの基準は、歩数で走っていると見た秒だけで作る。running は Coach が決めた「走っている」（RunningGate）。
   // runFrom は、いまの走りの始まり（しくみの秒）。基準ができる前に止まったら null にして、作り直す
@@ -69,7 +72,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (this.leanRef !== null) return
     this.runFrom = null
     this.hipRefs = []
-    this.leanRefs = { neck: [], trunk: [], body: [], headLean: [], yaw: [] }
+    this.leanRefs = emptyRefs()
   }
 
   // 基準にためた秒の数（採点の道具が、基準を作った間を出すのに使う）
@@ -87,47 +90,51 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     this.secOff = 0
     if (b.length < 3) return null
     const stepping = this.running && (on + off === 0 || on >= off)
-    const neck = mean(b.map((m) => m.neck))
-    const headLean = mean(b.map((m) => m.headLean))
-    const yaw = mean(b.map((m) => m.yaw))
-    const trunk = mean(b.map((m) => m.trunk))
-    const body = mean(b.map((m) => m.body))
+    const now = Object.fromEntries(REF_KEYS.map((k) => [k, mean(b.map((m) => m[k]))])) as Ref
+    const { neck, headLean, trunk, body } = now
     const hipRatio = mean(b.map((m) => m.hipRatio))
     // 走り始めの基準：いまの走りの始まりから HIP_REF の間の、歩数で走っていた秒の平均
     const rt = this.runFrom === null ? null : t - this.runFrom
     if (this.leanRef === null && rt !== null && stepping && rt >= HIP_REF.from && rt <= HIP_REF.to) {
       this.hipRefs.push(hipRatio)
-      this.leanRefs.neck.push(neck)
-      this.leanRefs.trunk.push(trunk)
-      this.leanRefs.body.push(body)
-      this.leanRefs.headLean.push(headLean)
-      this.leanRefs.yaw.push(yaw)
+      for (const k of REF_KEYS) this.leanRefs[k].push(now[k])
     }
     let ready = false
     let once: SecondOut<Sample, ItemKey>['once']
     // 区間に歩数で走っていた秒が1つもなければ、もう走り始めの数十秒は過ぎているので、すぐ次の秒からためる
     if (this.leanRef === null && rt !== null && rt > HIP_REF.to && !this.leanRefs.trunk.length) this.runFrom = t - HIP_REF.from
     else if (this.leanRef === null && rt !== null && rt > HIP_REF.to) {
-      const r = this.leanRefs
       ready = true
       this.hipRef = mean(this.hipRefs)
-      this.leanRef = { neck: mean(r.neck), trunk: mean(r.trunk), body: mean(r.body), headLean: mean(r.headLean), yaw: mean(r.yaw) }
-      // 最初から頭が前に出ていないかを、一度だけ決まった線と比べる（真横に近く置けているときだけ）。
+      this.leanRef = Object.fromEntries(REF_KEYS.map((k) => [k, mean(this.leanRefs[k])])) as Ref
+      // 最初から頭が前に出ていないかを、一度だけ決まった線と比べる（真横に近く置けているときだけ。いまは切っている：params.ts の HEAD_ABS）。
       // 直ったかは、走り始めより頭が HEAD_ABS.recoverBack 戻ったかで見る
-      if (ctx.active.includes('head') && Math.abs(this.leanRef.yaw) <= HEAD_ABS.yawMax && this.leanRef.headLean > HEAD_ABS.line) {
+      if (HEAD_ABS.on && ctx.active.includes('head') && Math.abs(this.leanRef.yaw) <= HEAD_ABS.yawMax && this.leanRef.headLean > HEAD_ABS.line) {
         once = { item: 'head', back: -HEAD_ABS.recoverBack }
       }
     }
+    const ref = this.leanRef
     const hipDrop = this.hipRef ? Math.max(0, ((this.hipRef - hipRatio) / this.hipRef) * 100) : 0
     // 頭は、走り始めの自分との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
-    const head = this.leanRef ? neck - this.leanRef.neck : 0
-    const judge = this.leanRef ? { trunk: toScale('trunk', trunk - this.leanRef.trunk), body: toScale('body', body - this.leanRef.body) } : undefined
-    // 上体と体全体は、基準ができるまでは決まった線で判定する。頭と腰は、走り始めの自分の基準ができるまで判定しない
-    const values: Values<ItemKey> = { trunk: judge?.trunk ?? trunk, body: judge?.body ?? body }
-    if (this.leanRef) values.head = head
+    const head = ref ? headForward(neck - ref.neck, headLean - ref.headLean) : 0
+    const judge = ref ? { trunk: toScale('trunk', trunk - ref.trunk), body: toScale('body', body - ref.body) } : undefined
+    // 起きすぎの側：基準ができたら走り始めからの後ろへの傾きを目盛りに直し、それまでは後ろへの傾きそのもの（決まった線）
+    const back = ref ? { trunk: toScale('trunkBack', ref.trunk - trunk), body: toScale('bodyBack', ref.body - body) } : { trunk: -trunk, body: -body }
+    // 上体と体全体は、基準ができるまでは決まった線で判定する。頭と腰は、走り始めの自分の基準ができるまで判定しない。
+    // 体全体の前側は、基準ができるまでは BEFORE_REF.body を越えた秒だけ判定する（もともと前傾の大きい人に、決まった線で声をかけ続けないため）
+    // 起きすぎの側は、歩数で走っていた秒だけ判定する（歩くと上体も体全体も起きるので、歩いている間に声をかけないため）
+    const values: Values<ItemKey> = { trunk: judge?.trunk ?? trunk }
+    if (stepping) {
+      values.trunkBack = back.trunk
+      values.bodyBack = back.body
+    }
+    if (judge || body >= BEFORE_REF.body) values.body = judge?.body ?? body
+    if (ref) values.head = head
     if (this.hipRef) values.hip = hipDrop
-    // 上体と体全体はいつも判定するので、点数が null になることはない
-    const sample: Sample = { t, head, trunk, body, hipDrop, score: ctx.score(values) ?? 100, quiet: ctx.quiet, judge, headLean }
+    // 顎：測って記録するだけ。上体が起きた分（頭は上体といっしょに回る）を差し引く
+    const chin = ref ? now.chin - ref.chin + (trunk - ref.trunk) : undefined
+    // 上体はいつも判定するので、点数が null になることはない
+    const sample: Sample = { t, head, trunk, body, hipDrop, score: ctx.score(values) ?? 100, quiet: ctx.quiet, judge, back, headLean, chin }
     this.maybeKeepStride(sample)
     return { sample, values, ready, once }
   }
@@ -228,15 +235,26 @@ function resample(ring: { frame: Frame; t: number }[], n: number, sec: number): 
 
 export { itemScore }
 
+// 頭が前に出た量：首の角度の増え（頭が上体より前に出た）と、頭の位置そのものの増えの、小さいほう。
+// 上体が起きると首の角度だけが増える（頭は動いていない）ので、頭の位置そのものも前に出たときだけ「頭が前」にする
+export function headForward(neckDelta: number, headLeanDelta: number): number {
+  return Math.min(neckDelta, headLeanDelta)
+}
+
 // 判定に使う値。上体と体全体は、走り始めの自分の基準ができていれば、その増え方（LIMITS の目盛りに直したもの）
 export function judged(s: Sample, k: ItemKey): number {
   if (k === 'hip') return s.hipDrop
   if (k === 'head') return s.head
+  if (k === 'trunkBack') return s.back?.trunk ?? -Infinity
+  if (k === 'bodyBack') return s.back?.body ?? -Infinity
+  // 基準ができる前の体全体は、BEFORE_REF.body 以上のときだけ決まった線と比べる
+  if (k === 'body' && !s.judge && s.body < BEFORE_REF.body) return -Infinity
   return s.judge?.[k] ?? s[k]
 }
 
 // 増え方を、決まった線（LIMITS）の目盛りに直す：増え方の満点・声をかける線・0点が、LIMITS のそれぞれに重なるように
-export function toScale(k: 'trunk' | 'body', delta: number): number {
+// （起きすぎの側は、走り始めから後ろへ傾いた量を渡す）
+export function toScale(k: 'trunk' | 'trunkBack' | 'body' | 'bodyBack', delta: number): number {
   const a = REL_LIMITS[k]
   const b = LIMITS[k]
   if (delta <= a.full) return b.full - (a.full - delta)

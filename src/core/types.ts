@@ -8,8 +8,10 @@ export interface Pt {
 // 1コマの骨格（MediaPipe Pose の33点）
 export type Frame = Pt[]
 
-// 姿勢の項目
-export type ItemKey = 'head' | 'trunk' | 'body' | 'hip'
+// 姿勢の項目。trunkBack・bodyBack は、上体・体全体が走り始めの自分より起きすぎた（後ろに傾いた）側
+export type ItemKey = 'head' | 'trunk' | 'trunkBack' | 'body' | 'bodyBack' | 'hip'
+// 並び順が、声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰）
+export const ITEM_KEYS: ItemKey[] = ['head', 'trunk', 'trunkBack', 'body', 'bodyBack', 'hip']
 
 // 初回だけ取る直立の基準
 export interface Baseline {
@@ -30,7 +32,11 @@ export interface Sample {
   quiet: boolean // 声なしで確認している時間か
   // 判定に使った値（上体と体全体は、走り始めの自分からの増え方を LIMITS の目盛りに直したもの）。ないときは trunk・body そのもの
   judge?: { trunk: number; body: number }
+  // 起きすぎの側の判定の値（LIMITS の目盛り）。基準ができる前は、決まった線と比べる値（後ろへの傾き）
+  back?: { trunk: number; body: number }
   headLean?: number // 頭の位置そのもの（肩→耳の前傾、度）
+  // 顎：耳→鼻の線の上向きの、走り始めの自分からの変化（度。上体が起きた分は差し引く）。測って記録するだけで、声はかけない
+  chin?: number
 }
 
 export type Category = 'good' | 'mid' | 'bad'

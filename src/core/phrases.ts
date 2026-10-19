@@ -5,10 +5,13 @@ import type { ItemKey } from './types'
 // 前かがみを直す言葉は、体の部位ではなく「たとえ」で言う（部位に意識を向けると走りが硬くなり、たとえは疲れても崩れにくい）。
 //   胸のライト：背中が丸まり肩が前に落ちる形（猫背）に。「胸を張る」と違って腰を反らせにくい
 //   上から吊られる：足首から体ごと倒れる形と、腰が落ちる形に
+// 起きすぎ（後ろに傾く）を直す言葉は、前かがみの言葉と取り違えないよう「少しだけ」前へと言い、強く倒させない
 export const PHRASES = {
   cueHead: '頭が前に出ています。顎を引いてください。',
   cueTrunk: '前かがみになっています。胸のライトで、前を照らしてください。',
+  cueTrunkBack: '上体が起きています。少しだけ前に傾けてください。',
   cueBody: '体が前に倒れすぎています。上から吊られているように、背を高くしてください。',
+  cueBodyBack: '体が後ろに残っています。足首から、少しだけ前に体を預けてください。',
   cueHip: '腰が落ちています。上から吊られているように意識してください。',
   recover1: 'いい感じです。その姿勢を保ちましょう。',
   recover2: 'いい感じです。',
@@ -104,7 +107,9 @@ export type PhraseId = keyof typeof PHRASES
 export const CUE: Record<ItemKey, string> = {
   head: PHRASES.cueHead,
   trunk: PHRASES.cueTrunk,
+  trunkBack: PHRASES.cueTrunkBack,
   body: PHRASES.cueBody,
+  bodyBack: PHRASES.cueBodyBack,
   hip: PHRASES.cueHip,
 }
 

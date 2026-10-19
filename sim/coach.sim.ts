@@ -16,18 +16,19 @@ import { loadTrial } from './rbds'
 import { LongRun, distort, truthOf, legLengthMm, groundOf, DISTORT_LABEL, type DistortKind, type Source } from './longrun'
 import { film, replay, BASE, BASE_NOISE, type Extra, type Stream } from './pipeline'
 import type { Placement, Noise, Body } from './camera'
-import { LIMITS, REL_LIMITS, HEAD_ABS } from '../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, HEAD_ABS, BEFORE_REF } from '../src/modes/camera/params'
 import { HIP_REF, CUE as CUE_P } from '../src/core/params'
 import { activeItems, ALL } from '../src/core/level'
-import type { ItemKey } from '../src/core/types'
+import { ITEM_KEYS, type ItemKey } from '../src/core/types'
 
 const RIGLET = process.env.RIGLET_DIR
 const VH = process.env.VH_DIR
 const RBDS = process.env.RBDS_DIR
 const OUT = process.env.SIM_OUT ?? 'sim/result-coach.md'
 
-const ITEMS: ItemKey[] = ['head', 'trunk', 'body', 'hip']
-const ITEM_JA: Record<ItemKey, string> = { head: '頭', trunk: '上体', body: '体全体', hip: '腰' }
+const ITEMS: ItemKey[] = ITEM_KEYS
+const ITEM_JA: Record<ItemKey, string> = { head: '頭', trunk: '上体', trunkBack: '上体の起きすぎ', body: '体全体', bodyBack: '体全体の起きすぎ', hip: '腰' }
+const zeros = () => Object.fromEntries(ITEMS.map((k) => [k, 0])) as Record<ItemKey, number>
 const LEVELS = [
   { label: '初心者（最初）', items: activeItems(0) },
   { label: '中級（最初）', items: activeItems(1) },
@@ -48,12 +49,16 @@ const CONDS: { label: string; pl?: Partial<Placement>; noise?: Partial<Noise>; e
   { label: 'スマホが低い（50cm）', pl: { height: 0.5 } },
 ]
 // 崩しの種類ごとの、大きさ（主に変わる値の本当の変化。腰は脚の長さに対する%）と、合っているとみなす声の項目
-const KINDS: { kind: DistortKind; of: 'neck' | 'trunk' | 'body' | 'hip'; unit: string; sizes: number[]; ok: ItemKey[] }[] = [
+type Of = 'neck' | 'trunk' | 'body' | 'hip' | 'trunkBack' | 'bodyBack'
+const KINDS: { kind: DistortKind; of: Of; unit: string; sizes: number[]; ok: ItemKey[] }[] = [
   { kind: 'head', of: 'neck', unit: '°（首の角度）', sizes: [2, 4, 6, 8, 10, 14], ok: ['head'] },
   { kind: 'hunch', of: 'trunk', unit: '°（上体の傾き）', sizes: [2, 4, 6, 8, 10], ok: ['trunk', 'head'] },
   { kind: 'trunk', of: 'trunk', unit: '°（上体の傾き）', sizes: [2, 4, 6, 8, 10], ok: ['trunk', 'body'] },
   { kind: 'body', of: 'body', unit: '°（体全体の傾き）', sizes: [1, 2, 3, 4, 5, 6], ok: ['body', 'trunk'] },
   { kind: 'sit', of: 'hip', unit: '%（腰の高さ、脚の長さに対して）', sizes: [2, 4, 6, 8, 10], ok: ['hip', 'body'] },
+  { kind: 'trunkBack', of: 'trunkBack', unit: '°（上体の後ろへの傾き）', sizes: [2, 4, 6, 8, 10], ok: ['trunkBack', 'bodyBack'] },
+  { kind: 'bodyBack', of: 'bodyBack', unit: '°（体全体の後ろへの傾き）', sizes: [1, 2, 3, 4, 5, 6], ok: ['bodyBack', 'trunkBack'] },
+  { kind: 'uprightHead', of: 'trunkBack', unit: '°（上体の後ろへの傾き。頭の位置はそのまま）', sizes: [4, 6, 9], ok: ['trunkBack', 'bodyBack'] },
 ]
 // 線を変えて試す値（その項目だけ変え、ほかは今の線のまま）
 const SWEEP: { item: ItemKey; now: number; values: number[]; set: (v: number) => void }[] = [
@@ -61,6 +66,8 @@ const SWEEP: { item: ItemKey; now: number; values: number[]; set: (v: number) =>
   { item: 'trunk', now: REL_LIMITS.trunk.cue, values: [3, 4, 5, 6], set: (v) => (REL_LIMITS.trunk.cue = v) },
   { item: 'body', now: REL_LIMITS.body.cue, values: [2.5, 3, 3.5, 4, 5], set: (v) => (REL_LIMITS.body.cue = v) },
   { item: 'hip', now: LIMITS.hip.cue, values: [3, 4, 5, 6], set: (v) => (LIMITS.hip.cue = v) },
+  { item: 'trunkBack', now: REL_LIMITS.trunkBack.cue, values: [3, 4, 5], set: (v) => (REL_LIMITS.trunkBack.cue = v) },
+  { item: 'bodyBack', now: REL_LIMITS.bodyBack.cue, values: [2.5, 3.5, 4.5], set: (v) => (REL_LIMITS.bodyBack.cue = v) },
 ]
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN)
@@ -97,8 +104,11 @@ function prepare(id: string, src: Source, seed: number, sec = NORMAL_SEC): Runne
   return { id, src, run, leg, ground, ratio }
 }
 
-function change(a: ReturnType<typeof truthOf>, b: ReturnType<typeof truthOf>, of: 'neck' | 'trunk' | 'body' | 'hip', leg: number) {
-  return of === 'hip' ? ((a.hip - b.hip) / leg) * 100 : b[of] - a[of]
+function change(a: ReturnType<typeof truthOf>, b: ReturnType<typeof truthOf>, of: Of, leg: number) {
+  if (of === 'hip') return ((a.hip - b.hip) / leg) * 100
+  if (of === 'trunkBack') return a.trunk - b.trunk
+  if (of === 'bodyBack') return a.body - b.body
+  return b[of] - a[of]
 }
 
 // 崩しの入った体：onset から RAMP 秒かけて崩し、HOLD 秒たったら RAMP 秒かけて戻す
@@ -163,8 +173,8 @@ function loadRigletRunners(): Runner[] {
 
 // 誤った声の数え方：基準ができたあと（HIP_REF.to 秒より後）の10分あたり、と、基準ができる前（決まった線で見ている間）の回数
 function falseCues(reps: { r: ReturnType<typeof replay>; end: number }[]) {
-  const after: Record<ItemKey, number> = { head: 0, trunk: 0, body: 0, hip: 0 }
-  const before: Record<ItemKey, number> = { head: 0, trunk: 0, body: 0, hip: 0 }
+  const after = zeros()
+  const before = zeros()
   let once = 0
   let minutes = 0
   let runners = 0
@@ -204,8 +214,8 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
       `## ① ふつうに走ったときの誤った声（10分あたりの回数）\n\n` +
       `基準ができたあと（走り始めて${HIP_REF.to}秒より後）の10分。カッコ内は、声が1回でも出た走りの割合。` +
       `「基準の前」は、走り始めの${HIP_REF.to}秒（上体と体全体を決まった線で見ている間）に出た回数の合計。` +
-      `「一度だけ」は、基準ができたときに一度だけ見る頭の位置そのもの（${HEAD_ABS.line}°）で出た声（上級だけ）。\n\n` +
-      `| 置き方・ぶれ | レベル | 頭 | 上体 | 体全体 | 腰 | 合計（声が出た走り） | 基準の前（頭/上体/体全体/腰、声が出た走り） | 一度だけ |\n|---|---|---|---|---|---|---|---|---|\n`
+      `「一度だけ」は、基準ができたときに一度だけ見る頭の位置そのもの（${HEAD_ABS.line}°）で出た声（上級だけ${HEAD_ABS.on ? '' : '。いまは切っているので出ない'}）。\n\n` +
+      `| 置き方・ぶれ | レベル | ${ITEMS.map((k) => ITEM_JA[k]).join(' | ')} | 合計（声が出た走り） | 基準の前（${ITEMS.map((k) => ITEM_JA[k]).join('/')}、声が出た走り） | 一度だけ |\n|---|---|${ITEMS.map(() => '---').join('|')}|---|---|---|\n`
     for (const c of CONDS) {
       const ss = runners.map((r, k) => filmOf(r, k, c, NORMAL_SEC, bodyFn(r), 1))
       if (c === CONDS[1]) ss.forEach((s, k) => streams.set(`${c.label}|${k}|normal`, s))
@@ -248,25 +258,106 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
       text += `| ${DISTORT_LABEL[k.kind]} | ${[0, 1, 2, 3].map((i) => mean(rows.map((x) => x[i])).toFixed(2)).join(' | ')} |\n`
     }
     for (const k of KINDS) {
-      text += `\n### ${DISTORT_LABEL[k.kind]}\n\n| 大きさ${k.unit} | 基準：見つけた | 基準：合う項目 | 基準：声まで | 実機なみ：見つけた | 実機なみ：合う項目 | 実機なみ：声まで | 見守り中：見つけた | 見守り中：声まで |\n|---|---|---|---|---|---|---|---|---|\n`
+      text += `\n### ${DISTORT_LABEL[k.kind]}\n\n| 大きさ${k.unit} | 基準：見つけた | 基準：合う項目 | 基準：声まで | 実機なみ：見つけた | 実機なみ：合う項目 | 実機なみ：声まで | 見守り中：見つけた | 見守り中：合う項目 | 見守り中：声まで | 実機なみ：頭の声 |\n|---|---|---|---|---|---|---|---|---|---|---|\n`
       for (const size of k.sizes) {
         const cols: string[] = []
+        let headShare = 0
         for (const [ci, c] of [CONDS[0], CONDS[1]].entries()) {
           const ss = runners.map((r, i) => filmOf(r, i, c, ONSET + HOLD + 10, bodyFn(r, k.kind, size), 1))
           if (ci === 1) ss.forEach((s, i) => streams.set(`${c.label}|${i}|${k.kind}|${size}`, s))
           const d = detect(ss.map((s) => replay(s, {})), k.ok, ONSET)
           cols.push(pct(d.found), pct(d.right), d.lat)
+          if (ci === 1) headShare = d.head
           if (ci === 1) (sum.now.det[k.kind] ??= {})[size] = { right: d.right, latSec: d.latSec }
           if (ci === 1) {
             const sq = runners.map((r, i) => filmOf(r, i, c, ONSET_QUIET + HOLD + 10, bodyFn(r, k.kind, size, ONSET_QUIET), 1))
             const dq = detect(sq.map((s) => replay(s, {})), k.ok, ONSET_QUIET)
-            cols.push(pct(dq.found), dq.lat)
+            cols.push(pct(dq.found), pct(dq.right), dq.lat)
           }
         }
-        text += `| ${size} | ${[cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]].join(' | ')} |\n`
+        text += `| ${size} | ${cols.join(' | ')} | ${k.kind === 'head' ? '—' : pct(headShare)} |\n`
       }
     }
     sections[1] = text
+    console.log(text)
+  })
+
+  itAll('基準の前の体全体の決まった線', () => {
+    // 走り始めの基準ができる前（最初の HIP_REF.to 秒）は、体全体の前側を決まった線（LIMITS.body）で見る。
+    // BEFORE_REF.body 以上の秒だけ判定するとき、もともと前傾の大きい人への声と、最初から前に倒れている人に気づけるかを比べる
+    const opts = [-Infinity, 15, 16, 18, Infinity]
+    const now = BEFORE_REF.body
+    const label = (v: number) => (v === -Infinity ? 'いつも判定' : v === Infinity ? '判定しない' : `${v}° 以上の秒だけ`) + (v === now ? '（今）' : '')
+    let text =
+      `## ④ 基準ができる前の、体全体の決まった線（${LIMITS.body.cue}°）\n\n` +
+      `走り始めの${HIP_REF.to}秒（基準ができる前）に、体全体の前側を決まった線と比べるのを、どの秒でするか。初心者（最初）で通した。` +
+      `「ふつうの走り」は、その間に出た体全体の声の数（声が出た走り）。「最初から前に倒す」は、走り始めから体全体を前に傾けたまま走ったとき（基準もその姿勢でできるので、あとからは気づけない）に、基準の前に上体か体全体の声が出た走りの割合。\n\n` +
+      `| 置き方・ぶれ | 判定する秒 | ふつうの走り：体全体の声（走り） | 最初から前に倒す +3° | +5° | +7° |\n|---|---|---|---|---|---|\n`
+    for (const c of [CONDS[0], CONDS[1], CONDS[3]]) {
+      const ss = runners.map((r, k) => filmOf(r, k, c, HIP_REF.to + 10, bodyFn(r), 3))
+      const lean = [3, 5, 7].map((sz) => runners.map((r, k) => filmOf(r, k, c, HIP_REF.to + 10, (t) => distort(r.run.at(t), 'body', sz / r.ratio.body, r.leg, r.ground), 3)))
+      for (const v of opts) {
+        BEFORE_REF.body = v
+        try {
+          const before = (rp: ReturnType<typeof replay>) => formCues(rp.cues).filter((x) => x.t <= rp.runFrom + HIP_REF.to)
+          const rs = ss.map((x) => replay(x, { items: LEVELS[0].items }))
+          const n = rs.reduce((a, rp) => a + before(rp).filter((x) => x.item === 'body').length, 0)
+          const who = rs.filter((rp) => before(rp).some((x) => x.item === 'body')).length
+          const det = lean.map((ls) => pct(ls.map((x) => replay(x, { items: LEVELS[0].items })).filter((rp) => before(rp).some((x) => x.item === 'body' || x.item === 'trunk')).length / ls.length))
+          text += `| ${c.label} | ${label(v)} | ${n}（${who}本） | ${det.join(' | ')} |\n`
+        } finally {
+          BEFORE_REF.body = now
+        }
+      }
+    }
+    sections[3] = text
+    console.log(text)
+  })
+
+  itAll('顎（測るだけ）', () => {
+    // 顎：耳→鼻の線の上向きの、走り始めからの変化（上体が起きた分を差し引く）。ふつうの走りで6秒平均がどれだけ動くか
+    const c = CONDS[1]
+    const ws: number[] = []
+    const perRunner: number[] = []
+    runners.forEach((_, i) => {
+      const rp = replay(streams.get(`${c.label}|${i}|normal`)!, {})
+      const vs = rp.values.filter((x) => x.chin !== undefined)
+      let mx = 0
+      for (let j = 5; j < vs.length; j++) {
+        const w = vs.filter((x) => x.t > vs[j].t - CUE_P.window && x.t <= vs[j].t)
+        if (w.length < CUE_P.window * CUE_P.coverage) continue
+        const m = mean(w.map((x) => x.chin!))
+        ws.push(m)
+        mx = Math.max(mx, Math.abs(m))
+      }
+      perRunner.push(mx)
+    })
+    const sorted = [...ws].sort((a, b) => a - b)
+    const q = (p: number) => sorted[Math.floor(p * (sorted.length - 1))]
+    const over = (x: number) => pct(ws.filter((w) => Math.abs(w) > x).length / ws.length)
+    // 崩しのときの顎の値（上体を起こした・頭を残して上体を起こした）
+    const atKind = (kind: DistortKind, size: number) => {
+      const xs: number[] = []
+      runners.forEach((_, i) => {
+        const st = streams.get(`${c.label}|${i}|${kind}|${size}`)
+        if (!st) return
+        const vs = replay(st, {}).values.filter((x) => x.chin !== undefined && x.t >= ONSET + 5 && x.t <= ONSET + HOLD)
+        if (vs.length) xs.push(mean(vs.map((x) => x.chin!)))
+      })
+      return `${mean(xs).toFixed(1)}°`
+    }
+    const text =
+      `## ⑤ 顎（耳→鼻の線の上向き、測るだけ）\n\n` +
+      `走り始めの自分からの変化に、上体の変化を足したもの（上体が起きると、頭も上体といっしょに後ろへ回って顎が上がるので、その分を差し引く）。` +
+      `仮想のスマホの鼻は眉間の印、耳は耳の後ろの印から作ったもので、本物の骨格の推定（鼻・耳の点のぶれ）より小さく揺れる。` +
+      `実機なみのずれ、${runners.length}本、基準ができたあと。\n\n` +
+      `| 6秒平均の分布（ふつうに走る） | 値 |\n|---|---|\n` +
+      `| 下から5% / 中央 / 上から5% | ${q(0.05).toFixed(1)}° / ${q(0.5).toFixed(1)}° / ${q(0.95).toFixed(1)}° |\n` +
+      `| ±5° を越えた6秒平均の割合 | ${over(5)} |\n| ±8° を越えた6秒平均の割合 | ${over(8)} |\n` +
+      `| 1本のうち一番大きく動いた6秒平均（中央の走り / 一番動いた走り） | ${median(perRunner).toFixed(1)}° / ${Math.max(...perRunner).toFixed(1)}° |\n` +
+      `| 上体を後ろへ6°起こしたとき（頭も上体といっしょに回る） | ${atKind('trunkBack', 6)} |\n` +
+      `| 頭を残して上体だけ6°起こしたとき | ${atKind('uprightHead', 6)} |\n`
+    sections[4] = text
     console.log(text)
   })
 
@@ -334,8 +425,8 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
       const sz = sizes.find((x) => det?.[x] && det[x].right >= 0.9)
       return sz === undefined ? `${sizes[sizes.length - 1]}でも届かない` : `${sz}（${Math.round(det![sz].latSec)}秒）`
     }
-    const item: Record<DistortKind, ItemKey> = { head: 'head', hunch: 'trunk', trunk: 'trunk', body: 'body', sit: 'hip' }
-    const lineNow: Record<ItemKey, string> = { head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, hip: `${LIMITS.hip.cue}%` }
+    const item: Record<DistortKind, ItemKey> = { head: 'head', hunch: 'trunk', trunk: 'trunk', body: 'body', sit: 'hip', trunkBack: 'trunkBack', bodyBack: 'bodyBack', uprightHead: 'trunkBack' }
+    const lineNow: Record<ItemKey, string> = { head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, trunkBack: `後ろへ ${REL_LIMITS.trunkBack.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, bodyBack: `後ろへ ${REL_LIMITS.bodyBack.cue}°`, hip: `${LIMITS.hip.cue}%` }
     const summary =
       `## まとめ（上級、実機なみのずれ、${runners.length}本）\n\n` +
       `「9割」は、崩しに合った声を9割の走りで${HOLD}秒以内に出せた、いちばん小さい崩しの大きさ（カッコ内は声までの秒数の中央値）。誤った声は基準ができたあとの10分あたり。\n\n` +
@@ -353,9 +444,11 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
 function detect(reps: ReturnType<typeof replay>[], ok: ItemKey[], onset: number) {
   let found = 0
   let right = 0
+  let head = 0
   const lat: number[] = []
   for (const r of reps) {
     const cs = formCues(r.cues).filter((c) => c.t >= onset && c.t <= onset + HOLD + 2)
+    if (cs.some((c) => c.item === 'head')) head++
     if (cs.length) {
       found++
       lat.push(cs[0].t - onset)
@@ -363,7 +456,7 @@ function detect(reps: ReturnType<typeof replay>[], ok: ItemKey[], onset: number)
     if (cs.some((c) => ok.includes(c.item))) right++
   }
   const n = reps.length
-  return { found: found / n, right: right / n, lat: lat.length ? `${Math.round(median(lat))}秒` : '—', latSec: median(lat) }
+  return { found: found / n, right: right / n, head: head / n, lat: lat.length ? `${Math.round(median(lat))}秒` : '—', latSec: median(lat) }
 }
 
 // 本当に上体を前に倒した走り（Van Hooren 2024）：ふつうの走りで基準を作り、ONSET 秒から HOLD 秒だけ前に倒した走りに入れ替える
