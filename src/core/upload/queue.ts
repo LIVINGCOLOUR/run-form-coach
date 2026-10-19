@@ -23,6 +23,7 @@ export const UPLOAD = {
   firstWaitMs: 30_000, // 1回目の失敗のあと、次に送るまで
   maxWaitMs: 30 * 60_000, // 待つ間の上限
   keep: 30, // 順番待ちに残す数（送れたもの・消えたものから捨てる）
+  backfillDays: 14, // 開いたときに順番待ちに入れる、端末に残っている記録の古さの上限（日）
 }
 
 // tries 回失敗したあと、次に送るまでの待ち
@@ -35,6 +36,28 @@ export function addEntry(list: UploadEntry[], kind: string, logId: string, start
   const id = entryId(kind, logId)
   if (list.some((e) => e.id === id)) return list
   return trim([...list, { id, kind, logId, startedAt, state: 'waiting', tries: 0 }])
+}
+
+// 端末に残っている記録（入り口ごとの一覧から）
+export interface LocalLog {
+  kind: string
+  logId: string
+  startedAt: number
+}
+
+// 端末に残っている記録のうち、まだ順番待ちにない新しめのもの（backfillDays 日まで）を入れる。何も入れなければ同じものを返す。
+// 順番待ちがいっぱいのとき、送れた・消えたものの一番古いものより古い記録は入れない
+// （送ったあと捨てられた記録を、開くたびに入れ直して送り直さないように）
+export function backfillEntries(list: UploadEntry[], logs: LocalLog[], now: number): UploadEntry[] {
+  const since = now - UPLOAD.backfillDays * 86_400_000
+  const done = list.filter((e) => e.state !== 'waiting').map((e) => e.startedAt)
+  const floor = list.length >= UPLOAD.keep && done.length ? Math.min(...done) : -Infinity
+  let out = list
+  for (const l of [...logs].sort((a, b) => a.startedAt - b.startedAt)) {
+    if (l.startedAt < since || l.startedAt < floor) continue
+    out = addEntry(out, l.kind, l.logId, l.startedAt)
+  }
+  return out
 }
 
 function trim(list: UploadEntry[]): UploadEntry[] {

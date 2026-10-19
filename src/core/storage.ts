@@ -65,6 +65,9 @@ export async function loadLog(id?: string): Promise<RunLog | undefined> {
   return all.sort((a, b) => b.startedAt - a.startedAt)[0]
 }
 
+// 端末に残っている調整用の記録の id と始めた時刻（Mac へ送るしくみが、まだ送っていないものを探すのに使う）
+export const loadLogStamps = async () => (await allRecords<RunLog>(LOGS)).map((l) => ({ logId: l.id, startedAt: l.startedAt }))
+
 // 入り口ごとの入れ物に1件入れる（id で上書き）。keep があれば、startedAt の新しいものから keep 件だけ残す
 export async function putRecord<T extends { id: string; startedAt: number }>(store: string, v: T, keep?: number): Promise<void> {
   const db = await open()

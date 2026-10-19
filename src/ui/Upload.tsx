@@ -2,7 +2,8 @@ import { useSyncExternalStore } from 'react'
 import { findUpload, flushUploads, queueUpload, setUploadKey, subscribeUploads, uploadView } from '../core/upload/uploads'
 import type { UploadEntry } from '../core/upload/queue'
 
-// 走った記録を Mac へ送るしくみ（テスト期間用）の画面の部品。送る鍵は、ここで1回入れて端末に残す
+// 走った記録を Mac へ送るしくみ（テスト期間用）の画面の部品。送る鍵はテスト期間の既定があり、入れなくても送る。
+// 別の鍵を使うときだけ、ここで入れて端末に残す
 const linkStyle = { background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 } as const
 
 const useUploads = () => useSyncExternalStore(subscribeUploads, uploadView)
@@ -13,12 +14,13 @@ const hm = (ms: number) => {
 }
 
 function askKey() {
-  const k = window.prompt('記録を送る鍵（テスト用）を入れてください。空にすると送るのをやめます')
+  const k = window.prompt('記録を送る鍵（テスト用）を入れてください。空にすると、テスト期間の既定の鍵に戻します')
   if (k === null) return
   setUploadKey(k.trim() || null)
 }
 
-// ホーム：送れていない記録の数と、最後に送ったとき。鍵のない端末では何も出さない（鍵を入れるのはホームの「開発用」の中：UploadKeyButton）
+// ホーム：送れていない記録の数と、最後に送ったとき。鍵がなければ何も出さない（テスト期間は既定の鍵があるので、いつも出る。
+// 別の鍵を入れるのはホームの「開発用」の中：UploadKeyButton）
 export function UploadPanel() {
   const v = useUploads()
   if (!v.hasKey) return null
@@ -55,12 +57,12 @@ export function UploadPanel() {
   )
 }
 
-// ホームの「開発用」の中：送る鍵を入れる・入れ直す
+// ホームの「開発用」の中：送る鍵を入れる・入れ直す（入れなければテスト期間の既定の鍵で送る）
 export function UploadKeyButton() {
   const v = useUploads()
   return (
     <button onClick={askKey} style={linkStyle}>
-      {v.hasKey ? '記録を送る鍵を入れ直す' : '記録を送る鍵を入れる（テスト用）'}
+      {v.manualKey ? '記録を送る鍵を入れ直す' : '記録を送る鍵を入れる（テスト用）'}
     </button>
   )
 }
@@ -76,7 +78,7 @@ const ENTRY_TEXT = (e: UploadEntry, sending: boolean, pct: number) =>
           ? 'この記録はまだ送れていません（送る鍵が違います。ホームで入れ直してください）'
           : `この記録はまだ送れていません${e.error ? `（${e.error}）` : ''}。つながったら送ります`
 
-// 結果の画面：この記録を送れたかどうか。鍵がある端末で、まだ順番待ちにないものは「送る」を出す
+// 結果の画面：この記録を送れたかどうか。鍵があれば（テスト期間は既定の鍵があるので、いつも）出し、まだ順番待ちにないものは「送る」を出す
 export function UploadState({ kind, logId, startedAt }: { kind: string; logId: string; startedAt: number }) {
   const v = useUploads()
   if (!v.hasKey) return null

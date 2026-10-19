@@ -1,7 +1,7 @@
 import { gunzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packJson, type Packed } from './pack'
-import { addEntry, backoffMs, dueEntries, flushQueue, markResult, resetWaits, UPLOAD, uploadPathname, type SendResult, type UploadEntry } from './queue'
+import { addEntry, backfillEntries, backoffMs, dueEntries, flushQueue, markResult, resetWaits, UPLOAD, uploadPathname, type SendResult, type UploadEntry } from './queue'
 
 const big = { log: { id: 'phone-log-1', rows: Array.from({ length: 3000 }, (_, i) => [i / 50, 0.1, -9.8, 0.2, 0.01, 0.02, 0.03]) }, session: { id: 'phone-1' } }
 
@@ -90,6 +90,47 @@ describe('送り直しの順番待ち', () => {
   it('送り先の名前は、書き出しの名前と記録の id から作る', () => {
     expect(uploadPathname('phone', 'rfc-phone-20261013-0712.json', 'phone-log-1760307120000', true)).toBe('runs/phone/rfc-phone-20261013-0712_phone-log-1760307120000.json.gz')
     expect(uploadPathname('camera', 'rfc-20261013-0712.json', 'log-1', false)).toBe('runs/camera/rfc-20261013-0712_log-1.json')
+  })
+})
+
+describe('端末に残っている記録を入れる（backfillEntries）', () => {
+  const day = 86_400_000
+  const now = 100 * day
+
+  it('まだ順番待ちにない記録を古い順に入れ、送れたもの・消えたものは入れ直さない', () => {
+    let l = markResult(addEntry([], 'phone', 'sent', now - 3 * day), 'phone:sent', { ok: true, pathname: 'x' }, now)
+    l = markResult(addEntry(l, 'camera', 'gone', now - 2 * day), 'camera:gone', 'gone', now)
+    const out = backfillEntries(
+      l,
+      [
+        { kind: 'phone', logId: 'new', startedAt: now - day },
+        { kind: 'phone', logId: 'sent', startedAt: now - 3 * day },
+        { kind: 'camera', logId: 'gone', startedAt: now - 2 * day },
+        { kind: 'camera', logId: 'old', startedAt: now - 5 * day },
+      ],
+      now,
+    )
+    expect(out.map((e) => [e.id, e.state])).toEqual([
+      ['phone:sent', 'sent'],
+      ['camera:gone', 'gone'],
+      ['camera:old', 'waiting'],
+      ['phone:new', 'waiting'],
+    ])
+    expect(dueEntries(out, now).map((e) => e.id)).toEqual(['camera:old', 'phone:new'])
+  })
+
+  it(`${UPLOAD.backfillDays}日より古い記録は入れない。何も入れなければ同じものを返す`, () => {
+    const l = addEntry([], 'phone', 'a', now)
+    expect(backfillEntries(l, [{ kind: 'camera', logId: 'b', startedAt: now - UPLOAD.backfillDays * day - 1 }], now)).toBe(l)
+    expect(backfillEntries(l, [{ kind: 'camera', logId: 'b', startedAt: now - UPLOAD.backfillDays * day }], now)).toHaveLength(2)
+  })
+
+  it('順番待ちがいっぱいのとき、送れたものの一番古いものより古い記録は入れない（捨てたあと何度も送り直さない）', () => {
+    let l: UploadEntry[] = []
+    for (let i = 0; i < UPLOAD.keep; i++) l = markResult(addEntry(l, 'phone', `s${i}`, now - day + i), `phone:s${i}`, { ok: true, pathname: 'x' }, now)
+    expect(backfillEntries(l, [{ kind: 'camera', logId: 'dropped', startedAt: now - 2 * day }], now)).toBe(l)
+    const out = backfillEntries(l, [{ kind: 'camera', logId: 'newer', startedAt: now }], now)
+    expect(out.some((e) => e.id === 'camera:newer' && e.state === 'waiting')).toBe(true)
   })
 })
 

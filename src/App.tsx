@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from './core/types'
-import { loadSessions } from './core/storage'
+import { loadLogStamps, loadSessions } from './core/storage'
 import { Home } from './screens/Home'
 import { Live } from './modes/camera/screens/Live'
 import { Result } from './screens/Result'
@@ -8,7 +8,7 @@ import { Posture } from './modes/camera/screens/Posture'
 import { Slow } from './modes/camera/screens/Slow'
 import { PhoneLive } from './modes/phone/screens/PhoneLive'
 import { PhoneResult } from './modes/phone/screens/PhoneResult'
-import { loadPhoneSessions, phoneLogPayload } from './modes/phone/storage'
+import { loadPhoneLogStamps, loadPhoneSessions, phoneLogPayload } from './modes/phone/storage'
 import { cameraLogPayload } from './core/exportLog'
 import { registerUploadSource, startUploads } from './core/upload/uploads'
 import type { PhoneKind, PhoneSession, PhoneWhere } from './modes/phone/session'
@@ -20,9 +20,10 @@ export type Screen = { name: 'home' } | { name: 'live'; video?: File } | { name:
   | { name: 'phone'; where: PhoneWhere; location?: LocationPermission; sim?: number; kind?: PhoneKind }
   | { name: 'phoneResult'; id: string }
 
-// 走った記録を Mac へ送るしくみ（テスト期間用。送る鍵を入れた端末だけ）。どの入り口の記録をどう取り出すか
-registerUploadSource('phone', (id) => phoneLogPayload(id))
-registerUploadSource('camera', (id) => cameraLogPayload(id))
+// 走った記録を Mac へ送るしくみ（テスト期間用。鍵を入れていない端末も、テスト期間の既定の鍵で送る）。
+// どの入り口の記録をどう取り出すかと、端末に残っている記録の一覧（開いたときに、まだ送っていないものを入れる）
+registerUploadSource('phone', (id) => phoneLogPayload(id), loadPhoneLogStamps)
+registerUploadSource('camera', (id) => cameraLogPayload(id), loadLogStamps)
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' })

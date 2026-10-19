@@ -17,6 +17,9 @@ export async function loadPhoneLog(id?: string): Promise<PhoneLog | undefined> {
   return id ? all.find((l) => l.id === id) : all[0]
 }
 
+// 端末に残っている調整用の記録の id と始めた時刻（Mac へ送るしくみが、まだ送っていないものを探すのに使う）
+export const loadPhoneLogStamps = async () => (await allRecords<PhoneLog>(PHONE_LOGS)).map((l) => ({ logId: l.id, startedAt: l.startedAt }))
+
 // 調整用の記録をファイルにして渡す（カメラ版と同じ形：{ log, session }）。ファイル名は rfc-phone-年月日-時分.json
 export async function exportPhoneLog(logId?: string): Promise<boolean> {
   const p = await phoneLogPayload(logId)
