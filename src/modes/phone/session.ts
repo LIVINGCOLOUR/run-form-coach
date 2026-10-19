@@ -26,7 +26,7 @@ import { Drill, type DrillOptions } from './drill'
 
 // 声にする項目。ブレーキ・上下動だけの声は、トレッドミルでカメラ版と比べて確かめるまで出さない（docs/phone-spec.md）。
 // ほかの項目は、大きく崩れても声をかけない（しくみの muteOthers）。測って記録し、結果の画面に出すだけ。
-// 付け方の確認の声（mount・place）は、見る役の「一度だけかける声」なので、これとは別にかかる
+// 付け方の確認の声（mount・loose・place）は、見る役の「一度だけかける声」なので、これとは別にかかる
 export const PHONE_VOICED: PhoneItem[] = ['cadence']
 
 // どこで走るか。outdoor：外。GPS の速さが基準から外れた秒・GPS が取れない秒は判定しない（docs/phone-spec.md 機能4）。
@@ -55,7 +55,7 @@ export interface PhoneSession {
   where?: PhoneWhere // ないのは、外とトレッドミルを分ける前の記録（速さで止めていない）
   refSpeed?: number | null // 基準の速さ（m/s）。外だけ
   refLater?: boolean // 基準を5〜12分の平均に置き換えた（false なら仮の基準：30秒〜3分）
-  mount: MountIssue | null // 付け方の問題（見つけたら、その走りでは判定を止めた）
+  mount: MountIssue | null // 付け方の問題（見つけたら、その走りでは判定を止めた。ゆるいときはピッチだけ判定を続けた）
   mountAt?: number // 見つけた秒
   logId?: string
   kind?: 'practice' | 'test' | 'drill' // ないのはふつうの走り

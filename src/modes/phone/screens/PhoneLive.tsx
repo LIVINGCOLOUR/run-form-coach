@@ -68,7 +68,7 @@ const pace = (v: number | null) => {
 
 const MOUNT_TEXT: Record<MountIssue, string> = {
   notWaist: '腰以外に付いているようです。この走りは判定を止めています',
-  loose: 'スマホがゆるいようです。この走りは判定を止めています',
+  loose: 'スマホがゆるいようです。この走りはピッチだけ見ています',
   shifted: '途中でスマホがずれたようです。この走りは判定を止めています',
 }
 

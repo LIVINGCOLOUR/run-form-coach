@@ -5,6 +5,7 @@ import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
 import { HEAD_ABS, REL_LIMITS, STRIDE } from './params'
+import { RunningGate } from './motion'
 import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from '../../core/engine'
 
 // カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体・腰を見る。
@@ -14,8 +15,15 @@ import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type Sec
 export type { CoachEvent, CoachState } from '../../core/engine'
 export { breakdownMinute } from '../../core/engine'
 
+// moving には、そのコマを1コマだけで見た「走っているか」（MotionDetector の判定）を渡す。
+// 走り始め・止まりは、Coach が直近のコマの割合（RunningGate）で決め直してから、しくみに渡す
 export interface CoachInput extends EngineInput<Measure> {
   frame?: Frame // 鉛直をそろえたピクセル座標（走り姿のアニメーション用）
+}
+
+// Coach がしくみに渡す1コマ。steps：そのコマを走っているかの割合に入れたときの、そのコマの判定（入れなかったコマは無い）
+interface GatedInput extends CoachInput {
+  steps?: boolean
 }
 
 // 測る項目。並び順が、声をかける優先順（頭 → 体幹 → 体全体 → 腰）
@@ -29,16 +37,25 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
 
   private hipRefs: number[] = []
   private hipRef: number | null = null
-  // 走り始めの自分の首の角度・上体・体全体の傾き、頭の位置そのもの、スマホの向き（HIP_REF の区間の平均）
+  // 走り始めの自分の首の角度・上体・体全体の傾き、頭の位置そのもの、スマホの向き（HIP_REF の区間の、歩数で走っていた秒の平均）
   private leanRefs: { neck: number[]; trunk: number[]; body: number[]; headLean: number[]; yaw: number[] } = { neck: [], trunk: [], body: [], headLean: [], yaw: [] }
   leanRef: { neck: number; trunk: number; body: number; headLean: number; yaw: number } | null = null
+
+  // 走り始めの基準は、歩数で走っていると見た秒だけで作る。running は Coach が決めた「走っている」（RunningGate）。
+  // runFrom は、いまの走りの始まり（しくみの秒）。基準ができる前に止まったら null にして、作り直す
+  running = false
+  runFrom: number | null = null
+  private secOn = 0 // この1秒の、走っていると見たコマの数（割合に入れたコマだけ）
+  private secOff = 0
 
   private ring: { frame: Frame; dir: 1 | -1; t: number }[] = []
   private candidates: Record<Category, Stride[]> = { good: [], mid: [], bad: [] }
   private lastStrideAt = -1e9
 
-  // 走っている間の1コマ：走り姿のアニメーション用に骨格をためる
-  input(inp: CoachInput) {
+  // 走っている間の1コマ：その秒に走っていたかを数え、走り姿のアニメーション用に骨格をためる
+  input(inp: GatedInput) {
+    if (inp.steps === true) this.secOn++
+    else if (inp.steps === false) this.secOff++
     if (!inp.frame || !inp.m) return
     // 骨格を取っていない間があいたら、つながらないので捨てる
     const last = this.ring[this.ring.length - 1]
@@ -47,16 +64,38 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     while (this.ring.length && inp.t - this.ring[0].t > STRIDE.sec + 0.3) this.ring.shift()
   }
 
+  // 走るのが止まった：基準ができる前なら、ためた分を捨てて、次に走り出したところから作り直す
+  stopped() {
+    if (this.leanRef !== null) return
+    this.runFrom = null
+    this.hipRefs = []
+    this.leanRefs = { neck: [], trunk: [], body: [], headLean: [], yaw: [] }
+  }
+
+  // 基準にためた秒の数（採点の道具が、基準を作った間を出すのに使う）
+  get refSeconds() {
+    return this.leanRefs.trunk.length
+  }
+
   // 1秒分の測定をまとめて1件の記録にする
   second(b: Measure[], t: number, ctx: SecondContext<ItemKey>): SecondOut<Sample, ItemKey> | null {
+    // その秒に歩数で走っていたか：割合に入れたコマの半分以上が「走っている」。入れたコマがない秒（間引きのあと、
+    // 歩数を数え直している間）は、Coach の「走っている」に従う
+    const on = this.secOn
+    const off = this.secOff
+    this.secOn = 0
+    this.secOff = 0
     if (b.length < 3) return null
+    const stepping = this.running && (on + off === 0 || on >= off)
     const neck = mean(b.map((m) => m.neck))
     const headLean = mean(b.map((m) => m.headLean))
     const yaw = mean(b.map((m) => m.yaw))
     const trunk = mean(b.map((m) => m.trunk))
     const body = mean(b.map((m) => m.body))
     const hipRatio = mean(b.map((m) => m.hipRatio))
-    if (t >= HIP_REF.from && t <= HIP_REF.to) {
+    // 走り始めの基準：いまの走りの始まりから HIP_REF の間の、歩数で走っていた秒の平均
+    const rt = this.runFrom === null ? null : t - this.runFrom
+    if (this.leanRef === null && rt !== null && stepping && rt >= HIP_REF.from && rt <= HIP_REF.to) {
       this.hipRefs.push(hipRatio)
       this.leanRefs.neck.push(neck)
       this.leanRefs.trunk.push(trunk)
@@ -64,12 +103,14 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
       this.leanRefs.headLean.push(headLean)
       this.leanRefs.yaw.push(yaw)
     }
-    if (this.hipRef === null && t > HIP_REF.to && this.hipRefs.length) this.hipRef = mean(this.hipRefs)
     let ready = false
     let once: SecondOut<Sample, ItemKey>['once']
-    if (this.leanRef === null && t > HIP_REF.to && this.leanRefs.trunk.length) {
+    // 区間に歩数で走っていた秒が1つもなければ、もう走り始めの数十秒は過ぎているので、すぐ次の秒からためる
+    if (this.leanRef === null && rt !== null && rt > HIP_REF.to && !this.leanRefs.trunk.length) this.runFrom = t - HIP_REF.from
+    else if (this.leanRef === null && rt !== null && rt > HIP_REF.to) {
       const r = this.leanRefs
       ready = true
+      this.hipRef = mean(this.hipRefs)
       this.leanRef = { neck: mean(r.neck), trunk: mean(r.trunk), body: mean(r.body), headLean: mean(r.headLean), yaw: mean(r.yaw) }
       // 最初から頭が前に出ていないかを、一度だけ決まった線と比べる（真横に近く置けているときだけ）。
       // 直ったかは、走り始めより頭が HEAD_ABS.recoverBack 戻ったかで見る
@@ -136,8 +177,32 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
     return this.camera.leanRef
   }
 
+  private readonly gate = new RunningGate()
+
+  // 走り始めの基準ができる前に止まったか、走り出したか（基準を作り直すため）
   update(inp: CoachInput) {
-    return super.update(inp)
+    const was = this.gate.running
+    // 割合に入れるのは、見えていて骨格を取ったコマだけ（間引いて取らなかったコマは、前の判定のままなので入れない）
+    const counted = inp.present && inp.m !== undefined && this.gate.push(inp.t, inp.moving)
+    const running = this.gate.running
+    if (was && !running) this.camera.stopped()
+    if (!was && running && this.camera.runFrom === null) this.camera.runFrom = this.active
+    this.camera.running = running
+    const g: GatedInput = { ...inp, moving: running }
+    if (counted) g.steps = inp.moving
+    return super.update(g)
+  }
+
+  // 走っていない（止まった）と見ている間と、走り始めの基準ができるまでは、間引かずに毎コマ見る。
+  // 走り出し・止まりを、飛び飛びの数コマではなく続けて見て決めるため（間引いた数コマだけで決めると、
+  // 見えにくい1秒で「止まった」になり、基準を何度も作り直してしまう）
+  wantsDetail(): boolean {
+    return !this.gate.running || this.leanRef === null || super.wantsDetail()
+  }
+
+  // 走り始めの基準にためた秒の数
+  get refSeconds() {
+    return this.camera.refSeconds
   }
 
   finish(speedKmh?: number): Session {

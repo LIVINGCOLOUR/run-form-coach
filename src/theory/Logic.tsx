@@ -59,7 +59,10 @@ export function Logic() {
 
       <Step no="3" title="走り出し・一時停止">
         <Row>
-          足首が腰より一番前に出た瞬間を接地として数え、ピッチが毎分{RUNNING.runSpm}歩以上なら「走っている」。走っている状態が{RUNNING.startAfter}秒続いたら始める。
+          足首が腰より一番前に出た瞬間を接地として数え、ピッチが毎分{RUNNING.runSpm}歩以上のコマを「走っている」とする。1コマずつではぶれる（トレッドミルの歩きでも、2割近いコマで{RUNNING.runSpm}歩以上に出た）ので、直近{RUNNING.ratioWindow}秒のコマの{Math.round(RUNNING.startRatio * 100)}%以上が「走っている」になったら走り出したとみなし、{Math.round(RUNNING.stopRatio * 100)}%を切ったら止まったとみなす。走り出した状態が{RUNNING.startAfter}秒続いたら始める（走り出してから約{Math.round(RUNNING.ratioWindow * RUNNING.startRatio + RUNNING.startAfter)}秒）。
+        </Row>
+        <Row>
+          走り始めの自分の基準（{HIP_REF.from}秒〜{HIP_REF.to / 60}分）には、歩数で走っていた秒だけを入れる。基準ができる前に止まったら、次に走り出したところから作り直す。
         </Row>
         {RUNNING.inPlaceForTesting && (
           <Row>
@@ -108,7 +111,7 @@ export function Logic() {
         </table>
         <Row>
           上体と体全体は、走り始めて{HIP_REF.to / 60}分たつと、走り始め（{HIP_REF.from}秒〜{HIP_REF.to / 60}分）の自分の平均からの増え方で判定に切り替える。上体は+{REL_LIMITS.trunk.cue}°、体全体は+{REL_LIMITS.body.cue}°を越えたら声をかける（満点は+{REL_LIMITS.trunk.full}°・+{REL_LIMITS.body.full}°まで、0点は+{REL_LIMITS.trunk.zero}°・+{REL_LIMITS.body.zero}°）。上の表の線は、最初の{HIP_REF.to / 60}分だけ使う。
-          研究データ（10人）で、ふつうに走ったときの上体の傾きは人により0.6〜8.8°とばらばらだが、わざと前に倒すとどの人も約6〜12°増えた。仮想実験で、決まった線だけだとふつうに走っている人の6秒平均の17%で声がかかったが、自分と比べると1%になり、前に倒したときに声がかかる割合は37%から59%に上がった。
+          研究データ（16人）で、ふつうに走ったときの上体の傾きは人により0.6〜8.8°とばらばらだが、わざと前に倒すと平均7.5°増えた（15人は約6〜13°）。仮想実験で、決まった線だけだとふつうに走っている人の6秒平均の13%で声がかかったが、自分と比べると4%になり、前に倒したときに声がかかる割合は32%から65%に上がった。
         </Row>
         <Row>
           頭は、走り始めて{HIP_REF.to / 60}分たつまで判定しない。そのあとは走り始めの自分の首の角度との差で、{CUE.window}秒の平均が+{LIMITS.head.cue}°を越えたら声をかける。1秒ごとに0で切らずに平均してから比べる（頭は走りながら1秒ごとに約±4°動くので、0で切ると前に出た側だけが残り、実際より大きく出る）。
@@ -183,7 +186,7 @@ export function Logic() {
           安定して走れている間は、{POWER.lookEvery}秒のうち{POWER.lookSec}秒だけ骨格を取る（声なしの確認の間は{POWER.lookEveryQuiet}秒のうち{POWER.lookSec}秒）。点数は時間で数えるので、間引いても割合は変わらない。
         </Row>
         <Row>
-          次のときは毎コマ取る：走り始めの{POWER.warmup}秒、直近{POWER.recentBad}秒に声をかける線を越えた記録があるとき、声をかけた直後、止まっている・人が見えないとき。
+          次のときは毎コマ取る：走り始めの自分の基準ができるまで（カメラ版。走り出し・止まりを続けて見て決めるため）、走り始めの{POWER.warmup}秒、直近{POWER.recentBad}秒に声をかける線を越えた記録があるとき、声をかけた直後、止まっている・人が見えないとき。
         </Row>
       </Step>
 

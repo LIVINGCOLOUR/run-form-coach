@@ -9,8 +9,8 @@ import { facing, legLength } from './geometry'
 //   ピッチが毎分130歩以上なら走っている。トレッドミルでも外でも使え、ピッチ（歩／分）もここで出る
 //   参考：Zeni ら 2008、スマホ動画で2〜5コマの誤差（Automated Stride Detection from OpenPose Keypoints, 2023）
 // 検証用：その場で走るフリは脚が前後に動かず歩数が数えられないので、左右の膝と足首が上下に入れ替わる
-//   リズムでも走っているとする。トレッドミルで確かめられたら IN_PLACE_FOR_TESTING を false にして外す
-export const IN_PLACE_FOR_TESTING = RUNNING.inPlaceForTesting
+//   リズムでも走っているとする（RUNNING.inPlaceForTesting）。いまは切っている：トレッドミルの歩きも走るフリと見てしまった
+// 1コマずつの判定はぶれるので、走り始め・止まりは RunningGate で、直近のコマの割合から決める
 
 const RUN_SPM = RUNNING.runSpm // 歩きはおよそ毎分100〜120歩、走りは150〜190歩
 const STEP_PROMINENCE = RUNNING.stepProminence // 足首の前後の振れ（脚の長さに対する割合）がこれだけ戻ったら山・谷とみなす
@@ -95,7 +95,7 @@ export class MotionDetector {
       this.by = 'steps'
       return true
     }
-    this.by = IN_PLACE_FOR_TESTING && this.inPlace() ? 'inPlace' : null
+    this.by = RUNNING.inPlaceForTesting && this.inPlace() ? 'inPlace' : null
     return this.by !== null
   }
 
@@ -119,6 +119,41 @@ export class MotionDetector {
       const r = rhythm(k)
       return r.sd >= MIN_LIFT_SD && r.perSec / 2 >= MIN_STEPS_PER_SEC / 2
     })
+  }
+}
+
+// 走り始め・止まりを、1コマずつの判定（MotionDetector）の割合で決める。
+// 直近 RUNNING.ratioWindow 秒のコマのうち、走っていると見たコマが RUNNING.startRatio 以上で「走っている」、
+// RUNNING.stopRatio を切ったら「止まった」。骨格を取ったコマだけを渡す（間引いて取らなかったコマは渡さない）
+export class RunningGate {
+  running = false
+  private win: { t: number; on: boolean }[] = []
+  private lastT = -1e9
+  private since = -1e9 // 歩数を数え直し始めた時刻
+
+  // 戻り値：このコマを割合に入れたか（間があいた直後で、歩数をまだ数えられないコマは入れない）
+  push(t: number, on: boolean): boolean {
+    // MotionDetector と同じく、0.5秒より間があくと歩数は数え直しになる
+    if (t - this.lastT > 0.5) this.since = t
+    this.lastT = t
+    if (t - this.since < RUNNING.stepSettle) return false
+    this.win.push({ t, on })
+    while (t - this.win[0].t > RUNNING.ratioWindow) this.win.shift()
+    const ratio = this.win.filter((x) => x.on).length / this.win.length
+    // 走り始めは、窓のほぼ全部を続けて見てから決める（間引いた飛び飛びの数コマだけで決めない）
+    if (!this.running && this.covered() >= RUNNING.ratioWindow * 0.9 && ratio >= RUNNING.startRatio) this.running = true
+    else if (this.running && this.win.length >= 10 && ratio < RUNNING.stopRatio) this.running = false
+    return true
+  }
+
+  // 窓の中で、続けて見ていた時間（秒）。0.5秒より間があいたところは数えない
+  private covered(): number {
+    let s = 0
+    for (let i = 1; i < this.win.length; i++) {
+      const dt = this.win[i].t - this.win[i - 1].t
+      if (dt <= 0.5) s += dt
+    }
+    return s
   }
 }
 

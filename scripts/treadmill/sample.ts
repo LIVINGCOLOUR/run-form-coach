@@ -22,7 +22,7 @@ const SHIFT: Record<string, Partial<Record<'neck' | 'headLean' | 'trunk' | 'body
   head: { neck: 12, headLean: 10 },
   down: { neck: 3, headLean: 2 },
   hunch: { trunk: 8, neck: 6, headLean: 6, body: 2 },
-  lean: { body: 6, trunk: 4 },
+  lean: { body: 6, trunk: 6 }, // 足首から体ごと倒すと、上体も同じだけ倒れる（sim/result-coach.md の崩しの性質）
   sit: { hip: -0.09 },
 }
 const RUNNING_KINDS = new Set(['normal', 'drill', 'gap'])

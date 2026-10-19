@@ -7,7 +7,9 @@ import { capBaseline, standingIssue } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
 import { fullFrames } from './fullFrames'
 import { analyzeRun, type TimedFrame } from './slowmo'
-import { MotionDetector, bodyVisible } from './motion'
+import { MotionDetector, RunningGate, bodyVisible } from './motion'
+import { HIP_REF, RUNNING } from '../../core/params'
+import { PHRASES } from '../../core/phrases'
 import { demoStride, strideStats, DEMO_SPM, REFERENCE } from './ui/figure'
 import type { Frame, Session } from '../../core/types'
 import type { Measure } from './types'
@@ -92,12 +94,29 @@ describe('歩きと走りの区別（歩数の数え方）', () => {
   })
 })
 
-describe('その場で走る・コンパクトなフォーム', () => {
-  it('脚を前後に開かなくても、左右が交互に上がるリズムが毎秒2歩以上なら走っている', () => {
-    expect(inPlace(2.8, 25)).toBe(true) // 検証用の判定（IN_PLACE_FOR_TESTING）で拾う
-    expect(inPlace(2.8, 12)).toBe(true) // 小さく持ち上げるだけでも
+// 検証用の判定（RUNNING.inPlaceForTesting）を入れたときだけ拾う。いまは切っている
+function withInPlace<T>(f: () => T): T {
+  const before = RUNNING.inPlaceForTesting
+  RUNNING.inPlaceForTesting = true
+  try {
+    return f()
+  } finally {
+    RUNNING.inPlaceForTesting = before
+  }
+}
+
+describe('その場で走る・コンパクトなフォーム（検証用の判定を入れたとき）', () => {
+  it('いまは切っているので、その場で走るフリは走っていない', () => {
+    expect(RUNNING.inPlaceForTesting).toBe(false)
+    expect(inPlace(2.8, 25)).toBe(false)
   })
-  it('真横から撮って奥の脚が手前の脚に重なっていても、片脚の上下のリズムで走っていると分かる', () => {
+  it('脚を前後に開かなくても、左右が交互に上がるリズムが毎秒2歩以上なら走っている', () => {
+    withInPlace(() => {
+      expect(inPlace(2.8, 25)).toBe(true)
+      expect(inPlace(2.8, 12)).toBe(true) // 小さく持ち上げるだけでも
+    })
+  })
+  it('真横から撮って奥の脚が手前の脚に重なっていても、片脚の上下のリズムで走っていると分かる', () => withInPlace(() => {
     const base = demoStride()[0]
     const md = new MotionDetector()
     let moving = false
@@ -112,7 +131,7 @@ describe('その場で走る・コンパクトなフォーム', () => {
       moving = md.update(f, t)
     }
     expect(moving).toBe(true)
-  })
+  }))
   it('立ったまま点が少し揺れるだけなら、走っていない', () => {
     const base = demoStride()[0]
     const md = new MotionDetector()
@@ -123,10 +142,10 @@ describe('その場で走る・コンパクトなフォーム', () => {
     }
     expect(moving).toBe(false)
   })
-  it('ゆっくり足踏みする、ほとんど持ち上げないときは走っていない', () => {
+  it('ゆっくり足踏みする、ほとんど持ち上げないときは走っていない', () => withInPlace(() => {
     expect(inPlace(1.2, 25)).toBe(false)
     expect(inPlace(2.8, 1)).toBe(false)
-  })
+  }))
 })
 
 describe('見本の走り', () => {
@@ -205,20 +224,28 @@ const headDown: Measure = { ...good, neck: 14 }
 describe('コーチの流れ', () => {
   it('走り出しで始まり、崩れたら声をかけ、直ったらほめ、止まったら一時停止する', () => {
     const coach = new Coach()
-    const s1 = feed(coach, 0, 5, good)
+    // 走り出したと決めるのは、直近10秒の8割のコマが走っているとき（最初の1.5秒は歩数を数え始める間で数えない）。
+    // そこから2秒続いたら始める
+    const s0 = feed(coach, 0, 10, good)
+    expect(coach.state).toBe('waiting')
+    expect(s0).toEqual([])
+    const s1 = feed(coach, 10, 4, good)
     expect(coach.state).toBe('running')
     expect(s1[0]).toContain('始めます')
 
-    const s2 = feed(coach, 5, 13, bent)
+    const s2 = feed(coach, 14, 13, bent)
     expect(s2.some((x) => x.includes('前かがみになっています'))).toBe(true)
 
     // 声をかけてから15秒以内に直れば、ほめる
-    const s3 = feed(coach, 18, 10, good)
+    const s3 = feed(coach, 27, 10, good)
     expect(s3.some((x) => x.includes('いい感じです'))).toBe(true)
 
-    const s4 = feed(coach, 28, 5, good, false)
+    // 止まったと決めるのは、直近10秒の走っているコマが半分を切ったとき。そこから3秒続いたら一時停止
+    const s4 = feed(coach, 37, 4, good, false)
+    expect(coach.state).toBe('running')
+    const s5 = feed(coach, 41, 6, good, false)
     expect(coach.state).toBe('paused')
-    expect(s4.some((x) => x.includes('一時停止'))).toBe(true)
+    expect([...s4, ...s5].some((x) => x.includes('一時停止'))).toBe(true)
   })
 
   it('安定していると、声なしで確認する時間に入り、保てたら伝える', () => {
@@ -328,11 +355,14 @@ describe('前かがみ', () => {
 })
 
 describe('省電力（間引いて見る）', () => {
-  it('安定している間は3割ほどしか骨格を取らず、それでも崩れたら声をかける', () => {
+  it('走り始めの基準ができるまでは毎コマ見て、そのあと安定している間は3割ほどしか骨格を取らず、それでも崩れたら声をかける', () => {
     const coach = new Coach()
-    const a = feedSparse(coach, 0, 200, good)
+    const w = feedSparse(coach, 0, 200, good)
+    expect(coach.leanRef).not.toBeNull()
+    expect(w.looked).toBeGreaterThan(0.95)
+    const a = feedSparse(coach, 200, 100, good)
     expect(a.looked).toBeLessThan(0.4)
-    const b = feedSparse(coach, 200, 20, headDown)
+    const b = feedSparse(coach, 300, 20, headDown)
     expect(b.speak.some((x) => x.includes('頭が前に出ています'))).toBe(true)
     expect(b.looked).toBeGreaterThan(0.6)
   })
@@ -340,8 +370,8 @@ describe('省電力（間引いて見る）', () => {
   it('点数はまだ高いが、声をかける線を少し越えた崩れでも、間引かずに見て声をかける', () => {
     const coach = new Coach()
     feedSparse(coach, 0, 200, good)
-    const b = feedSparse(coach, 200, 20, { ...good, neck: 8 }) // 頭 +6°：線（5°）は越えるが点数は90
-    expect(b.speak.some((x) => x.includes('頭が前に出ています'))).toBe(true)
+    const b = feedSparse(coach, 200, 20, { ...good, hipRatio: 0.9 * (1 - 0.043) }) // 腰 4.3%：線（4%）は越えるが点数は81
+    expect(b.speak.some((x) => x === PHRASES.cueHip)).toBe(true)
   })
 
   it('間引いても、割合は時間どおりに数える', () => {
@@ -376,9 +406,9 @@ describe('画面から外れたとき', () => {
   it('止まってから外れたなら、10秒でおつかれさまでした', () => {
     const coach = new Coach()
     feed(coach, 0, 20, good)
-    feed(coach, 20, 5, good, false)
+    feed(coach, 20, 10, good, false)
     expect(coach.state).toBe('paused')
-    const s = absent(coach, 25, 11)
+    const s = absent(coach, 30, 11)
     expect(coach.state).toBe('ended')
     expect(s).toEqual(['おつかれさまでした。'])
   })
@@ -528,5 +558,97 @@ describe('全コマ記録（検証用）', () => {
     expect(fullFrames('')).toBe(false)
     expect(fullFrames('?full=0')).toBe(false)
     expect(fullFrames('?full')).toBe(false)
+  })
+})
+
+describe('走り始め・止まり（直近のコマの割合）', () => {
+  // 1コマずつの判定を毎秒 fps コマ流す。on(t) が「走っている」か。返すのは、gate が走っていると決めた最初の時刻
+  const drive = (g: RunningGate, from: number, sec: number, on: (t: number) => boolean, fps = 15) => {
+    let first: number | null = null
+    for (let i = 0; i < sec * fps; i++) {
+      const t = from + i / fps
+      g.push(t, on(t))
+      if (g.running && first === null) first = t
+    }
+    return first
+  }
+
+  it('歩きで、ときどきピッチが走りの線を越えるコマが混ざっても（3割）、走り出したとはしない', () => {
+    const g = new RunningGate()
+    // 1秒のうち 0.3 秒だけ「走っている」（歩きでも、16%のコマでピッチが130歩以上に出た）
+    expect(drive(g, 0, 120, (t) => t % 1 < 0.3)).toBeNull()
+    // 2秒のうち1.3秒（65%）でも、まだ走り出さない
+    expect(drive(g, 120, 60, (t) => t % 2 < 1.3)).toBeNull()
+  })
+
+  it('走り出したら、約 ratioWindow × startRatio 秒で走っていると決める', () => {
+    const g = new RunningGate()
+    drive(g, 0, 30, () => false)
+    const first = drive(g, 30, 20, () => true)!
+    expect(first - 30).toBeGreaterThan(RUNNING.ratioWindow * RUNNING.startRatio - 1)
+    expect(first - 30).toBeLessThan(RUNNING.ratioWindow * RUNNING.startRatio + 1)
+  })
+
+  it('見ていない間があいた直後のコマは数えない。間引いて見ている間（10秒のうち3秒）に、走っているのに止まったとはしない', () => {
+    const g = new RunningGate()
+    drive(g, 0, 20, () => true)
+    expect(g.running).toBe(true)
+    // 3秒見て7秒休む。見始めの1秒は、歩数を数え直している間で「走っていない」と出る
+    for (let k = 0; k < 20; k++) {
+      const t0 = 20 + k * 10
+      drive(g, t0, 3, (t) => t - t0 >= 1)
+      expect(g.running).toBe(true)
+    }
+  })
+
+  it('止まったら（走っているコマが半分を切ったら）止まったとし、続けて見ていないと走り出したとはしない', () => {
+    const g = new RunningGate()
+    drive(g, 0, 20, () => true)
+    drive(g, 20, 8, () => false)
+    expect(g.running).toBe(false)
+    // 間引いた飛び飛びのコマ（3秒おきの0.5秒）がすべて「走っている」でも、続けて見ていないので決めない
+    for (let k = 0; k < 10; k++) drive(g, 30 + k * 3, 2, () => true, 1)
+    expect(g.running).toBe(false)
+  })
+})
+
+describe('走り始めの基準は、歩数で走っていた秒だけで作る', () => {
+  const walk: Measure = { ...good, trunk: 1, body: 1, neck: 0, hipRatio: 0.95 }
+
+  it('歩きのコマ（走っていない）は、走っているかの割合で始まらないので、基準に入らない', () => {
+    const coach = new Coach({ pause: false })
+    // 歩き：1秒のうち2割のコマだけ「走っている」と出る
+    let t = 0
+    for (; t < 120; t += 1 / 30) coach.update({ t, present: true, moving: t % 1 < 0.2, m: walk })
+    expect(coach.state).toBe('waiting')
+    feed(coach, 120, 200, good)
+    expect(coach.state).toBe('running')
+    expect(coach.leanRef!.trunk).toBeCloseTo(good.trunk, 5)
+    expect(coach.leanRef!.body).toBeCloseTo(good.body, 5)
+  })
+
+  it('基準ができる前に止まったら、ためた分を捨てて、次に走り出したところから作り直す', () => {
+    const coach = new Coach({ pause: false })
+    feed(coach, 0, 100, walk) // 走っている（moving）が、基準ができる前に止まる
+    expect(coach.refSeconds).toBeGreaterThan(30)
+    feed(coach, 100, 20, walk, false)
+    expect(coach.refSeconds).toBe(0)
+    expect(coach.state).toBe('running') // 一時停止は切っている
+    expect(coach.leanRef).toBeNull()
+    feed(coach, 120, 230, good)
+    expect(coach.leanRef).not.toBeNull()
+    expect(coach.leanRef!.trunk).toBeCloseTo(good.trunk, 5)
+    // 歩きの姿勢（上体 1°）を基準にしていないので、ふつうの姿勢（上体 7°）で声はかからない
+    expect(coach.cues.filter((c) => ['head', 'trunk', 'body', 'hip'].includes(c.item))).toEqual([])
+  })
+
+  it('基準ができてから止まっても、基準は作り直さない', () => {
+    const coach = new Coach({ pause: false })
+    feed(coach, 0, HIP_REF.to + 20, good)
+    const ref = coach.leanRef
+    expect(ref).not.toBeNull()
+    feed(coach, HIP_REF.to + 20, 20, walk, false)
+    feed(coach, HIP_REF.to + 40, 30, walk)
+    expect(coach.leanRef).toBe(ref)
   })
 })

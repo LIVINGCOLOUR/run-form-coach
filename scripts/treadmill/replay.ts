@@ -8,8 +8,9 @@
 //   線を変えて「もっと細かく見たはず」になっても、その分の値は足せない。
 //   全コマ記録（?full=1 で撮った、log.full のある記録）は走っている間の毎コマがあるので、この限りはない。
 //   thin を付けると、全コマの記録をふだんの間引き（Live.tsx と同じく、コーチが要ると言ったコマだけ見る）に通し直せる。
-//   running: 'steps' を付けると、「走っている」を歩数（ピッチ RUNNING.runSpm 以上）だけで決め直す（記録の by 列が steps のコマだけ走っている）。
-//   撮ったときの、その場で走るフリの見分け（RUNNING.inPlaceForTesting）を切ったらどうなるかを見るため
+//   記録の moving 列は1コマずつの判定なので、走り始め・止まりは撮ったときと同じく Coach の中で直近のコマの割合から決め直す。
+//   running: 'steps' を付けると、1コマずつの判定を歩数（ピッチ RUNNING.runSpm 以上）だけにする（記録の by 列が steps のコマだけ走っている）。
+//   その場で走るフリの見分け（RUNNING.inPlaceForTesting）を入れて撮った記録を、いまの判定（切っている）で通すため
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
 import { LIMITS, REL_LIMITS, HEAD_ABS } from '../../src/modes/camera/params'
@@ -67,7 +68,7 @@ export function setParam(spec: string): { path: string; before: unknown; after: 
 export type Said = { item: string; kind: 'cue' | 'recover' | 'praise' | 'tone' | 'mount' } | null
 const BY_TEXT = new Map<string, NonNullable<Said>>()
 for (const [k, text] of Object.entries(CUE)) BY_TEXT.set(text, { item: k, kind: 'cue' })
-for (const [k, text] of Object.entries(PHONE_CUE)) BY_TEXT.set(text, { item: k, kind: k === 'mount' || k === 'place' ? 'mount' : 'cue' })
+for (const [k, text] of Object.entries(PHONE_CUE)) BY_TEXT.set(text, { item: k, kind: k === 'mount' || k === 'loose' || k === 'place' ? 'mount' : 'cue' })
 for (const text of RECOVER) BY_TEXT.set(text, { item: 'recover', kind: 'recover' })
 for (const text of [SAY.praise5, SAY.quietStart, SAY.quietDone, PHRASES.phonePraise5, PHRASES.phoneQuietDone]) BY_TEXT.set(text, { item: 'praise', kind: 'praise' })
 export function classify(text: string): Said {
@@ -159,9 +160,10 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   const coach = new Coach({ pause: RUNNING.pauseEnabled, items })
   const events: Ev[] = []
   let runStartT: number | null = null
-  // 基準の区間（1秒の記録の t が HIP_REF.from〜to）に入った・出た時刻
+  // 走り始めの基準にためた最初の秒・最後の秒の時刻（基準ができる前に止まって作り直したら、数え直す）
   let refFrom: number | null = null
   let refTo: number | null = null
+  let refCount = 0
   const rows = log.rows.filter((r) => r[ip] === runPhase && (opts.fromMs === undefined || toT(r[it]) >= opts.fromMs)).sort((a, b) => a[it] - b[it])
   if (!rows.length) warnings.push('走る段（phase=run）のコマがありません')
   let lastT: number | null = null
@@ -169,11 +171,13 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   let lastMoving = false
   let ended = false
   const handle = (ev: ReturnType<Coach['update']>, t: number) => {
-    const last = coach.samples[coach.samples.length - 1]
-    if (last && last.t >= HIP_REF.from && last.t <= HIP_REF.to) {
+    const n = coach.refSeconds
+    if (n < refCount || n === 0) refFrom = null
+    if (n > refCount) {
       refFrom ??= toT(t)
       refTo = toT(t)
     }
+    refCount = n
     for (const e of ev) {
       if (e.type === 'speak') events.push({ T: toT(t), text: e.text })
       if (e.type === 'state' && e.state === 'running' && runStartT === null) runStartT = toT(t)

@@ -13,13 +13,15 @@ import { speedGate, type SpeedGate, type SpeedTrack } from './speed'
 //   センサーの値が来るたびに：analyzer.feed(m); coach.update({ t: m.t, present: true, moving: analyzer.moving, m })
 //   値が来ないときも、タイマーで：coach.update({ t: 今, present: analyzer.connected(今), moving: analyzer.moving })
 //     （値が途切れたまま update を呼ばないと、しくみは途切れたことに気づけない）
-// 付け方の確認（mount.ts）で、ゆるい・ずれた・腰以外と分かったら、1回だけ知らせて、その走りではもう判定しない
-// （外れた付け方で測った値で、フォームを誤って直させないため）。記録には印（PhoneSample.mount）が残る
+// 付け方の確認（mount.ts）で、ずれた・腰以外と分かったら、1回だけ知らせて、その走りではもう判定しない
+// （外れた付け方で測った値で、フォームを誤って直させないため）。記録には印（PhoneSample.mount）が残る。
+// ゆるいと分かったときも1回だけ知らせるが、ピッチだけは基準を作って判定を続ける（ゆるくても1歩のリズムは測れる。
+// 上下動・ブレーキは、スマホの揺れが混ざるので判定しない）
 // 外で走るとき（speed に GPS の速さを渡したとき）は、速さが走り始めの基準の速さから外れた秒・GPS が取れない秒も判定しない
 // （speed.ts。ペースを落としただけで「崩れ」と言わないため）。止めた理由は記録（PhoneSample.gate）に残る。
 // speed が null（トレッドミル）なら、速さは一定とみなして止めない
 
-export type PhoneItem = 'cadence' | 'braking' | 'bounce' | 'mount' | 'place'
+export type PhoneItem = 'cadence' | 'braking' | 'bounce' | 'mount' | 'loose' | 'place'
 
 // 1秒の記録（画面や結果に使う）
 export interface PhoneSample {
@@ -27,7 +29,7 @@ export interface PhoneSample {
   cadence: number | null // 歩／分。付け方がおかしく、測れなかった秒は null
   bounceCm: number | null
   brakingMs: number | null
-  score: number | null // 判定しない秒（走り始めの基準ができる前・付け方がおかしいと分かった後）は null
+  score: number | null // 判定しない秒（走り始めの基準ができる前・腰以外かずれたと分かった後）は null。ゆるいと分かった後はピッチだけの点数
   quiet: boolean
   mount: MountIssue | null // この走りで見つけた付け方の問題（見つけた秒から後に付く）
   speed?: number | null // GPS のならした速さ（m/s）。トレッドミルでは付けない
@@ -42,6 +44,7 @@ export const PHONE_CUE: Record<PhoneItem, string> = {
   braking: PHRASES.phoneBraking,
   bounce: PHRASES.phoneBounce,
   mount: PHRASES.phoneMount,
+  loose: PHRASES.phoneLoose,
   place: PHRASES.phonePlace,
 }
 
@@ -63,8 +66,12 @@ export const PHONE_ITEMS: ItemSpec<PhoneItem>[] = [
   { key: 'braking', limits: PHONE_LIMITS.braking, cue: PHONE_CUE.braking },
   { key: 'bounce', limits: PHONE_LIMITS.bounce, cue: PHONE_CUE.bounce },
   { key: 'mount', limits: NEVER, cue: PHONE_CUE.mount },
+  { key: 'loose', limits: NEVER, cue: PHONE_CUE.loose },
   { key: 'place', limits: NEVER, cue: PHONE_CUE.place },
 ]
+
+// 付け方の問題 → 知らせる項目（言葉）
+const MOUNT_ITEM: Record<MountIssue, PhoneItem> = { notWaist: 'place', loose: 'loose', shifted: 'mount' }
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 const median = (xs: number[]) => {
@@ -157,13 +164,15 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
     const gps = this.speed !== null
     const v = this.speed ? this.speed.at(this.lastFedAt ?? 0) : null
     const found = this.mount.check(t, x)
-    const once: SecondOut<PhoneSample, PhoneItem>['once'] = found ? { item: found === 'notWaist' ? 'place' : 'mount', back: 0 } : undefined
+    const once: SecondOut<PhoneSample, PhoneItem>['once'] = found ? { item: MOUNT_ITEM[found], back: 0 } : undefined
 
-    // 付け方がおかしいと分かった後（または測れない秒）は判定しない。基準も作らない
+    // 腰以外・ずれたと分かった後（または測れない秒）は判定しない。基準も作らない。
+    // ゆるいと分かった後は、基準を作り続け、ピッチだけ判定する
     const values: Values<PhoneItem> = {}
     let ready = false
     this.gate = null
-    if (e && !this.mount.issue) {
+    const loose = this.mount.issue === 'loose'
+    if (e && (!this.mount.issue || loose)) {
       // 走り始め（HIP_REF の区間）の自分を基準にする
       const sec: RefSec = { cadence: e.cadence, bounceCm: e.bounceCm, brakingMs: e.brakingMs, speed: v }
       if (t >= HIP_REF.from && t <= HIP_REF.to) this.refs.push(sec)
@@ -206,8 +215,10 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
       this.gate = gate
       if (ref && !gate) {
         values.cadence = ((ref.cadence - e.cadence) / ref.cadence) * 100
-        values.bounce = e.bounceCm - ref.bounceCm
-        values.braking = e.brakingMs - ref.brakingMs
+        if (!loose) {
+          values.bounce = e.bounceCm - ref.bounceCm
+          values.braking = e.brakingMs - ref.brakingMs
+        }
       }
     }
     const sample: PhoneSample = {

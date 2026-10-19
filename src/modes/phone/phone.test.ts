@@ -201,6 +201,9 @@ const MOUNT_CASES: { name: string; spec: Partial<RunSpec>; want: 'ok' | 'notWais
   { name: '少しゆるい', spec: { ...REAL, mount: { kind: 'loose', tiltDeg: 4, accMs: 1.5 } }, want: 'loose' },
 ]
 
+// 付け方の確認の言葉（ずれた・ゆるい・腰以外）
+const MOUNT_SAID: string[] = [PHRASES.phoneMount, PHRASES.phoneLoose, PHRASES.phonePlace]
+
 const noGyro = (ms: PhoneMeasure[]) => ms.map(({ t, ax, ay, az }) => ({ t, ax, ay, az }))
 
 describe('スマホ：付け方の確認', () => {
@@ -224,15 +227,14 @@ describe('スマホ：付け方の確認', () => {
         const analyzer = new PhoneAnalyzer()
         const { said } = drive(analyzer, run([{ seconds: 100, cadence: 170, ...spec }, { seconds: 60, cadence: 165, ...spec, tiltDeg: 8 }, { seconds: 40, cadence: 172, ...spec }], o))
         expect(analyzer.mount.issue).toBeNull()
-        expect(said.filter((s) => s.text === PHRASES.phoneMount || s.text === PHRASES.phonePlace)).toEqual([])
+        expect(said.filter((s) => MOUNT_SAID.includes(s.text))).toEqual([])
       }
   }, 60000)
 
-  const RUNS: { name: string; mount: MountSim; issue: 'notWaist' | 'loose'; text: string }[] = [
+  const RUNS: { name: string; mount: MountSim; issue: 'notWaist'; text: string }[] = [
     { name: '腕', mount: { kind: 'arm' }, issue: 'notWaist', text: PHRASES.phonePlace },
     { name: '手', mount: { kind: 'hand' }, issue: 'notWaist', text: PHRASES.phonePlace },
     { name: 'ポケット', mount: { kind: 'pocket' }, issue: 'notWaist', text: PHRASES.phonePlace },
-    { name: 'ゆるい', mount: { kind: 'loose', tiltDeg: 6, accMs: 2 }, issue: 'loose', text: PHRASES.phoneMount },
   ]
   for (const r of RUNS)
     it(`${r.name}：走り始めに1回だけ知らせ、記録に印を付け、その走りではもう判定しない`, () => {
@@ -242,14 +244,34 @@ describe('スマホ：付け方の確認', () => {
       expect(coach.state).toBe('running') // 手に持っていても、走り出しに気づく
       expect(analyzer.mount.issue).toBe(r.issue)
       expect(analyzer.mount.issueAt!).toBeLessThanOrEqual(25)
-      const mountSaid = said.filter((s) => s.text === PHRASES.phoneMount || s.text === PHRASES.phonePlace)
+      const mountSaid = said.filter((s) => MOUNT_SAID.includes(s.text))
       expect(mountSaid.map((s) => s.text)).toEqual([r.text])
       expect(said.some((s) => [PHONE_CUE.cadence, PHONE_CUE.braking, PHONE_CUE.bounce].includes(s.text))).toBe(false)
       const after = coach.samples.filter((s) => s.t >= analyzer.mount.issueAt!)
       expect(after.length).toBeGreaterThan(100)
       expect(after.every((s) => s.mount === r.issue && s.score === null)).toBe(true)
-      expect(coach.cues.some((c) => c.item === (r.issue === 'notWaist' ? 'place' : 'mount'))).toBe(true)
+      expect(analyzer.ref).toBeNull()
+      expect(coach.cues.some((c) => c.item === 'place')).toBe(true)
     }, 30000)
+
+  it('ゆるい：1回だけ知らせ、記録に印を付けるが、基準は作り続けてピッチだけ判定する（上下動・ブレーキは判定しない）', () => {
+    const analyzer = new PhoneAnalyzer()
+    const mount: MountSim = { kind: 'loose', tiltDeg: 6, accMs: 2 }
+    // 基準ができた後に、ピッチを落とす。ゆるくても、ピッチの声はかける
+    const { coach, said } = drive(analyzer, run([{ seconds: 210, cadence: 172, mount }, { seconds: 50, cadence: 158, mount }], [90, 0, 0]))
+    expect(analyzer.mount.issue).toBe('loose')
+    expect(analyzer.mount.issueAt!).toBeLessThanOrEqual(25)
+    expect(said.filter((s) => MOUNT_SAID.includes(s.text)).map((s) => s.text)).toEqual([PHRASES.phoneLoose])
+    expect(coach.cues.filter((c) => c.item === 'loose').length).toBe(1)
+    expect(analyzer.ref!.cadence).toBeCloseTo(172, 0)
+    const cad = said.filter((s) => s.text === PHONE_CUE.cadence)
+    expect(cad.length).toBe(1)
+    expect(cad[0].t).toBeGreaterThan(210) // 落ちる前には声をかけない
+    expect(said.some((s) => [PHONE_CUE.braking, PHONE_CUE.bounce].includes(s.text))).toBe(false)
+    const judged = coach.samples.filter((s) => s.t > HIP_REF.to)
+    expect(judged.length).toBeGreaterThan(50)
+    expect(judged.every((s) => s.mount === 'loose' && s.score !== null && s.values.cadence !== undefined && s.values.bounce === undefined && s.values.braking === undefined)).toBe(true)
+  }, 30000)
 
   it('途中でずれたら、ずれたあとに1回だけ知らせる。小さな傾き（20°）では鳴らない', () => {
     const big = new PhoneAnalyzer()
@@ -257,6 +279,7 @@ describe('スマホ：付け方の確認', () => {
     expect(big.mount.issue).toBe('shifted')
     expect(big.mount.issueAt!).toBeGreaterThan(100)
     expect(r1.said.filter((s) => s.text === PHRASES.phoneMount).length).toBe(1)
+    expect(r1.said.filter((s) => MOUNT_SAID.includes(s.text)).length).toBe(1)
     const small = new PhoneAnalyzer()
     drive(small, simulateRun({ cadence: 170, bounceCm: 8, brakingMs: 0.3, seconds: 160, orientation: [30, -50, 120], seed: 4, ...REAL, mount: { kind: 'shift', at: 100, rotate: [0, 20, 0] } }))
     expect(small.mount.issue).toBeNull()

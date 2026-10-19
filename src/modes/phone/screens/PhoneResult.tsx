@@ -11,10 +11,10 @@ import { FormTestCard, PracticeCard } from './PhoneProgress'
 // スマホ版の結果。カメラ版の結果（src/screens/Result.tsx）は姿勢の項目と走り姿を前提にしているので、別に持つ
 // 腰のスマホでは姿勢が見えないので「良い姿勢」ではなく「良い走り」と言う
 
-const CUE_ITEMS = ['cadence', 'braking', 'bounce', 'mount', 'place']
+const CUE_ITEMS = ['cadence', 'braking', 'bounce', 'mount', 'loose', 'place']
 const MOUNT_TEXT: Record<MountIssue, string> = {
   notWaist: 'スマホが腰以外に付いていたようです。見つけたところから、判定を止めました。',
-  loose: 'スマホがゆるかったようです。見つけたところから、判定を止めました。',
+  loose: 'スマホがゆるかったようです。見つけたところから、ピッチだけ判定しました（上下動・ブレーキは見ていません）。',
   shifted: '途中でスマホがずれたようです。見つけたところから、判定を止めました。',
 }
 

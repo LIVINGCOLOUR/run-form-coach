@@ -194,9 +194,9 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
   const sections: string[] = []
   // 崩しの結果（線を変える試しでも使うので、流れごと残す）
   const streams = new Map<string, Stream>()
-  // まとめの表に使う数字（上級・実機なみのずれ）：今の線と提案の線での、誤った声と、崩しの大きさごとの見つけた割合
+  // まとめの表に使う数字（上級・実機なみのずれ）：今の線での、誤った声と、崩しの大きさごとの見つけた割合
   type Det = Record<string, { right: number; latSec: number }>
-  const sum = { now: { false: {} as Record<ItemKey, number>, det: {} as Record<DistortKind, Det> }, prop: { false: {} as Record<ItemKey, number>, det: {} as Record<DistortKind, Det> } }
+  const sum = { now: { false: {} as Record<ItemKey, number>, det: {} as Record<DistortKind, Det> } }
 
   itAll('ふつうに走ったときの誤った声', () => {
     console.log(`使う走り：${runners.length}`)
@@ -317,34 +317,6 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
         }
       }
     }
-    // 提案の線をまとめて入れたとき
-    const PROPOSAL = { head: 8, trunk: 4, hip: 4 }
-    LIMITS.head.cue = PROPOSAL.head
-    REL_LIMITS.trunk.cue = PROPOSAL.trunk
-    LIMITS.hip.cue = PROPOSAL.hip
-    try {
-      text +=
-        `## ④ 提案の線をまとめて入れたとき（頭 ${PROPOSAL.head}°・上体の増え方 ${PROPOSAL.trunk}°・腰 ${PROPOSAL.hip}%、体全体は今のまま。実機なみのずれ）\n\n` +
-        `| レベル | 誤った声（10分あたり 頭/上体/体全体/腰） | 声が出た走り |\n|---|---|---|\n`
-      for (const lv of LEVELS) {
-        const f = falseCues(runners.map((_, i) => ({ r: replay(streams.get(`${c.label}|${i}|normal`)!, { items: lv.items }), end: NORMAL_SEC })))
-        text += `| ${lv.label} | ${ITEMS.map((k) => f.per10(f.after[k]).toFixed(2)).join(' / ')} | ${pct(f.anyRunner / f.runners)} |\n`
-        if (lv === LEVELS[2]) for (const k of ITEMS) sum.prop.false[k] = f.per10(f.after[k])
-      }
-      text += `\n| 崩し | ${'大きさ → 合う項目の声が出た割合（声まで）'} |\n|---|---|\n`
-      for (const k of KINDS) {
-        const cells = k.sizes.map((sz) => {
-          const d = detect(runners.map((_, i) => replay(streams.get(`${c.label}|${i}|${k.kind}|${sz}`)!, {})), k.ok, ONSET)
-          ;(sum.prop.det[k.kind] ??= {})[sz] = { right: d.right, latSec: d.latSec }
-          return `${sz}：${pct(d.right)}（${d.lat}）`
-        })
-        text += `| ${DISTORT_LABEL[k.kind]} | ${cells.join('、')} |\n`
-      }
-    } finally {
-      LIMITS.head.cue = SWEEP[0].now
-      REL_LIMITS.trunk.cue = SWEEP[1].now
-      LIMITS.hip.cue = SWEEP[3].now
-    }
     sections[2] = text
     console.log(text)
     const intro =
@@ -364,14 +336,13 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
     }
     const item: Record<DistortKind, ItemKey> = { head: 'head', hunch: 'trunk', trunk: 'trunk', body: 'body', sit: 'hip' }
     const lineNow: Record<ItemKey, string> = { head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, hip: `${LIMITS.hip.cue}%` }
-    const lineProp: Record<ItemKey, string> = { head: `${PROPOSAL.head}°`, trunk: `増え方 ${PROPOSAL.trunk}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, hip: `${PROPOSAL.hip}%` }
     const summary =
       `## まとめ（上級、実機なみのずれ、${runners.length}本）\n\n` +
       `「9割」は、崩しに合った声を9割の走りで${HOLD}秒以内に出せた、いちばん小さい崩しの大きさ（カッコ内は声までの秒数の中央値）。誤った声は基準ができたあとの10分あたり。\n\n` +
-      `| 崩し | 声の項目 | 今の線 | 誤った声 | 9割 | 提案の線 | 誤った声 | 9割 |\n|---|---|---|---|---|---|---|---|\n` +
+      `| 崩し | 声の項目 | 今の線 | 誤った声 | 9割 |\n|---|---|---|---|---|\n` +
       KINDS.map((k) => {
         const it = item[k.kind]
-        return `| ${DISTORT_LABEL[k.kind].split('（')[0]}（${k.unit.split('（')[0]}） | ${ITEM_JA[it]} | ${lineNow[it]} | ${sum.now.false[it]?.toFixed(2)} | ${ninety(sum.now.det[k.kind], k.sizes)} | ${lineProp[it]} | ${sum.prop.false[it]?.toFixed(2)} | ${ninety(sum.prop.det[k.kind], k.sizes)} |`
+        return `| ${DISTORT_LABEL[k.kind].split('（')[0]}（${k.unit.split('（')[0]}） | ${ITEM_JA[it]} | ${lineNow[it]} | ${sum.now.false[it]?.toFixed(2)} | ${ninety(sum.now.det[k.kind], k.sizes)} |`
       }).join('\n') +
       '\n'
     writeFileSync(OUT, intro + summary + '\n' + sections.filter(Boolean).join('\n') + '\n')

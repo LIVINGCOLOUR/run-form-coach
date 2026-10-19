@@ -25,7 +25,8 @@ describe('トレッドミルの採点：カメラ版の全コマ記録', () => {
     const b = inventory(thin)
     expect(a.full).toBe(true)
     expect(b.full).toBe(false)
-    expect(b.frames).toBeLessThan(a.frames * 0.8)
+    // 走り始めの基準ができるまで（約3分）は、ふだんの記録も毎コマ取る。間引くのはそのあとの約2分だけ
+    expect(b.frames).toBeLessThan(a.frames * 0.95)
     // 走る段のコマにすき間がない（毎秒15コマ）
     const run = full.log.rows.filter((r) => r[1] === full.log.phases.indexOf('run')).map((r) => r[0])
     const gaps = run.slice(1).map((t, i) => t - run[i])
@@ -78,7 +79,8 @@ describe('トレッドミルの採点：走り始めの基準と「走ってい�
     const f = { log, session: full.session }
     const a = replayCamera(f)
     const b = replayCamera(f, { running: 'steps' })
-    expect((a.runStartT! - from) / 1000).toBeLessThan(5)
+    // 走り始めは、直近10秒のコマの8割が走っているになってから、さらに2秒（約10秒）
+    expect((a.runStartT! - from) / 1000).toBeLessThan(13)
     expect((b.runStartT! - from) / 1000).toBeGreaterThan(60)
   })
 })

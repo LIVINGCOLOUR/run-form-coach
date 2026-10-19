@@ -164,7 +164,7 @@ describe.each([
     for (const [t] of tonesOn) expect(d.at(t).phase.kind).toBe('run')
     // 付け方の区間で、付け方の確認の声がかかる
     const loose = d.phases.find((p) => p.mark === 'loose')!
-    const mount = said.find((s) => s.text === PHRASES.phoneMount || s.text === PHRASES.phonePlace)
+    const mount = said.find((s) => s.text === PHRASES.phoneMount || s.text === PHRASES.phoneLoose || s.text === PHRASES.phonePlace)
     expect(mount).toBeDefined()
     expect(mount!.t - base).toBeGreaterThanOrEqual(loose.start)
   })

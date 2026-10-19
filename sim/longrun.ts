@@ -38,6 +38,22 @@ export function strides(s: Source): number[] {
   return out
 }
 
+// 1歩き（st[k]〜st[k+1]）ごとに、走っているか：長さが 0.45〜1.4 秒で、足首の前後の振れがその記録の大きいほう（上から1割）の半分以上。
+// 記録の始めのベルトに乗る前・速さが上がるまでの間や、記録の終わりの値が0のままのところを、走りとして並べ直さないため
+// （Van Hooren のデータには、始めの十数秒の立っている間と、終わりの値のない間がある）
+export function runningStrides(s: Source, st: number[]): boolean[] {
+  const a = s.joints.ankleR!.map((p, i) => p[0] - s.joints.pelvis![i][0])
+  const swing = st.slice(0, -1).map((f, k) => {
+    const xs = a.slice(f, st[k + 1])
+    return Math.max(...xs) - Math.min(...xs)
+  })
+  const big = [...swing].sort((x, y) => x - y)[Math.floor(swing.length * 0.9)] ?? 0
+  return swing.map((w, k) => {
+    const sec = (st[k + 1] - st[k]) / s.fps
+    return sec >= 0.45 && sec <= 1.4 && w >= big * 0.5
+  })
+}
+
 // 長い走りのひとこま分：どの記録の、どのコマから何コマか、つなぎ目のずれ（この区間の中で0へ戻す）
 interface Piece {
   src: Source
@@ -54,14 +70,16 @@ export class LongRun {
     return p ? p.t0 + p.n / p.src.fps : 0
   }
 
-  // sec 秒ぶん、src のかたまりを乱数で並べて足す
+  // sec 秒ぶん、src のかたまりを乱数で並べて足す。かたまりは、走っている1歩きだけが続いたところから選ぶ
   append(src: Source, sec: number, seed: number, block = 8) {
     const st = strides(src)
-    if (st.length < block + 2) throw new Error(`${src.id}: 歩きが足りません（${st.length}）`)
+    const ok = runningStrides(src, st)
+    const starts = st.slice(0, -block).flatMap((_, b) => (ok.slice(b, b + block).every(Boolean) ? [b] : []))
+    if (!starts.length) throw new Error(`${src.id}: 走っている歩きが足りません（${ok.filter(Boolean).length}）`)
     const r = rng(seed)
     const end = this.duration + sec
     while (this.duration < end) {
-      const b = Math.floor(r.u() * (st.length - block))
+      const b = starts[Math.floor(r.u() * starts.length)]
       for (let k = b; k < b + block && this.duration < end; k++) this.push(src, st[k], st[k + 1] - st[k])
     }
   }
