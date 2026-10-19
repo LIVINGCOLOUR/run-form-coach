@@ -100,7 +100,14 @@ it('上体の傾きの判定のずれ', () => {
   const pairs = subjects.flatMap((s) => {
     const lean = files.find((f) => f.toLowerCase() === `${s.toLowerCase()}_trunklean.c3d`)
     const norm = files.find((f) => f === `${s}_333ms.c3d` || f === `${s}_333.c3d`)
-    return lean && norm ? [{ s, lean: loadUpper(join(DIR, lean), s), norm: loadUpper(join(DIR, norm), s) }] : []
+    if (!lean || !norm) return []
+    // 印が足りない人（Sub_18 は胸骨の印 JN がない）は除く
+    try {
+      return [{ s, lean: loadUpper(join(DIR, lean), s), norm: loadUpper(join(DIR, norm), s) }]
+    } catch (e) {
+      console.log(`使えない：${(e as Error).message}`)
+      return []
+    }
   })
   const tN = pairs.map((p) => truth(p.norm))
   const tL = pairs.map((p) => truth(p.lean))
@@ -158,7 +165,12 @@ it('走り始めの自分との比べ', () => {
   const pairs = subjects.flatMap((s) => {
     const lean = files.find((f) => f.toLowerCase() === `${s.toLowerCase()}_trunklean.c3d`)
     const norm = files.find((f) => f === `${s}_333ms.c3d` || f === `${s}_333.c3d`)
-    return lean && norm ? [{ lean: loadUpper(join(DIR, lean), s), norm: loadUpper(join(DIR, norm), s) }] : []
+    if (!lean || !norm) return []
+    try {
+      return [{ lean: loadUpper(join(DIR, lean), s), norm: loadUpper(join(DIR, norm), s) }]
+    } catch {
+      return []
+    }
   })
   const rows = CASES.map((c) => {
     const pl = { ...BASE, ...c.pl }
