@@ -17,6 +17,7 @@ import { preloadVoice, speak, stopVoice } from '../../../core/voice'
 import { PHRASES } from '../../../core/phrases'
 import { capBaseline, median, standingIssue, type Standing, type StandingIssue } from '../standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
+import { fullFrames } from '../fullFrames'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -49,6 +50,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
   const screenMode = loadSettings().screen
   // 前面カメラは鏡のように左右反転して見せる（骨格の計算は反転しない元の映像で行う）
   const mirror = !file && loadSettings().camera === 'front'
+  // 検証用の「全コマ記録」（URL に ?full=1）。走っている間も間引かず毎コマ骨格を取る。動画で試すときはもともと毎コマ取る
+  const full = !file && fullFrames()
   const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true } })
 
   useEffect(() => {
@@ -99,6 +102,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
 
     // 調整用の記録（骨格の点と判定の数字）。カメラで撮るときは、スマホ版の記録と時刻を合わせられるよう、時計の対応を残す
     const rec = new LogRecorder(file ? undefined : { perfMs: performance.now(), epochMs: Date.now() })
+    if (full || file) rec.log.full = true
     let nowT = 0
     let tickMoving = false
     const setPhase = (p: Phase) => {
@@ -251,8 +255,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
         if (disposed) return
         setPhase(file ? 'run' : 'setup')
         const clock = file ? () => video.currentTime : () => performance.now() / 1000
-        // 走っている間は、コーチが要ると言ったときだけ骨格を取る（人が見えなくなったら毎コマ取って探す）
-        const want = () => !!file || phase !== 'run' || !coachRef.current || !lastPresent || coachRef.current.wantsDetail()
+        // 走っている間は、コーチが要ると言ったときだけ骨格を取る（人が見えなくなったら毎コマ取って探す）。全コマ記録のときは毎コマ
+        const want = () => !!file || full || phase !== 'run' || !coachRef.current || !lastPresent || coachRef.current.wantsDetail()
         stopPose = runPose(
           video,
           lm,
@@ -510,6 +514,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           <div style={{ width: 14, height: 14, borderRadius: 7, background: 'var(--accent)' }} />
           <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 4, color: 'var(--faint)' }}>{darkLabel}</div>
           <div style={{ fontSize: 13, color: 'var(--faint)' }}>{darkText}</div>
+          {full && <FullBadge />}
           {hud.phase === 'run' && <div className="num" style={{ position: 'absolute', right: 24, top: 20, fontSize: 28, color: '#4A525B' }}>{mmss(hud.elapsed)}</div>}
           <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()} style={{ position: 'absolute', left: 16, top: 'max(16px, env(safe-area-inset-top))', opacity: 0.4 }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -527,6 +532,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 3 }} className="muted">
               {hud.phase === 'loading' || hud.phase === 'error' ? '' : hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'}
             </div>
+            {full && <FullBadge />}
           </div>
 
           {hud.phase === 'run' && (
@@ -637,6 +643,11 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
       {hud.phase === 'error' && <Center text={`カメラを使えませんでした：${hud.error}`} action={() => onDone()} />}
     </div>
   )
+}
+
+// 全コマ記録のときの小さな印（画面が暗いときも見える色で）
+function FullBadge() {
+  return <div style={{ padding: '2px 8px', borderRadius: 10, border: '1px solid #4A525B', fontSize: 11, color: '#8A939C' }}>全コマ記録</div>
 }
 
 function Chip({ ok, label }: { ok: boolean; label: string }) {

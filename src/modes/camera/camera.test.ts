@@ -5,6 +5,7 @@ import { Coach } from './coach'
 import { nextItem } from './nextStep'
 import { capBaseline, standingIssue } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
+import { fullFrames } from './fullFrames'
 import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, bodyVisible } from './motion'
 import { demoStride, strideStats, DEMO_SPM, REFERENCE } from './ui/figure'
@@ -517,5 +518,15 @@ describe('調整用の記録の時計', () => {
     expect(live.log.clock).toEqual({ perfMs: 12345, epochMs: 1_760_000_000_000 })
     expect(live.log.startedAt).toBe(1_760_000_000_000)
     expect(new LogRecorder().log.clock).toBeUndefined()
+  })
+})
+
+describe('全コマ記録（検証用）', () => {
+  it('URL に ?full=1 があるときだけ', () => {
+    expect(fullFrames('?full=1')).toBe(true)
+    expect(fullFrames('?x=2&full=1')).toBe(true)
+    expect(fullFrames('')).toBe(false)
+    expect(fullFrames('?full=0')).toBe(false)
+    expect(fullFrames('?full')).toBe(false)
   })
 })

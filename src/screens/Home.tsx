@@ -11,6 +11,7 @@ import { preloadVoice, speak, unlockVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
 import { VOICES, VOICE_ORDER, type VoiceKind } from '../core/voices'
 import { startGravity } from '../modes/camera/gravity'
+import { fullFrames } from '../modes/camera/fullFrames'
 import { demoStride, idealFrame, lerpFrame, nextStepFrame, normalizeStride } from '../modes/camera/ui/figure'
 import { ShareBar } from '../ui/ShareBar'
 import type { PhoneKind, PhoneSession, PhoneWhere } from '../modes/phone/session'
@@ -307,6 +308,9 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         >
           はじめる
         </button>
+        {fullFrames() && (
+          <div style={{ fontSize: 12, color: 'var(--accent)' }}>全コマ記録（検証用）：走っている間も間引かず、毎コマ骨格を取って残します</div>
+        )}
         <div style={{ fontSize: 12 }} className="muted">
           走る前に、まっすぐ立って基準を取ります
           {' · '}

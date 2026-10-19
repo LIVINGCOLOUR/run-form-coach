@@ -4,8 +4,10 @@
 //
 // カメラ版：記録の1コマごとの値（見えているか・走る動きか・首／上体／体全体の角度・腰の高さ・向き）を、
 //   撮ったときと同じ順で Coach に渡す。骨格を取らなかったコマ（記録にない）は、撮ったときと同じく時間だけ進める。
-//   限り：撮ったときに骨格を取らなかったコマ（安定して走っている間は10秒のうち3秒だけ取る）は記録にないので、
-//   線を変えて「もっと細かく見たはず」になっても、その分の値は足せない
+//   限り：ふだんの記録では、撮ったときに骨格を取らなかったコマ（安定して走っている間は10秒のうち3秒だけ取る）は記録にないので、
+//   線を変えて「もっと細かく見たはず」になっても、その分の値は足せない。
+//   全コマ記録（?full=1 で撮った、log.full のある記録）は走っている間の毎コマがあるので、この限りはない。
+//   thin を付けると、全コマの記録をふだんの間引き（Live.tsx と同じく、コーチが要ると言ったコマだけ見る）に通し直せる
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
 import { LIMITS, REL_LIMITS, HEAD_ABS } from '../../src/modes/camera/params'
@@ -95,12 +97,12 @@ export function loggedEvents(file: unknown): { events: Ev[]; clock: boolean } {
 }
 
 // 記録にあるか（1コマごとの値）を調べる
-export function inventory(file: unknown): { kind: 'camera' | 'phone'; frames: number; measures: number; points: number; clock: boolean; columns: string[]; spanSec: number } {
+export function inventory(file: unknown): { kind: 'camera' | 'phone'; frames: number; measures: number; points: number; clock: boolean; columns: string[]; spanSec: number; full: boolean } {
   const { log } = unwrap<RunLog | PhoneLog>(file)
   if (isPhone(file)) {
     const l = log as PhoneLog
     const rows = l.rows ?? []
-    return { kind: 'phone', frames: rows.length, measures: (l.seconds ?? []).length, points: 0, clock: !!l.clock, columns: [...l.columns], spanSec: rows.length ? (Number(rows[rows.length - 1][0]) - Number(rows[0][0])) : 0 }
+    return { kind: 'phone', frames: rows.length, measures: (l.seconds ?? []).length, points: 0, clock: !!l.clock, columns: [...l.columns], spanSec: rows.length ? (Number(rows[rows.length - 1][0]) - Number(rows[0][0])) : 0, full: true }
   }
   const l = log as RunLog
   const ci = (n: string) => l.columns.indexOf(n)
@@ -115,6 +117,7 @@ export function inventory(file: unknown): { kind: 'camera' | 'phone'; frames: nu
     clock: !!l.clock,
     columns: l.columns,
     spanSec: rows.length ? rows[rows.length - 1][0] - rows[0][0] : 0,
+    full: !!l.full,
   }
 }
 
@@ -127,7 +130,8 @@ export interface ReplayOut {
 }
 
 // fromMs：この時刻（その端末の時計、ms）より前のコマは通さない（歩いている間にしくみが走り始めていても、基準をジョグで作り直すため）
-export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fromMs?: number } = {}): ReplayOut {
+// thin：全コマ記録を、ふだんの間引きに通し直す（コーチが要らないと言ったコマは、撮ったときの onSkip と同じく時間だけ進める）
+export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fromMs?: number; thin?: boolean } = {}): ReplayOut {
   const { log, session } = unwrap<RunLog>(file)
   const s = session as Session | undefined
   const warnings: string[] = []
@@ -161,13 +165,22 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
       if (e.type === 'state' && e.state === 'ended') ended = true
     }
   }
-  // 骨格を取らなかったコマの代わり：時間だけ進める（撮ったときは毎コマ onSkip が呼ばれていた）
+  if (opts.thin && !log.full) warnings.push('間引いて撮った記録なので、--thin は効きません（もともと間引かれています）')
+  const thin = !!opts.thin && !!log.full
+  // 骨格を取らなかったコマの代わり：時間だけ進める（撮ったときは毎コマ onSkip が呼ばれていた）。
+  // 全コマ記録では骨格を取らなかったコマがない（行のすき間は、骨格の推定が間に合わなかったコマで、撮ったときも何も呼ばれていない）
   const SKIP = 1 / 15
   for (const r of rows) {
     if (ended) break
     const t = r[it]
-    if (lastT !== null) for (let u = lastT + SKIP; u < t - SKIP / 2; u += SKIP) handle(coach.update({ t: u, present: lastPresent, moving: lastMoving }), u)
+    if (lastT !== null && !log.full) for (let u = lastT + SKIP; u < t - SKIP / 2; u += SKIP) handle(coach.update({ t: u, present: lastPresent, moving: lastMoving }), u)
     if (ended) break
+    // ふだんの間引き（Live.tsx の want）：見えていて、コーチが要らないと言ったコマは骨格を取らない
+    if (thin && lastPresent && !coach.wantsDetail()) {
+      handle(coach.update({ t, present: lastPresent, moving: lastMoving }), t)
+      lastT = t
+      continue
+    }
     const visible = r[iv] === 1
     const moving = r[imov] === 1
     const m: Measure | undefined = visible && r[ineck] !== -999 ? { neck: r[ineck], trunk: r[itrunk], body: r[ibody], hipRatio: r[ihip], yaw: r[iyaw], headLean: r[ilean], dir: 1 } : undefined

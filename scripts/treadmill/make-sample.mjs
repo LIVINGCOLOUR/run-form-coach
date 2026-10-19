@@ -1,5 +1,6 @@
 // 採点（npm run grade）を試すための見本を作る：区間の記録（drill-sample-….json）と、同じ時間のカメラ版・スマホ版の作りものの記録。
-// 使い方: node scripts/treadmill/make-sample.mjs <置き場所のフォルダ> [--steps a,b,…]
+// 使い方: node scripts/treadmill/make-sample.mjs <置き場所のフォルダ> [--steps a,b,…] [--full]
+//   --full  カメラ版を全コマ記録（?full=1 で撮ったとき）の形で作る
 // 区間は npm run drill の既定の並び（言い終わりまで3.5秒かかったことにする）。値の作り方は scripts/treadmill/sample.ts
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -10,9 +11,11 @@ import { buildPlan, stamp } from './plan.mjs'
 const args = process.argv.slice(2)
 const i = args.indexOf('--steps')
 const steps = i >= 0 ? args.splice(i, 2)[1].split(',') : undefined
+const fi = args.indexOf('--full')
+const full = fi >= 0 && !!args.splice(fi, 1)
 const dir = args[0]
 if (!dir) {
-  console.error('使い方: node scripts/treadmill/make-sample.mjs <置き場所のフォルダ> [--steps a,b,…]')
+  console.error('使い方: node scripts/treadmill/make-sample.mjs <置き場所のフォルダ> [--steps a,b,…] [--full]')
   process.exit(1)
 }
 const root = new URL('../..', import.meta.url).pathname
@@ -34,7 +37,7 @@ const name = stamp(t0)
 const ss = sections.map((s) => ({ key: s.key, kind: s.kind, start: s.start, end: s.end }))
 const files = {
   [`drill-sample-${name}.json`]: drill,
-  [`rfc-sample-${name}.json`]: makeCameraSample(ss, jumpAt),
+  [`rfc-sample-${name}.json`]: makeCameraSample(ss, jumpAt, 1, full),
   [`rfc-phone-sample-${name}.json`]: makePhoneSample(ss, jumpAt),
 }
 for (const [f, data] of Object.entries(files)) writeFileSync(join(dir, f), JSON.stringify(data))

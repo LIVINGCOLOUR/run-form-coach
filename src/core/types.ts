@@ -83,4 +83,7 @@ export interface RunLog {
   // 別の端末の記録（スマホ版）と時刻を合わせるのに使う：ふつうの時刻（ms） = epochMs + (t × 1000 − perfMs)
   // 動画で試したときの t は動画の中の秒なので、付けない
   clock?: { perfMs: number; epochMs: number }
+  // 走っている間も間引かず、毎コマ骨格を取った記録（カメラ版の「全コマ記録」?full=1 と、動画で試したとき）。
+  // ないときは、安定して走っている間は間引いている（取らなかったコマは rows にない）
+  full?: boolean
 }

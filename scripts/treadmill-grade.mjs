@@ -12,6 +12,8 @@
 //   --phone-offset 秒      スマホ版の時計 − Mac の時計（既定 0）
 //   --items all            カメラ版で、撮ったときの「注意した項目」（ランナーのレベル）ではなく、すべての項目で声をかけるとして通す
 //   --no-replay            判定に通し直さず、記録にある声だけで採点する
+//   --thin                 カメラ版の全コマ記録（?full=1 で撮ったもの）を、ふだんの間引き（安定して走っている間は10秒のうち3秒）に
+//                          通し直す。同じ走りで、間引いたときに声が遅れる・抜けるかを比べるため
 //   --replay-from jog|start  通し直すのを、ジョグの前の「速さを上げる」からにする（既定 jog）か、記録の始めからにするか。
 //                          歩きを「走っている」と見ていたら、走り始めの自分の基準が歩きでできてしまうので、既定ではジョグから作り直す
 //   --out ファイル         Markdown をファイルにも書く
@@ -44,11 +46,12 @@ const camOff = Number(opt('--camera-offset') ?? 0) * 1000
 const phoneOff = Number(opt('--phone-offset') ?? 0) * 1000
 const itemsAll = opt('--items') === 'all'
 const noReplay = flag('--no-replay')
+const thin = flag('--thin')
 const replayFrom = opt('--replay-from') ?? 'jog'
 const outFile = opt('--out')
 const [drillPath, ...logPaths] = args
 if (!drillPath || !logPaths.length || logPaths.length > 2) {
-  console.error('使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [--set 名前=値] [--grace 秒] [--camera-offset 秒] [--phone-offset 秒] [--items all] [--no-replay] [--out ファイル]')
+  console.error('使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [--set 名前=値] [--grace 秒] [--camera-offset 秒] [--phone-offset 秒] [--items all] [--no-replay] [--thin] [--out ファイル]')
   process.exit(1)
 }
 
@@ -118,7 +121,7 @@ function prepare(f, kind) {
   const sources = [{ name: 'そのとき', cues: cuesOf(R.loggedEvents(f.data).events, off) }]
   const warnings = []
   const fromMs = replayFrom === 'jog' && jogFrom !== null ? jogFrom + off : undefined
-  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs }) : (d) => R.replayPhone(d, { fromMs })
+  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs, thin }) : (d) => R.replayPhone(d, { fromMs })
   const canReplay = kind === 'camera' ? inv.measures > 0 : inv.frames > 0
   if (!noReplay && canReplay) {
     const r = replay(f.data)
@@ -155,8 +158,11 @@ for (const d of devices) {
 }
 p()
 for (const d of devices) for (const w of d.warnings) p(`- 注意（${d.kind === 'camera' ? 'カメラ版' : 'スマホ版'}）: ${w}`)
-if (devices.some((d) => d.kind === 'camera' && d.replay))
-  p('- カメラ版は、撮ったときに骨格を取ったコマ（安定して走っている間は10秒のうち3秒）だけが記録にある。線を変えて「もっと細かく見たはず」になった秒の値は足せない')
+for (const d of devices.filter((x) => x.kind === 'camera' && x.replay)) {
+  if (!d.inv.full) p('- カメラ版は、撮ったときに骨格を取ったコマ（安定して走っている間は10秒のうち3秒）だけが記録にある。線を変えて「もっと細かく見たはず」になった秒の値は足せない')
+  else if (thin) p('- カメラ版は全コマ記録。--thin で、ふだんの間引き（安定して走っている間は10秒のうち3秒だけ見る）に通し直した')
+  else p('- カメラ版は全コマ記録（走っている間の毎コマがある）。いまの線・上書きは毎コマで通した。ふだんの間引きでの結果は --thin で見られる')
+}
 p()
 
 // ---- 時計 ----

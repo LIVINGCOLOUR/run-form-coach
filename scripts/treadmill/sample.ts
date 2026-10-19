@@ -27,13 +27,15 @@ const SHIFT: Record<string, Partial<Record<'neck' | 'headLean' | 'trunk' | 'body
 }
 const RUNNING_KINDS = new Set(['normal', 'drill', 'gap'])
 
-export function makeCameraSample(sections: SampleSection[], jumpAt: number | null, seed = 1) {
+// full：全コマ記録（?full=1）として作る。走っている間も間引かず、毎コマを記録に残す
+export function makeCameraSample(sections: SampleSection[], jumpAt: number | null, seed = 1, full = false) {
   const r = rng(seed)
   const noise = (a: number) => (r() * 2 - 1) * a
   const first = sections[0].start - 60_000 // カメラ版は、区間の指示を始める1分前に始めて、置き方と立った姿勢を済ませておく
   const last = sections[sections.length - 1].end + 5_000
   const perf0 = 100 // performance.now() の秒（なんでもよい）
   const rec = new LogRecorder({ perfMs: perf0 * 1000, epochMs: first })
+  if (full) rec.log.full = true
   const toPerf = (T: number) => perf0 + (T - first) / 1000
   const progress = startProgress('beginner')
   let coach: Coach | null = null
@@ -68,7 +70,7 @@ export function makeCameraSample(sections: SampleSection[], jumpAt: number | nul
       dir: 1,
     }
     // 骨格を取らないコマ（走っている間、コーチが要らないと言ったとき）。記録には残らない
-    if (phase === 'run' && coach && lastPresent && !coach.wantsDetail()) {
+    if (!full && phase === 'run' && coach && lastPresent && !coach.wantsDetail()) {
       for (const e of coach.update({ t, present: lastPresent, moving: lastMoving })) if (e.type === 'speak') rec.event(t, e.text)
       continue
     }
