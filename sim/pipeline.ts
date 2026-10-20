@@ -87,11 +87,14 @@ export function film(o: FilmOpts): Stream {
 }
 
 export interface Replay {
-  cues: CueRecord<ItemKey>[] // t は絶対の時刻（秒）に直したもの
+  cues: CueRecord<ItemKey>[] // t は絶対の時刻（秒）に直したもの。lead は正しいフォームの線で言った声（整える・直った・整った）
   runFrom: number // 走り始め（コーチが走っているとみなした時刻）
-  refAt: number | null // 走り始めの基準ができた時刻
+  refAt: number | null // 今日の基準（整えたあとの形）ができた時刻
+  formAt: number | null // 整え終わった時刻
+  ref: Coach['leanRef'] // 今日の基準の値
   quietSec: [number, number][] // 声なしで見守っていた時間（絶対の時刻）
-  values: { t: number; head?: number; trunk?: number; body?: number; hip?: number; trunkBack?: number; bodyBack?: number; chin?: number }[] // 1秒ごとの判定の値
+  // 1秒ごとの判定の値（今日の基準からの崩れ。基準ができるまでの trunk・body は傾きそのもの）と、傾きそのもの（raw…）
+  values: { t: number; head?: number; trunk?: number; body?: number; hip?: number; trunkBack?: number; bodyBack?: number; chin?: number; rawTrunk: number; rawBody: number }[]
 }
 
 // thin：アプリのふだんの間引き（false なら全コマ記録 ?full=1 と同じ）
@@ -104,6 +107,7 @@ export function replay(s: Stream, opts: { items?: ItemKey[]; thin?: boolean; mut
   let lastMoving = false
   let runFrom = -1
   let refAt: number | null = null
+  let formAt: number | null = null
   const quietSec: [number, number][] = []
   let quietFrom = -1
   const values: Replay['values'] = []
@@ -125,6 +129,7 @@ export function replay(s: Stream, opts: { items?: ItemKey[]; thin?: boolean; mut
     }
     if (runFrom < 0 && coach.state === 'running') runFrom = t - coach.active
     if (refAt === null && coach.leanRef) refAt = t
+    if (formAt === null && coach.formDone) formAt = t
     if (coach.quiet && quietFrom < 0) quietFrom = t
     if (!coach.quiet && quietFrom >= 0) {
       quietSec.push([quietFrom, t])
@@ -134,11 +139,11 @@ export function replay(s: Stream, opts: { items?: ItemKey[]; thin?: boolean; mut
       nSamples = coach.samples.length
       const sm = coach.samples[nSamples - 1]
       const tt = runFrom + sm.t
-      values.push({ t: tt, head: coach.leanRef ? sm.head : undefined, trunk: sm.judge?.trunk ?? sm.trunk, body: sm.judge?.body ?? sm.body, hip: sm.hipDrop, trunkBack: sm.back?.trunk, bodyBack: sm.back?.body, chin: sm.chin })
+      values.push({ t: tt, head: coach.leanRef ? sm.head : undefined, trunk: sm.judge?.trunk ?? sm.trunk, body: sm.judge?.body ?? sm.body, hip: sm.hipDrop, trunkBack: sm.back?.trunk, bodyBack: sm.back?.body, chin: sm.chin, rawTrunk: sm.trunk, rawBody: sm.body })
     }
   }
   if (quietFrom >= 0) quietSec.push([quietFrom, s.d[(s.n - 1) * F]])
-  return { cues: coach.cues.map((c) => ({ ...c, t: runFrom + c.t })), runFrom, refAt, quietSec, values }
+  return { cues: coach.cues.map((c) => ({ ...c, t: runFrom + c.t })), runFrom, refAt, formAt, ref: coach.leanRef, quietSec, values }
 }
 
 // 1秒ごとの値の生の数字（頭・上体・体全体・腰の高さ）を、1秒平均で出す（ばらつきを実機と比べるため）

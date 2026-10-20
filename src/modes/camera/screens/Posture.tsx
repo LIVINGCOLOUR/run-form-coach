@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Screen } from '../../../App'
 import type { Category, ItemKey, Session } from '../../../core/types'
 import { bestSession, nextItem, NEXT_TEXT } from '../nextStep'
+import { FORM } from '../params'
 import { Mannequin } from '../ui/Mannequin'
 import { nextStepFrame, normalizeStride } from '../ui/figure'
 import { alignStride } from '../ui/align'
@@ -92,8 +93,8 @@ export function Posture({ session: s, sessions, go }: { session: Session; sessio
         {avg && (
           <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
             <Val v={`+${avg.head.toFixed(0)}°`} label="頭の前への出" warn={avg.head > 5} />
-            <Val v={`${avg.trunk.toFixed(0)}°`} label="体幹の前傾" warn={avg.trunk > 15} />
-            <Val v={`${avg.body.toFixed(0)}°`} label="体全体の前傾" warn={avg.body > 8} />
+            <Val v={`${avg.trunk.toFixed(0)}°`} label="体幹の前傾" warn={avg.trunk > FORM.trunk.max || avg.trunk < FORM.trunk.min} />
+            <Val v={`${avg.body.toFixed(0)}°`} label="体全体の前傾" warn={avg.body > FORM.body.max || avg.body < FORM.body.min} />
           </div>
         )}
         <div style={{ position: 'absolute', left: 12, bottom: 10, fontSize: 11, color: 'var(--faint)' }}>1歩をスロー再生 · 同じタイミングで重ねています</div>
@@ -105,11 +106,11 @@ export function Posture({ session: s, sessions, go }: { session: Session; sessio
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div className="row">
             <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 700 }}>次に意識すること</div>
-            <div style={{ fontSize: 11 }} className="muted">自分のベストから、1つだけ</div>
+            <div style={{ fontSize: 11 }} className="muted">正しいフォームから一番離れていた1つだけ</div>
           </div>
           <div style={{ fontSize: 17, fontWeight: 900 }}>{NEXT_TEXT[next.item].title}</div>
           <div style={{ fontSize: 12, lineHeight: 1.55 }} className="muted">
-            「次の一歩」は、あなたのベストの走りで、{ITEM_LABEL[next.item]}だけを {next.from.toFixed(0)} → {next.to.toFixed(0)} にした形です。今はこの1つだけを意識してください。
+            「次の一歩」は、あなたのベストの走りで、{ITEM_LABEL[next.item]}だけを {next.from.toFixed(0)}° → {next.to.toFixed(0)}°（正しいフォームの線）にした形です。今はこの1つだけを意識してください。
           </div>
         </div>
       )}

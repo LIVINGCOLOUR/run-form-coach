@@ -5,6 +5,8 @@ import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
+import { deg, GROUP_LABEL, nextItem, NEXT_TEXT, rangeText } from '../modes/camera/nextStep'
+import type { FormResult } from '../core/types'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
 
@@ -102,6 +104,8 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         {s.provisionalBaseline && <div style={{ fontSize: 12, color: 'var(--warn)' }}>動画で試したため、直立の基準は仮のものです</div>}
       </div>
 
+      {s.form && s.form.length > 0 && <FormCard form={s.form} next={nextItem(s)} />}
+
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="row">
           <div style={{ fontSize: 15, fontWeight: 700 }}>姿勢スコアの推移</div>
@@ -130,7 +134,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
 
       <div style={{ borderTop: '1px solid var(--line)' }}>
         <Stat label="崩れ始め" value={s.breakdownMin !== undefined ? `${s.breakdownMin}分` : 'なし'} note={prev?.breakdownMin !== undefined && s.breakdownMin !== undefined ? `前回 ${prev.breakdownMin}分` : undefined} />
-        <Stat label="声をかけた回数" value={`${cues.length}`} note={`前半 ${firstHalf} · 後半 ${cues.length - firstHalf}`} />
+        <Stat label="声をかけた回数" value={`${cues.length}`} note={`前半 ${firstHalf} · 後半 ${cues.length - firstHalf}${cues.some((c) => c.lead) ? ` · うち正しいフォームの線 ${cues.filter((c) => c.lead).length}` : ''}`} />
         {taps.length > 0 && <Stat label="「今悪い」との一致" value={`${Math.round((matched / taps.length) * 100)}%`} note={`${taps.length}回のうち ${matched}回`} />}
       </div>
 
@@ -159,6 +163,40 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         ホームへ
       </button>
     </main>
+  )
+}
+
+// 正しいフォームとの比べ：項目ごとに、走っていた秒の平均と正しいフォームの範囲。次に意識する1つも
+function FormCard({ form, next }: { form: FormResult[]; next: ReturnType<typeof nextItem> }) {
+  const state = (r: FormResult) =>
+    !r.judged
+      ? { text: '今日は見ていません（斜めから撮っているように見えました）', warn: false }
+      : r.over > 0
+        ? { text: r.cues && !r.fixed ? '外れていました（声をかけても、範囲に入りませんでした）' : '外れていました', warn: true }
+        : r.fixed
+          ? { text: '声をかけて、範囲に入りました', warn: false }
+          : { text: '正しい範囲です', warn: false }
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 15, fontWeight: 700 }}>正しいフォームとの比べ</div>
+      {form.map((r) => {
+        const st = state(r)
+        return (
+          <div key={r.group} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ fontSize: 14, lineHeight: 1.5 }}>
+              {GROUP_LABEL[r.group]}：あなた <span className="num" style={{ fontSize: 18, fontWeight: 600, color: st.warn ? 'var(--warn)' : 'var(--text)' }}>{deg(r.value)}</span>／正しいフォーム {rangeText(r.group)}
+            </div>
+            <div style={{ fontSize: 12, color: st.warn ? 'var(--warn)' : 'var(--muted)' }}>{st.text}</div>
+          </div>
+        )
+      })}
+      {next && (
+        <div style={{ fontSize: 13, lineHeight: 1.6, paddingTop: 4, borderTop: '1px solid var(--line)' }}>
+          次に意識すること：<span style={{ fontWeight: 700 }}>{NEXT_TEXT[next.item].title}</span>
+          <div style={{ fontSize: 12 }} className="muted">正しいフォームから一番離れていた項目です。次の走り出しで、まずここを整えます</div>
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -446,7 +446,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
           handle(coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined }), t)
           lastSample = coach.samples[coach.samples.length - 1]
           if (lastSample && !coach.quiet) {
-            if (overCue('head', lastSample.head)) hot.add('head')
+            if (overCue('head', judged(lastSample, 'head'))) hot.add('head')
             if (overCue('trunk', judged(lastSample, 'trunk')) || overCue('trunkBack', judged(lastSample, 'trunkBack'))) hot.add('trunk')
             if (overCue('body', judged(lastSample, 'body')) || overCue('bodyBack', judged(lastSample, 'bodyBack'))) hot.add('body')
           }
@@ -549,7 +549,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
             <div style={{ position: 'absolute', left: 16, top: 80, display: 'flex', flexDirection: 'column', gap: 8, width: 140 }}>
               {(
                 [
-                  ['頭と背中', last.head, overCue('head', last.head)],
+                  ['頭と背中', last.head, overCue('head', judged(last, 'head'))],
                   ['体幹の前傾', last.trunk, overCue('trunk', judged(last, 'trunk')) || overCue('trunkBack', judged(last, 'trunkBack'))],
                   ['体全体の前傾', last.body, overCue('body', judged(last, 'body')) || overCue('bodyBack', judged(last, 'bodyBack'))],
                 ] as [string, number, boolean][]

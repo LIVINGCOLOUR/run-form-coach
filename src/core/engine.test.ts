@@ -195,3 +195,69 @@ describe('音で知らせる項目（tone）', () => {
     expect(speaks(xs).some((x) => (RECOVER as readonly string[]).includes(x))).toBe(true)
   })
 })
+
+// 見る役が自分で決める声（カメラの「整える」のしくみ）：say・hold・score
+class LeadAnalyzer extends ToyAnalyzer {
+  holdUntil = 0 // この秒まで hold
+  cueAt: number[] = [] // この秒に、見る役が a の声を言う（間が足りなければ言わない）
+  ackAt: number[] = []
+  since: number[] = [] // 見る役に渡された「前の声からの秒数」
+  scoreOverride: number | null | undefined = undefined
+  second(b: M[], t: number, ctx: SecondContext<Item>) {
+    const out = super.second(b, t, ctx)
+    if (!out) return null
+    this.since.push(ctx.since('a'))
+    let say: { kind: 'cue'; item: Item; text: string } | { kind: 'ack'; text: string } | undefined
+    if (this.cueAt.includes(t) && ctx.since() >= CUE.gap) say = { kind: 'cue', item: 'a', text: 'a を見る役が知らせます。' }
+    else if (this.ackAt.includes(t)) say = { kind: 'ack', text: 'その形です。' }
+    return { ...out, say, hold: t <= this.holdUntil, ...(this.scoreOverride !== undefined ? { score: this.scoreOverride } : {}) }
+  }
+}
+
+describe('見る役が自分で決める声（say・hold・score）', () => {
+  it('hold の秒は、線を越えていても、しくみは自分では声をかけない。見る役の声はそのまま言って、lead の印を付けて残す', () => {
+    const a = new LeadAnalyzer()
+    a.holdUntil = 60
+    a.cueAt = [20]
+    a.ackAt = [30]
+    const e = new Toy(a)
+    const s = run(e, 0, 62, { a: 9 })
+    expect(s).toContain('a を見る役が知らせます。')
+    expect(s).toContain('その形です。')
+    expect(s).not.toContain(ITEMS[0].cue) // しくみ自身の声はない
+    const lead = e.cues.filter((c) => c.lead)
+    expect(lead.map((c) => c.item)).toEqual(['a', 'recover'])
+    // hold が終わると、しくみがふつうに声をかける。見る役の声も、同じ項目の間（CUE.cooldown）に数える
+    const s2 = run(e, 62, 30, { a: 9 })
+    expect(s2).toContain(ITEMS[0].cue)
+    const own = e.cues.find((c) => c.item === 'a' && !c.lead)!
+    expect(own.t - 20).toBeGreaterThanOrEqual(CUE.cooldown)
+  })
+  it('見る役には、その項目の前の声からの秒数を渡す（まだなければとても大きい）', () => {
+    const a = new LeadAnalyzer()
+    a.holdUntil = 100
+    a.cueAt = [20]
+    const e = new Toy(a)
+    run(e, 0, 40, { a: 0 })
+    expect(a.since[0]).toBeGreaterThan(1e6)
+    expect(a.since[a.since.length - 1]).toBeGreaterThan(5)
+    expect(a.since[a.since.length - 1]).toBeLessThan(25)
+  })
+  it('見る役が点数を決めたら、それで割合を数える', () => {
+    const a = new LeadAnalyzer()
+    a.scoreOverride = 20
+    const e = new Toy(a)
+    run(e, 0, 100, { a: 0 }) // values だけなら満点
+    expect(e.result().share.bad).toBeCloseTo(1, 5)
+  })
+  it('見る役の崩れの声は、声なしの見守りもやめる', () => {
+    const a = new LeadAnalyzer()
+    const e = new Toy(a)
+    run(e, 0, 400, { a: 0 })
+    expect(e.quiet).toBe(true)
+    a.cueAt = [Math.floor(e.active) + 5]
+    run(e, 400, 10, { a: 0 })
+    expect(e.quiet).toBe(false)
+    expect(e.cues[e.cues.length - 1]).toMatchObject({ item: 'a', lead: true })
+  })
+})

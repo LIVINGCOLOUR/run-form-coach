@@ -15,6 +15,12 @@ export const PHRASES = {
   cueHip: '腰が落ちています。上から吊られているように意識してください。',
   recover1: 'いい感じです。その姿勢を保ちましょう。',
   recover2: 'いい感じです。',
+  // 正しいフォームへ整える（カメラ版。src/modes/camera/form.ts）。崩れの言葉は上の cue… を使い、
+  // 線の内側に入ったら「その形です」と、目指す形に着いたことを伝える（今日の基準に戻ったときの「いい感じです」と分ける）。
+  // 整え終わりは「姿勢」と言う（見ているのは体の傾きと頭の位置だけで、着地などは見ていないので「いいフォーム」とは言わない）
+  formOk: 'いいですね。その形です。',
+  formSet: '姿勢が整いました。この形で走りましょう。',
+  formGood: '姿勢は整っています。この形で走りましょう。',
   start: '始めます。いつもどおり走ってください。',
   pause: '一時停止します。',
   resume: '再開します。',
@@ -114,6 +120,9 @@ export const CUE: Record<ItemKey, string> = {
 }
 
 export const RECOVER = [PHRASES.recover1, PHRASES.recover2]
+
+// 正しいフォームへ整える：線の内側に入った・整った（整える間に声をかけた）・最初から整っていた
+export const FORM_SAY = { ok: PHRASES.formOk, set: PHRASES.formSet, good: PHRASES.formGood }
 
 export const SAY = {
   start: PHRASES.start,

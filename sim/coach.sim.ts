@@ -1,8 +1,10 @@
 // 仮想実験（走りながらの声かけ全体）：研究データの多くのランナーの走りを、仮想のスマホで映して今のコーチに通し、
-//   ① ふつうに走っているのに出る声（誤った声）が10分に何回か（項目ごと・ランナーのレベルごと）
+//   ① ふつうに走っているのに出る声（誤った声）が10分に何回か（項目ごと・ランナーのレベルごと）。
+//      走り出しに正しいフォームの線で整える声（form.ts）と、今日の基準ができたあとの崩れの声を分けて数える
 //   ② 崩しを大きさを変えて足したとき、見つける割合と、崩れてから声までの秒数
 //   ③ 声をかける線を変えたら①②がどう変わるか
-// を出す。走り始めの3分（HIP_REF）で基準を作るところから、アプリと同じに通す（間引きも同じ）
+//   ④ 最初から崩れた形で走り出したとき、整える間に正しいフォームの線で気づくか
+// を出す。走り出しに整え、今日の基準を作るところから、アプリと同じに通す（間引きも同じ）。仮想のランナーは声を聞いても直さない
 // 動かし方：RIGLET_DIR=<Riglet のデータ> [VH_DIR=<Van Hooren>] [RBDS_DIR=<RBDS>] npx vitest run --config sim/vitest.config.ts sim/coach.sim.ts
 // データ：Riglet は <ID>/Session1/Treadmill_Run/Treadmill_Run_{Comfortable,Fast}/Post_Process/*.c3d（頭・肩・腰・脚がそろう）
 //         Van Hooren は Sub_XX_333ms.c3d と Sub_XX_trunklean.c3d（本当に上体を前に倒した走り）
@@ -16,7 +18,7 @@ import { loadTrial } from './rbds'
 import { LongRun, distort, truthOf, legLengthMm, groundOf, DISTORT_LABEL, type DistortKind, type Source } from './longrun'
 import { film, replay, BASE, BASE_NOISE, type Extra, type Stream } from './pipeline'
 import type { Placement, Noise, Body } from './camera'
-import { LIMITS, REL_LIMITS, HEAD_ABS, BEFORE_REF } from '../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, FORM } from '../src/modes/camera/params'
 import { HIP_REF, CUE as CUE_P } from '../src/core/params'
 import { activeItems, ALL } from '../src/core/level'
 import { ITEM_KEYS, type ItemKey } from '../src/core/types'
@@ -76,7 +78,7 @@ const median = (xs: number[]) => {
   return s.length ? s[Math.floor(s.length / 2)] : NaN
 }
 const pct = (x: number) => `${Math.round(x * 100)}%`
-const formCues = (cues: { t: number; item: string }[]) => cues.filter((c) => (ITEMS as string[]).includes(c.item)) as { t: number; item: ItemKey }[]
+const formCues = (cues: { t: number; item: string; lead?: boolean }[]) => cues.filter((c) => (ITEMS as string[]).includes(c.item)) as { t: number; item: ItemKey; lead?: boolean }[]
 
 interface Runner {
   id: string
@@ -171,32 +173,45 @@ function loadRigletRunners(): Runner[] {
   return out
 }
 
-// 誤った声の数え方：基準ができたあと（HIP_REF.to 秒より後）の10分あたり、と、基準ができる前（決まった線で見ている間）の回数
+// 誤った声の数え方：今日の基準ができたあと（refAt より後）の10分あたりの、基準からの崩れの声（after）と、
+// 正しいフォームの線で言った声（整える間＝stage、基準ができたあと＝formAfter）。仮想のランナーは直さないので、
+// 線の外にいる人には、整える間に FORM.tries 回まで声が出て、そのあとは FORM.later 秒に1回になる
 function falseCues(reps: { r: ReturnType<typeof replay>; end: number }[]) {
   const after = zeros()
-  const before = zeros()
-  let once = 0
+  const stage = zeros()
+  const formAfter = zeros()
   let minutes = 0
   let runners = 0
   let anyRunner = 0
-  let beforeRunner = 0
+  let stageRunner = 0
+  let formRunner = 0
   for (const { r, end } of reps) {
-    const ref = r.runFrom + HIP_REF.to
-    minutes += (end - ref) / 60
+    const ref = r.refAt ?? end
+    minutes += Math.max(0, end - ref) / 60
     runners++
     let any = false
+    let st = false
+    let fa = false
     for (const c of formCues(r.cues)) {
-      if (c.t <= ref + 1.5 && c.item === 'head' && c.t > ref) once++
-      else if (c.t > ref) {
+      if (c.lead) {
+        if (c.t <= ref) {
+          stage[c.item]++
+          st = true
+        } else {
+          formAfter[c.item]++
+          fa = true
+        }
+      } else if (c.t > ref) {
         after[c.item]++
         any = true
-      } else before[c.item]++
+      }
     }
     if (any) anyRunner++
-    if (formCues(r.cues).some((c) => c.t <= ref)) beforeRunner++
+    if (st) stageRunner++
+    if (fa) formRunner++
   }
-  const per10 = (n: number) => (n / minutes) * 10
-  return { after, before, once, per10, runners, anyRunner, beforeRunner, minutes }
+  const per10 = (n: number) => (minutes ? (n / minutes) * 10 : 0)
+  return { after, stage, formAfter, per10, runners, anyRunner, stageRunner, formRunner, minutes }
 }
 
 describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
@@ -206,24 +221,31 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
   const streams = new Map<string, Stream>()
   // まとめの表に使う数字（上級・実機なみのずれ）：今の線での、誤った声と、崩しの大きさごとの見つけた割合
   type Det = Record<string, { right: number; latSec: number }>
-  const sum = { now: { false: {} as Record<ItemKey, number>, det: {} as Record<DistortKind, Det> } }
+  const sum = { now: { false: {} as Record<ItemKey, number>, det: {} as Record<DistortKind, Det>, stageRuns: 0, runs: 0 } }
 
   itAll('ふつうに走ったときの誤った声', () => {
     console.log(`使う走り：${runners.length}`)
+    const FI = ['body', 'bodyBack', 'trunk', 'trunkBack', 'head'] as ItemKey[]
     let text =
       `## ① ふつうに走ったときの誤った声（10分あたりの回数）\n\n` +
-      `基準ができたあと（走り始めて${HIP_REF.to}秒より後）の10分。カッコ内は、声が1回でも出た走りの割合。` +
-      `「基準の前」は、走り始めの${HIP_REF.to}秒（上体と体全体を決まった線で見ている間）に出た回数の合計。` +
-      `「一度だけ」は、基準ができたときに一度だけ見る頭の位置そのもの（${HEAD_ABS.line}°）で出た声（上級だけ${HEAD_ABS.on ? '' : '。いまは切っているので出ない'}）。\n\n` +
-      `| 置き方・ぶれ | レベル | ${ITEMS.map((k) => ITEM_JA[k]).join(' | ')} | 合計（声が出た走り） | 基準の前（${ITEMS.map((k) => ITEM_JA[k]).join('/')}、声が出た走り） | 一度だけ |\n|---|---|${ITEMS.map(() => '---').join('|')}|---|---|---|\n`
+      `「基準からの崩れ」は、今日の基準（整えたあとの形）ができたあとの10分あたり。カッコ内は、声が1回でも出た走りの割合。` +
+      `「整える間」は、走り出しに正しいフォームの線（体全体 ${FORM.body.min}〜${FORM.body.max}°、上体 ${FORM.trunk.min}〜${FORM.trunk.max}°、頭 首 ${FORM.head.neck}°・頭の位置 ${FORM.head.headLean}°）で言った声の合計（${FI.map((k) => ITEM_JA[k]).join('/')}）と、声が出た走りの数。` +
+      `「線（あと）」は、基準ができたあとに正しいフォームの線で言った声の、10分あたりの回数と走りの数。` +
+      `仮想のランナーは直さないので、線の外にいる人には、整える間に${FORM.tries}回まで声が出る。\n\n` +
+      `| 置き方・ぶれ | レベル | ${ITEMS.map((k) => ITEM_JA[k]).join(' | ')} | 基準からの崩れの合計（声が出た走り） | 整える間（声が出た走り） | 線（あと）（走り） |\n|---|---|${ITEMS.map(() => '---').join('|')}|---|---|---|\n`
     for (const c of CONDS) {
       const ss = runners.map((r, k) => filmOf(r, k, c, NORMAL_SEC, bodyFn(r), 1))
       if (c === CONDS[1]) ss.forEach((s, k) => streams.set(`${c.label}|${k}|normal`, s))
       for (const lv of LEVELS) {
         const f = falseCues(ss.map((s) => ({ r: replay(s, { items: lv.items }), end: NORMAL_SEC })))
-        if (c === CONDS[1] && lv === LEVELS[2]) for (const k of ITEMS) sum.now.false[k] = f.per10(f.after[k])
+        if (c === CONDS[1] && lv === LEVELS[2]) {
+          for (const k of ITEMS) sum.now.false[k] = f.per10(f.after[k])
+          sum.now.stageRuns = f.stageRunner
+          sum.now.runs = f.runners
+        }
         const tot = ITEMS.reduce((a, k) => a + f.after[k], 0)
-        text += `| ${c.label} | ${lv.label} | ${ITEMS.map((k) => f.per10(f.after[k]).toFixed(2)).join(' | ')} | ${f.per10(tot).toFixed(2)}（${pct(f.anyRunner / f.runners)}） | ${ITEMS.map((k) => f.before[k]).join('/')}（${f.beforeRunner}本） | ${f.once}本 |\n`
+        const fa = ITEMS.reduce((a, k) => a + f.formAfter[k], 0)
+        text += `| ${c.label} | ${lv.label} | ${ITEMS.map((k) => f.per10(f.after[k]).toFixed(2)).join(' | ')} | ${f.per10(tot).toFixed(2)}（${pct(f.anyRunner / f.runners)}） | ${FI.map((k) => f.stage[k]).join('/')}（${f.stageRunner}本） | ${f.per10(fa).toFixed(2)}（${f.formRunner}本） |\n`
       }
     }
     text += `\n（${runners.length}本 × 10分 = ${runners.length * 10}分ずつ）\n`
@@ -282,31 +304,49 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
     console.log(text)
   })
 
-  itAll('基準の前の体全体の決まった線', () => {
-    // 走り始めの基準ができる前（最初の HIP_REF.to 秒）は、体全体の前側を決まった線（LIMITS.body）で見る。
-    // BEFORE_REF.body 以上の秒だけ判定するとき、もともと前傾の大きい人への声と、最初から前に倒れている人に気づけるかを比べる
-    const opts = [-Infinity, 15, 16, 18, Infinity]
-    const now = BEFORE_REF.body
-    const label = (v: number) => (v === -Infinity ? 'いつも判定' : v === Infinity ? '判定しない' : `${v}° 以上の秒だけ`) + (v === now ? '（今）' : '')
+  itAll('最初から崩れた形で走り出す', () => {
+    // 走り出しから崩した形のまま走る（今日の基準も、その形か線でできる）。整える間（今日の基準ができるまで）に、
+    // 正しいフォームの線で、合う項目の声が出たか。本当の値（3次元の点から、アプリと同じ定義で測った平均）が線の外か内かで分ける
+    const FK: { kind: DistortKind; sizes: number[]; ok: ItemKey[] }[] = [
+      { kind: 'bodyBack', sizes: [2, 4, 6], ok: ['bodyBack', 'trunkBack'] },
+      { kind: 'trunkBack', sizes: [4, 8], ok: ['trunkBack', 'bodyBack'] },
+      { kind: 'trunk', sizes: [4, 8], ok: ['trunk', 'body'] },
+      { kind: 'body', sizes: [3, 6], ok: ['body', 'trunk'] },
+      { kind: 'head', sizes: [10, 20], ok: ['head'] },
+    ]
+    const lineOut = (x: ReturnType<typeof truthOf>) => ({ body: x.body < FORM.body.min || x.body > FORM.body.max, trunk: x.trunk < FORM.trunk.min || x.trunk > FORM.trunk.max })
     let text =
-      `## ④ 基準ができる前の、体全体の決まった線（${LIMITS.body.cue}°）\n\n` +
-      `走り始めの${HIP_REF.to}秒（基準ができる前）に、体全体の前側を決まった線と比べるのを、どの秒でするか。初心者（最初）で通した。` +
-      `「ふつうの走り」は、その間に出た体全体の声の数（声が出た走り）。「最初から前に倒す」は、走り始めから体全体を前に傾けたまま走ったとき（基準もその姿勢でできるので、あとからは気づけない）に、基準の前に上体か体全体の声が出た走りの割合。\n\n` +
-      `| 置き方・ぶれ | 判定する秒 | ふつうの走り：体全体の声（走り） | 最初から前に倒す +3° | +5° | +7° |\n|---|---|---|---|---|---|\n`
+      `## ④ 最初から崩れた形で走り出したとき（整える間の、正しいフォームの線）\n\n` +
+      `走り出しから崩したまま走る。整える間（今日の基準ができるまで）に、合う項目の声（正しいフォームの線）が出た走りの割合。` +
+      `「線の外」は、崩したあとの本当の値（本ごとの平均）が線（体全体 ${FORM.body.min}〜${FORM.body.max}°、上体 ${FORM.trunk.min}〜${FORM.trunk.max}°）の外だった走り。` +
+      `頭は、研究データの頭の印がアプリの点（MediaPipe の耳）と違い、首の角度がよい姿勢でも小さく出る（真横で平均 11°、sim/result-form.md）ので、線（${FORM.head.neck}°）にはほとんど届かない（線の確かめにならない）。上級、${runners.length}本。\n\n` +
+      `| 置き方・ぶれ | 崩し | 大きさ | 線の外の走り | 声が出た（線の外） | 声が出た（線の内） | 声まで（中央値） |\n|---|---|---|---|---|---|---|\n`
     for (const c of [CONDS[0], CONDS[1], CONDS[3]]) {
-      const ss = runners.map((r, k) => filmOf(r, k, c, HIP_REF.to + 10, bodyFn(r), 3))
-      const lean = [3, 5, 7].map((sz) => runners.map((r, k) => filmOf(r, k, c, HIP_REF.to + 10, (t) => distort(r.run.at(t), 'body', sz / r.ratio.body, r.leg, r.ground), 3)))
-      for (const v of opts) {
-        BEFORE_REF.body = v
-        try {
-          const before = (rp: ReturnType<typeof replay>) => formCues(rp.cues).filter((x) => x.t <= rp.runFrom + HIP_REF.to)
-          const rs = ss.map((x) => replay(x, { items: LEVELS[0].items }))
-          const n = rs.reduce((a, rp) => a + before(rp).filter((x) => x.item === 'body').length, 0)
-          const who = rs.filter((rp) => before(rp).some((x) => x.item === 'body')).length
-          const det = lean.map((ls) => pct(ls.map((x) => replay(x, { items: LEVELS[0].items })).filter((rp) => before(rp).some((x) => x.item === 'body' || x.item === 'trunk')).length / ls.length))
-          text += `| ${c.label} | ${label(v)} | ${n}（${who}本） | ${det.join(' | ')} |\n`
-        } finally {
-          BEFORE_REF.body = now
+      const norm = runners.map((r, k) => filmOf(r, k, c, HIP_REF.to + 20, bodyFn(r), 3))
+      const nr = norm.map((x) => replay(x, {}))
+      const st = nr.filter((rp) => formCues(rp.cues).some((x) => x.lead && x.t <= (rp.refAt ?? Infinity))).length
+      text += `| ${c.label} | ふつう | — | — | — | ${st} / ${runners.length}本 | — |\n`
+      for (const k of FK) {
+        for (const sz of k.sizes) {
+          const res = runners.map((r, i) => {
+            const fn = (t: number) => distort(r.run.at(t), k.kind, sz / r.ratio[k.kind], r.leg, r.ground)
+            let tb = 0
+            let tt = 0
+            let n = 0
+            for (let t = 30; t < 90; t += 1, n++) {
+              const x = truthOf(fn(t))
+              tb += x.body
+              tt += x.trunk
+            }
+            const out = lineOut({ body: tb / n, trunk: tt / n, neck: 0, hip: 0 })
+            const rp = replay(filmOf(r, i, c, HIP_REF.to + 20, fn, 3), {})
+            const cs = formCues(rp.cues).filter((x) => x.lead && x.t <= (rp.refAt ?? Infinity) && k.ok.includes(x.item))
+            return { out: k.kind === 'head' ? false : k.kind.startsWith('body') ? out.body : out.trunk, hit: cs.length > 0, lat: cs.length ? cs[0].t - rp.runFrom : NaN }
+          })
+          const o = res.filter((x) => x.out)
+          const iN = res.filter((x) => !x.out)
+          const lat = res.filter((x) => x.hit).map((x) => x.lat)
+          text += `| ${c.label} | ${DISTORT_LABEL[k.kind].split('（')[0]} | ${sz} | ${o.length} | ${o.length ? pct(o.filter((x) => x.hit).length / o.length) : '—'} | ${iN.length ? pct(iN.filter((x) => x.hit).length / iN.length) : '—'} | ${lat.length ? `${Math.round(median(lat))}秒` : '—'} |\n`
         }
       }
     }
@@ -414,6 +454,7 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
       `# 走りながらの声かけの仮想実験（多くのランナー）\n\n` +
       `研究データ（Riglet ら 2024、CC0、https://doi.org/10.6084/m9.figshare.25592865.v1）の${new Set(runners.map((r) => r.id.split('-')[0])).size}人が、トレッドミルを楽なペースと速いペースで走った記録（それぞれ約1分）から、` +
       `1歩きずつ切って並べ直した13分の走りを作り、仮想のスマホ（毎秒15コマ・点のぶれ・左右の取り違え）で映して、今のコーチ（src/modes/camera/coach.ts）にアプリと同じ間引きで通した。` +
+      `コーチは走り出しに正しいフォームの線（src/modes/camera/params.ts の FORM）と比べて整え、整えたあとの形で今日の基準を作る。仮想のランナーは声を聞いても直さない。` +
       `首の角度の6秒平均が${NECK_RANGE_MAX}°を超えて動く記録（${excluded.join('・') || 'なし'}）は、肩の関節の中心の推定がおかしいとみて除いた。` +
       `崩しは3次元の点を動かして作ったもの（データに崩しの条件はない）。数分かけての揺れや疲れは元の記録に入らないので、` +
       `実機の記録のばらつきに合わせたゆっくりしたずれを足した条件も並べた（${JSON.stringify(REAL_EXTRA)}：[大きさ°, 続く秒]）。\n` +
@@ -429,7 +470,8 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
     const lineNow: Record<ItemKey, string> = { head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, trunkBack: `後ろへ ${REL_LIMITS.trunkBack.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, bodyBack: `後ろへ ${REL_LIMITS.bodyBack.cue}°`, hip: `${LIMITS.hip.cue}%` }
     const summary =
       `## まとめ（上級、実機なみのずれ、${runners.length}本）\n\n` +
-      `「9割」は、崩しに合った声を9割の走りで${HOLD}秒以内に出せた、いちばん小さい崩しの大きさ（カッコ内は声までの秒数の中央値）。誤った声は基準ができたあとの10分あたり。\n\n` +
+      `「9割」は、崩しに合った声を9割の走りで${HOLD}秒以内に出せた、いちばん小さい崩しの大きさ（カッコ内は声までの秒数の中央値）。誤った声は今日の基準ができたあとの10分あたりの、基準からの崩れの声。` +
+      `ふつうに走って、整える間に正しいフォームの線の声が出た走りは ${sum.now.stageRuns} / ${sum.now.runs}本（くわしくは ①）。\n\n` +
       `| 崩し | 声の項目 | 今の線 | 誤った声 | 9割 |\n|---|---|---|---|---|\n` +
       KINDS.map((k) => {
         const it = item[k.kind]

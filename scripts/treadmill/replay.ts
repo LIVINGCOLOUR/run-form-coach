@@ -13,9 +13,9 @@
 //   その場で走るフリの見分け（RUNNING.inPlaceForTesting）を入れて撮った記録を、いまの判定（切っている）で通すため
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
-import { LIMITS, REL_LIMITS, HEAD_ABS, BEFORE_REF } from '../../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, FORM } from '../../src/modes/camera/params'
 import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
-import { CUE, RECOVER, SAY, PHRASES } from '../../src/core/phrases'
+import { CUE, RECOVER, SAY, PHRASES, FORM_SAY } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'
 import { ITEM_KEYS, type ItemKey, type RunLog, type Session } from '../../src/core/types'
 import type { Measure } from '../../src/modes/camera/types'
@@ -27,20 +27,22 @@ import type { DrillOptions } from '../../src/modes/phone/drill'
 
 // --set で書き換えられる入れ物
 export const PARAMS: Record<string, Record<string, unknown>> = {
-  LIMITS, REL_LIMITS, HEAD_ABS, BEFORE_REF, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
+  LIMITS, REL_LIMITS, FORM, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
 }
 // 短い名前 → 入れ物の場所
 export const ALIASES: Record<string, string> = {
-  head: 'LIMITS.head.cue', // 頭が前に出た量（度）。走り始めの自分との差
-  trunk: 'LIMITS.trunk.cue', // 上体の前傾（基準ができる前の決まった線、度）
-  body: 'LIMITS.body.cue', // 体全体の前傾（基準ができる前の決まった線、度）
+  head: 'LIMITS.head.cue', // 頭が前に出た量（度）。今日の基準との差
   hip: 'LIMITS.hip.cue', // 腰の下がり（%）
-  trunkRel: 'REL_LIMITS.trunk.cue', // 上体：走り始めの自分からの増え（度）
-  bodyRel: 'REL_LIMITS.body.cue', // 体全体：走り始めの自分からの増え（度）
-  trunkBackRel: 'REL_LIMITS.trunkBack.cue', // 上体の起きすぎ：走り始めの自分から後ろへ（度）
-  bodyBackRel: 'REL_LIMITS.bodyBack.cue', // 体全体の起きすぎ：走り始めの自分から後ろへ（度）
-  beforeBody: 'BEFORE_REF.body', // 基準ができる前に、体全体の前側を決まった線で見る秒（度以上）
-  headAbs: 'HEAD_ABS.line', // 最初から頭が前に出ている（度）
+  trunkRel: 'REL_LIMITS.trunk.cue', // 上体：今日の基準からの増え（度）
+  bodyRel: 'REL_LIMITS.body.cue', // 体全体：今日の基準からの増え（度）
+  trunkBackRel: 'REL_LIMITS.trunkBack.cue', // 上体の起きすぎ：今日の基準から後ろへ（度）
+  bodyBackRel: 'REL_LIMITS.bodyBack.cue', // 体全体の起きすぎ：今日の基準から後ろへ（度）
+  bodyMin: 'FORM.body.min', // 正しいフォームの線：体全体の起きすぎ（度より小さい）
+  bodyMax: 'FORM.body.max', // 正しいフォームの線：体全体の倒れすぎ（度より大きい）
+  trunkMin: 'FORM.trunk.min', // 正しいフォームの線：上体が後ろ（度より小さい）
+  trunkMax: 'FORM.trunk.max', // 正しいフォームの線：前かがみ（度より大きい）
+  headNeck: 'FORM.head.neck', // 正しいフォームの線：頭が前（首の角度、度）
+  headLean: 'FORM.head.headLean', // 正しいフォームの線：頭が前（頭の位置、度）
   window: 'CUE.window', // 声をかける窓（秒）
   cadence: 'PHONE_LIMITS.cadence.cue', // スマホ：ピッチの下がり（%）
   bounce: 'PHONE_LIMITS.bounce.cue',
@@ -72,8 +74,8 @@ export type Said = { item: string; kind: 'cue' | 'recover' | 'praise' | 'tone' |
 const BY_TEXT = new Map<string, NonNullable<Said>>()
 for (const [k, text] of Object.entries(CUE)) BY_TEXT.set(text, { item: k, kind: 'cue' })
 for (const [k, text] of Object.entries(PHONE_CUE)) BY_TEXT.set(text, { item: k, kind: k === 'mount' || k === 'loose' || k === 'place' ? 'mount' : 'cue' })
-for (const text of RECOVER) BY_TEXT.set(text, { item: 'recover', kind: 'recover' })
-for (const text of [SAY.praise5, SAY.quietStart, SAY.quietDone, PHRASES.phonePraise5, PHRASES.phoneQuietDone]) BY_TEXT.set(text, { item: 'praise', kind: 'praise' })
+for (const text of [...RECOVER, FORM_SAY.ok]) BY_TEXT.set(text, { item: 'recover', kind: 'recover' })
+for (const text of [SAY.praise5, SAY.quietStart, SAY.quietDone, PHRASES.phonePraise5, PHRASES.phoneQuietDone, FORM_SAY.set, FORM_SAY.good]) BY_TEXT.set(text, { item: 'praise', kind: 'praise' })
 export function classify(text: string): Said {
   const tone = /^tone:on:([^:]+)/.exec(text)
   if (tone) return { item: tone[1], kind: 'tone' }
@@ -83,6 +85,7 @@ export function classify(text: string): Said {
 export interface Ev {
   T: number // ふつうの時刻（ms、その端末の時計）
   text: string
+  lead?: boolean // カメラ版：正しいフォームの線で言った声（整える・直った・整った。CueRecord.lead）
 }
 
 const unwrap = <T>(f: unknown): { log: T; session?: unknown } => {
@@ -175,6 +178,8 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   let lastPresent = true
   let lastMoving = false
   let ended = false
+  // 話した言葉が、しくみの声の記録（coach.cues）のどれか。正しいフォームの線で言った声（lead）を見分けるため
+  let ci = 0
   const handle = (ev: ReturnType<Coach['update']>, t: number) => {
     const n = coach.refSeconds
     if (n < refCount || n === 0) refFrom = null
@@ -184,7 +189,11 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     }
     refCount = n
     for (const e of ev) {
-      if (e.type === 'speak') events.push({ T: toT(t), text: e.text })
+      if (e.type === 'speak') {
+        const c = coach.cues[ci]
+        const lead = c && c.text === e.text ? (ci++, c.lead) : undefined
+        events.push({ T: toT(t), text: e.text, ...(lead ? { lead } : {}) })
+      }
       if (e.type === 'state' && e.state === 'running' && runStartT === null) runStartT = toT(t)
       if (e.type === 'state' && e.state === 'ended') ended = true
     }

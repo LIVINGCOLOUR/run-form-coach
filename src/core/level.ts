@@ -12,8 +12,10 @@ export const LEVEL_NOTE: Record<Level, string> = {
   advanced: '最初からすべての項目を見ます',
 }
 
-// 段階ごとに、新しく足す項目と、走り出す前に言うこと。最後の段階（STEPS.length）は「すべて」
-// 上体・体全体の起きすぎは、腰の段階で足す。最初の段階は「背を高く」と言うので、同じ走りで「起きすぎ」と言うと食い違う。
+// 段階ごとに、新しく足す項目と、走り出す前に言うこと。最後の段階（STEPS.length）は「すべて」。
+// ここで決めるのは、今日の基準（整えたあとの形）からの崩れで声をかける項目。カメラ版の、正しいフォームの線で整える声
+// （src/modes/camera/form.ts）は、どの段階でもかける（フォームの土台なので。それでも一度に1つずつ）
+// 基準からの起きすぎ（上体・体全体が後ろへ）は、腰の段階で足す。最初の段階は「背を高く」と言うので、小さな起きすぎまで言うと食い違う。
 // 腰が落ちる走りは、腰の高さより上体が起きる形に出ることが多い（人の動画、form-videos/notes/判定テスト.md）
 export const STEPS: { add: ItemKey[]; title: string; focus: string; up?: string }[] = [
   { add: ['trunk', 'body'], title: '胸のライトで前を照らす', focus: PHRASES.focusUpright },

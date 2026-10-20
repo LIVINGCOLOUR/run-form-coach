@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
-import { bestSession, nextItem, NEXT_TEXT } from '../modes/camera/nextStep'
+import { bestSession, deg, GROUP_LABEL, nextItem, NEXT_TEXT, rangeText } from '../modes/camera/nextStep'
 import { loadProgress, loadSettings, saveSettings, setLevel, type Settings } from '../core/storage'
 import { ALL, LEVEL_LABEL, LEVEL_NOTE, STEPS, type Level, type Progress } from '../core/level'
 import { LEVEL } from '../core/params'
@@ -70,6 +70,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   const prev = sessions[1]
   const best = bestSession(sessions)
   const next = best ? nextItem(best) : undefined
+  // 前回の走りで、正しいフォームから一番離れていた項目（正しいフォームと比べた記録があるときだけ）
+  const lastOff = last?.form?.length ? nextItem(last) : undefined
 
   const { base, ghost, idealFrames, exaggerated } = useMemo(() => {
     const stride = best?.strides.good
@@ -90,16 +92,19 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   }, [best, next])
 
   const shown = k > 0 ? base.map((f, i) => lerpFrame(f, idealFrames[i % idealFrames.length], k)) : base
-  // 今日の意識：注意する項目を広げている途中なら、その段階のこと。すべて見る段階なら、ベストと理想の差から
+  // 今日の意識：前回、正しいフォームから外れていた項目があれば、一番離れていたもの（走り出しに、まずそこを整える）。
+  // なければ、注意する項目を広げている途中ならその段階のこと、すべて見る段階ならベストの走りで正しいフォームから一番離れていたもの
   const stepping = progress.step < ALL
-  const focus = stepping
-    ? {
-        title: STEPS[progress.step].title,
-        reason: `${Math.round(LEVEL.minRunSec / 60)}分以上の走りで、これについて声がかからない走りが${LEVEL.advanceAfter}回続いたら、次へ進みます（いま ${progress.clean}/${LEVEL.advanceAfter}回）`,
-      }
-    : next
-      ? NEXT_TEXT[next.item]
-      : { title: '胸のライトで前を照らす', reason: best ? 'あなたのベストは、もう理想に近い姿勢です' : '最初の1回で、あなたの基準を作ります' }
+  const focus = lastOff
+    ? { title: NEXT_TEXT[lastOff.item].title, reason: `前回は${GROUP_LABEL[lastOff.group]}が ${deg(lastOff.from)}（正しいフォーム ${rangeText(lastOff.group)}）。走り出しに、まずここを整えます` }
+    : stepping
+      ? {
+          title: STEPS[progress.step].title,
+          reason: `${Math.round(LEVEL.minRunSec / 60)}分以上の走りで、これについて声がかからない走りが${LEVEL.advanceAfter}回続いたら、次へ進みます（いま ${progress.clean}/${LEVEL.advanceAfter}回）`,
+        }
+      : next
+        ? NEXT_TEXT[next.item]
+        : { title: '胸のライトで前を照らす', reason: best ? 'あなたのベストは、正しいフォームの範囲に入っています' : '走り出しに、正しいフォームへ整えます' }
   const chooseLevel = (level: Level) => {
     if (level === progress.level) return
     setProgress(setLevel(level))

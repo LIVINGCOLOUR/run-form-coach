@@ -46,7 +46,13 @@ export interface CueRecord<K extends string> {
   item: K | 'praise' | 'recover'
   text: string
   tone?: boolean // 言葉ではなく音で知らせた（text は TONE_TEXT）
+  lead?: boolean // 見る役が自分で決めた声（SecondOut.say。カメラ：正しいフォームの線で知らせた・直った・整った）
 }
+
+// 見る役が自分で決めた声（SecondOut.say）。
+//   cue：その項目の崩れの声。しくみの声かけと同じく、前の声からの間（CUE.gap）と、その項目の次の声までの間に数え、声なしの見守りもやめる
+//   ack：直った（recover として記録）。note：知らせ（praise として記録）。どちらも間には数えない
+export type LeadSay<K extends string> = { kind: 'cue'; item: K; text: string } | { kind: 'ack' | 'note'; text: string }
 
 // 音だけで知らせたときの、記録の文
 export const TONE_TEXT = '（メトロノーム）'
@@ -61,14 +67,20 @@ export type EngineSay = Record<keyof typeof SAY, string>
 export interface SecondOut<S, K extends string> {
   sample: S // そのモードの1秒の記録（画面や結果に使う）
   values: Values<K> // 判定に使う値（線と比べる）。判定しない項目は入れない。1つもなければ、その秒は判定しない
-  ready?: boolean // 走り始めの自分の基準ができた（声なしの見守りは、ここから QUIET.enterWindow 経つまで入らない）
+  ready?: boolean // 見る役の基準ができた（スマホ：走り始めの自分、カメラ：整えたあとの形。声なしの見守りは、ここから QUIET.enterWindow 経つまで入らない）
   once?: { item: K; back: number } // 一度だけかける声。直ったかは values[item] が back 以下に戻ったかで見る
+  // 1秒の点数を見る役が決めるとき（values のほかの線でも見ている入り口。カメラ：正しいフォームの線）。null は判定しなかった秒。
+  // なければ values から出す
+  score?: number | null
+  say?: LeadSay<K> // 見る役が自分で決めた声。しくみはそのまま言って記録する（間を守るのは見る役。SecondContext.since で見る）
+  hold?: boolean // この秒は、しくみが自分で声かけ・ほめ・声なしの見守りを決めない（見る役が声を決めている間。カメラ：走り出しに整える間）
 }
 
 export interface SecondContext<K extends string> {
   quiet: boolean // 声なしで見守っている時間か
   active: K[] // 声をかける項目
   score: (values: Values<K>) => number | null // 1秒の点数（判定した項目のうち、いちばん崩れている項目の点数）。判定した項目がなければ null
+  since: (item?: K) => number // その項目の前の崩れの声から（item がなければ、どの項目でも前の声から）の秒数。まだなければとても大きい数
 }
 
 export interface ModeAnalyzer<M, S, K extends string> {
@@ -232,8 +244,8 @@ export class CueEngine<M, S, K extends string> {
     if (inp.m) this.bucket.push(inp.m)
     if (this.active - this.bucketStart >= 1) {
       this.bucketStart = Math.floor(this.active)
-      const r = this.closeSecond()
-      if (r) ev.push(...this.decide(r))
+      const c = this.closeSecond()
+      if (c) ev.push(...this.decide(c.r, c.out))
     }
     return ev
   }
@@ -249,29 +261,35 @@ export class CueEngine<M, S, K extends string> {
     if (this.state !== 'running' || this.absentSince !== null || this.pending) return true
     const t = this.active
     if (t < POWER.warmup) return true
-    // 声をかける線を越えたら、点数がまだ高くても細かく見る（間引いたままだと記録が足りず、声がかからない）
-    const shaky = (r: Record_<K>) => (r.score !== null && r.score < SCORE.good) || this.order.some((k) => {
-      const v = r.values[k]
-      return v !== undefined && this.over(k, v)
-    })
+    // 声をかける線を越えたら、点数がまだ高くても細かく見る（間引いたままだと記録が足りず、声がかからない）。
+    // 点数は、しくみが声をかける値（values）だけで見る（見る役が点数を決めた入り口で、ほかの線の外れまで数えると、
+    // ずっと線の外にいる人をずっと細かく見ることになるため。そちらは見る役が細かく見るかを決める）
+    const shaky = (r: Record_<K>) => {
+      const sc = this.score(r.values)
+      return (sc !== null && sc < SCORE.good) || this.order.some((k) => {
+        const v = r.values[k]
+        return v !== undefined && this.over(k, v)
+      })
+    }
     if (this.records.slice(-POWER.recentBad).some((r) => r.t > t - POWER.recentBad && shaky(r))) return true
     const every = this.quiet ? POWER.lookEveryQuiet : POWER.lookEvery
     return t % every < POWER.lookSec
   }
 
   // 1秒分の測定をまとめて1件の記録にする
-  private closeSecond(): Record_<K> | null {
+  private closeSecond(): { r: Record_<K>; out: SecondOut<S, K> } | null {
     const b = this.bucket
     this.bucket = []
     const t = Math.floor(this.active)
-    const out = this.analyzer.second(b, t, { quiet: this.quiet, active: this.activeItems, score: (v) => this.score(v) })
+    const since = (item?: K) => t - (item === undefined ? this.lastAnyCue : (this.lastCue[item] ?? -1e9))
+    const out = this.analyzer.second(b, t, { quiet: this.quiet, active: this.activeItems, score: (v) => this.score(v), since })
     if (!out) return null
     if (out.ready && this.refAt === null) this.refAt = t
     if (out.once) this.onceDue = out.once
-    const r = { t, values: out.values, score: this.score(out.values) }
+    const r = { t, values: out.values, score: out.score !== undefined ? out.score : this.score(out.values) }
     this.records.push(r)
     this.samples.push(out.sample)
-    return r
+    return { r, out }
   }
 
   // 直近 sec 秒の記録。間引いて測っているので、件数ではなく時間で区切る
@@ -286,6 +304,29 @@ export class CueEngine<M, S, K extends string> {
   private say(ev: CoachEvent[], t: number, item: CueRecord<K>['item'], text: string) {
     ev.push({ type: 'speak', text })
     this.cues.push({ t, item, text })
+  }
+
+  // 見る役が自分で決めた声を言う。崩れの声（cue）は、しくみの声かけと同じく間に数え、声なしの見守りもやめる
+  private lead(ev: CoachEvent[], t: number, s: LeadSay<K>) {
+    ev.push({ type: 'speak', text: s.text })
+    if (s.kind !== 'cue') {
+      this.cues.push({ t, item: s.kind === 'ack' ? 'recover' : 'praise', text: s.text, lead: true })
+      return
+    }
+    this.cues.push({ t, item: s.item, text: s.text, lead: true })
+    if (this.quiet) {
+      this.quiet = false
+      this.quietEnd = t
+      this.quietLen = QUIET.first
+    }
+    this.cueCount[s.item] = (this.cueCount[s.item] ?? 0) + 1
+    this.lastCue[s.item] = t
+    this.lastAnyCue = t
+    // 同じ項目で、しくみが「直った」を待っていたら取り消す（直ったかは、見る役が見る）
+    if (this.pending?.item === s.item) {
+      this.pending = null
+      this.stopTone(ev)
+    }
   }
 
   private cue(ev: CoachEvent[], t: number, k: K, back: number) {
@@ -335,11 +376,15 @@ export class CueEngine<M, S, K extends string> {
     return null
   }
 
-  private decide(r: Record_<K>): CoachEvent[] {
+  private decide(r: Record_<K>, out: SecondOut<S, K>): CoachEvent[] {
     const ev: CoachEvent[] = []
     const t = r.t
     // 判定しなかった項目の音は止める（holdUnjudged）
     if (this.holdUnjudged && this.toneOn !== null && r.values[this.toneOn] === undefined) this.stopTone(ev)
+
+    // 見る役が自分で決めた声（カメラ：正しいフォームの線）。hold の秒は、しくみは自分では声を決めない
+    if (out.say) this.lead(ev, t, out.say)
+    if (out.hold) return ev
 
     // 声なしで見守る時間。声をかける項目（音で知らせる項目のほか）が線を越えたら、すぐに見守りをやめて、下の声かけに進む
     // （点数の平均が下がるのを待つと、小さな崩れに気づけない。カメラ版の仮想実験で、見守り中は頭を6°前に出しても見つけたのは4割だった）。
@@ -420,7 +465,7 @@ export class CueEngine<M, S, K extends string> {
       return ev
     }
 
-    // 安定していたら、声なしで見守る時間に入る。走り始めの自分との比べで安定していたかを見たいので、
+    // 安定していたら、声なしで見守る時間に入る。基準との比べで安定していたかを見たいので、
     // 基準ができてから QUIET.enterWindow 経つまでは入らない
     const lastMid = judged(this.within(QUIET.enterWindow))
     if (

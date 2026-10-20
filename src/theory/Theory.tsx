@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
 import { demoStride, REFERENCE } from '../modes/camera/ui/figure'
+import { FORM, LIMITS, REL_LIMITS } from '../modes/camera/params'
 import { Logic } from './Logic'
 
 // フォームの見方：見本のフォームが何から作られているか、9つの観点それぞれの基準・ずれたときに何が起きるか・根拠
@@ -90,9 +91,9 @@ const POINTS: Point[] = [
   {
     no: '01',
     title: '頭の位置',
-    base: '耳が肩の真上にある。走り始め（30秒〜3分）の自分の頭の位置が基準で、そこから前に出たら声をかける。最初から大きく前に出ている人には、3分の時点で一度だけ知らせる。',
+    base: '耳が肩の真上にある。走り出したら、まず頭がはっきり前に出ていないかを見て、出ていれば直してもらう。直した形を今日の基準にして、そこから前に出たら声をかける。',
     off: '頭が前に出ると、首と肩が頭を支え続けることになり、上体も前に引っぱられやすい。ただし頭の位置そのものと走りの効率を直接調べた研究は、まだ見つけられていない（コーチの経験則に近い観点）。',
-    how: '立って測った基準から、首の角度が5°以上前に出た状態が続いたら声をかける。',
+    how: `首の角度が${FORM.head.neck}°、頭の位置（肩→耳の前傾）が${FORM.head.headLean}°を両方越えたら、走り出しに直してもらう（アプリの骨格の点では、よい姿勢でも大きく出るので、はっきり前に出たときだけ）。そのあとは、今日の基準から${LIMITS.head.cue}°以上前に出た状態が続いたら声をかける。`,
     status: 'coach',
     refs: [],
     demo: { lean: 7, head: 12, drop: 0 },
@@ -103,7 +104,7 @@ const POINTS: Point[] = [
     title: '上体の傾き',
     base: '腰から肩にかけて、わずかに前に傾く（見本は7°）。',
     off: '97人のランナーを調べた研究では、上体がまっすぐに近い人ほど記録が良かった。一方で、上体を7°ほど前に倒すと膝の負担が約6%減り、そのぶんお尻の筋肉の負担が増える。倒れすぎず、反りすぎずが目安。',
-    how: '走り始め（30秒〜3分）の自分より、腰から肩の線が5°以上、足首から肩の線が3.5°以上前に倒れた状態が続いたら声をかける（最初の3分は、15°・14°の決まった線）。',
+    how: `走り出しに、腰から肩の線が${FORM.trunk.min}〜${FORM.trunk.max}°、足首から肩の線が${FORM.body.min}〜${FORM.body.max}°（正しいフォームの範囲）に入っているかを見て、外れていれば1つずつ直してもらう。そのあとは、整えた形より腰から肩の線が${REL_LIMITS.trunk.cue}°以上、足首から肩の線が${REL_LIMITS.body.cue}°以上、前に倒れたり後ろに起きたりした状態が続いたら声をかける。`,
     status: 'coach',
     refs: ['folland', 'teng'],
     demo: { lean: 17, head: 3, drop: 0 },
@@ -154,7 +155,7 @@ const POINTS: Point[] = [
     title: '腰の高さ',
     base: `接地中に膝が曲がるのは${stanceMax(ideal.knee[0], ideal.stancePct)}°まで（研究データの平均は${stanceMax(normal.knee[0], normal.stancePct)}°）。腰が落ちずに、上から吊られているように走る。`,
     off: '接地中に膝が伸びている人ほど、エネルギーの消費が少なかった。膝を深く曲げて腰を落として走ると、酸素の消費が最大50%増えた。',
-    how: '走り始めの自分の腰の高さ（脚の長さに対する割合）から、6%以上下がった状態が続いたら声をかける。',
+    how: `今日の基準（走り出しに整えた形）の腰の高さ（脚の長さに対する割合）から、${LIMITS.hip.cue}%以上下がった状態が続いたら声をかける。`,
     status: 'coach',
     refs: ['folland', 'mcmahon'],
     demo: { lean: 7, head: 0, drop: 16 },

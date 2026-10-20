@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { loadRiglet, placeLike, type Joint, type RigletTrial } from './riglet'
 import { makeCamera, toFrame, rng, W, H, type Placement, type Noise, type Body } from './camera'
 import { leanFromVertical, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../src/modes/camera/geometry'
-import { LIMITS, BASELINE, HEAD_ABS } from '../src/modes/camera/params'
+import { LIMITS, BASELINE } from '../src/modes/camera/params'
 import type { V3 } from './rbds'
 
 const DIR = process.env.RIGLET_DIR!
@@ -261,42 +261,4 @@ it('真横からのずれの見分け', () => {
   }
   console.log(text)
   writeFileSync((process.env.SIM_OUT ?? 'sim/result-head.md').replace(/\.md$/, '-yaw.md'), text)
-})
-
-// 3分の時点の一度だけの確認（頭の位置そのものを HEAD_ABS.line と比べる）が、置き方によってどう働くか
-it('最初から頭が前に出ている人の確認', () => {
-  const people = load()
-  const p2 = (v: V3) => ({ x: v[0], y: -v[1], v: 1 })
-  const trueA = people.map((p) => mean(Array.from({ length: REF * FPS }, (_, i) => leanFromVertical(p2(at(p.run, i / FPS).shR!), p2(at(p.run, i / FPS).earR!), 1))))
-  let text =
-    `## 最初から頭が前に出ている人の確認（線 ${HEAD_ABS.line}°、真横から ±${HEAD_ABS.yawMax} 以内のときだけ）\n\n` +
-    `本当の頭の位置（肩→耳の前傾）：${[...trueA].sort((a, b) => a - b).map((x) => x.toFixed(0)).join(' ')}\n\n` +
-    `| 置き方 | 確認できた人 | 声がかかった人（本当の頭の位置） | 頭を${TILT}°前に回すと声がかかった人 |\n|---|---|---|---|\n`
-  for (const c of CASES) {
-    const pl = { ...BASE, ...c.pl }
-    const noise = { ...BASE_NOISE, ...c.noise }
-    const r = people.map((p, k) => {
-      const cam = makeCamera(pl, at(p.run, 0).pelvis)
-      const go = (tilt: number) => {
-        const rr = rng(300 + k)
-        const st = { ar: [] as number[], swap: 0 }
-        const hl: number[] = []
-        const yw: number[] = []
-        for (let i = 0; i < REF * FPS; i++) {
-          let f = toFrame(at(p.run, i / FPS, tilt), cam, noise, st, rr, 1 / FPS)
-          if (pl.fix) f = levelFrame(rotateFrame(f, pl.roll, W / 2, H / 2), cam.pitch, pl.vfov, W, H)
-          const m = measure(f)
-          hl.push(m.headLean)
-          yw.push(m.yaw)
-        }
-        const ok = Math.abs(mean(yw)) <= HEAD_ABS.yawMax
-        return { ok, cue: ok && mean(hl) > HEAD_ABS.line }
-      }
-      return { a: go(0), b: go(TILT), truth: trueA[k] }
-    })
-    const flagged = r.filter((x) => x.a.cue).map((x) => x.truth.toFixed(0))
-    text += `| ${c.label} | ${r.filter((x) => x.a.ok).length}/${r.length} | ${flagged.length}人（${flagged.join(' ') || 'なし'}） | ${r.filter((x) => x.b.cue).length}人 |\n`
-  }
-  console.log(text)
-  writeFileSync((process.env.SIM_OUT ?? 'sim/result-head.md').replace(/\.md$/, '-once.md'), text)
 })

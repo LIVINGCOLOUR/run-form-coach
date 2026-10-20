@@ -46,7 +46,7 @@ const out = { lines: J.LINES, clips: [] }
 const diffText = (d) =>
   `頭 ${f1(d.head)}° ${yn(d.cues.head)}（首 ${f1(d.neck)}・頭の位置 ${f1(d.headLean)}）／上体 ${f1(d.trunk)}° 前${yn(d.cues.trunk)}後${yn(d.cues.trunkBack)}／体全体 ${f1(d.body)}° 前${yn(d.cues.body)}後${yn(d.cues.bodyBack)}／腰の下がり ${f1(d.hip)}% ${yn(d.cues.hip)}／顎 ${f1(d.chin)}°（補正 ${f1(d.chinAdj)}°）／着地の足 ${f2(d.footAhead)}／着地のすね ${f1(d.shank)}°`
 
-console.log(`声をかける線：頭 +${J.LINES.head}°、上体 +${J.LINES.trunkRel}°／−${J.LINES.trunkBackRel}°、体全体 +${J.LINES.bodyRel}°／−${J.LINES.bodyBackRel}°、腰 ${J.LINES.hip}%（走り始めの自分から）／決まった線：上体 ${J.LINES.trunkAbs}°、体全体 ${J.LINES.bodyAbs}°、頭の位置 ${J.LINES.headAbs}°${J.LINES.headAbsOn ? '' : '（切っている）'}\n`)
+console.log(`声をかける線：頭 +${J.LINES.head}°、上体 +${J.LINES.trunkRel}°／−${J.LINES.trunkBackRel}°、体全体 +${J.LINES.bodyRel}°／−${J.LINES.bodyBackRel}°、腰 ${J.LINES.hip}%（今日の基準から）／正しいフォームの線（${J.LINES.formWindow}秒平均）：体全体 ${J.LINES.bodyMin}〜${J.LINES.bodyMax}°、上体 ${J.LINES.trunkMin}〜${J.LINES.trunkMax}°、頭 首 ${J.LINES.headNeck}°・頭の位置 ${J.LINES.headLean}°（向きの値 ${J.LINES.headYawMax} まで）。「整」は正しいフォームの線の声\n`)
 const stats = {}
 for (const c of config.clips) {
   const lm = JSON.parse(readFileSync(join(lmDir, `${c.id}.json`), 'utf8'))

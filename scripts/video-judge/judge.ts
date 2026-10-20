@@ -5,7 +5,7 @@
 // 短い動画（1つの例が数秒〜20秒）では、走り始め（30秒〜3分）の基準ができないので、2つのやり方で見る
 //   compare()：よい例を走り始めの基準とみなして、悪い例との差を、今の声をかける線と比べる（線の値は params.ts から読む）
 //   coachSim()：区間のコマをくり返して長い走りを作り、今のコーチ（Coach）にそのまま通す。
-//     good→bad：よい例を240秒（その間に基準ができる）→ 悪い例を60秒。bad only：悪い例だけを240秒（決まった線と HEAD_ABS）
+//     good→bad：よい例を240秒（その間に整えて基準ができる）→ 悪い例を60秒。bad only：悪い例だけを240秒（走り出しに整える間の、正しいフォームの線）
 //     くり返しのつなぎ目で骨格がとぶので、走っているかは「走っている」とみなして渡す（1コマずつの歩数の判定は別に数える）
 // 測るだけの値（判定には使っていない）：
 //   顎：手前側の耳→鼻の線の、水平からの上向き（度。geometry の measure の chin）。鼻が耳より下なら負。
@@ -18,7 +18,7 @@ import { bodyVisible, MotionDetector } from '../../src/modes/camera/motion'
 import { measure } from '../../src/modes/camera/geometry'
 import { L } from '../../src/modes/camera/landmarks'
 import { Coach, headForward } from '../../src/modes/camera/coach'
-import { HEAD_ABS, LIMITS, REL_LIMITS } from '../../src/modes/camera/params'
+import { FORM, LIMITS, REL_LIMITS } from '../../src/modes/camera/params'
 import { CUE } from '../../src/core/params'
 import { analyzeRun, type TimedFrame } from '../../src/modes/camera/slowmo'
 import type { Frame } from '../../src/core/types'
@@ -182,12 +182,16 @@ export const LINES = {
   trunkBackRel: REL_LIMITS.trunkBack.cue,
   bodyBackRel: REL_LIMITS.bodyBack.cue,
   hip: LIMITS.hip.cue,
-  trunkAbs: LIMITS.trunk.cue,
-  bodyAbs: LIMITS.body.cue,
-  headAbs: HEAD_ABS.line,
-  headAbsOn: HEAD_ABS.on,
-  headAbsYaw: HEAD_ABS.yawMax,
+  // 正しいフォームの線（決まった線）
+  bodyMin: FORM.body.min,
+  bodyMax: FORM.body.max,
+  trunkMin: FORM.trunk.min,
+  trunkMax: FORM.trunk.max,
+  headNeck: FORM.head.neck,
+  headLean: FORM.head.headLean,
+  headYawMax: FORM.head.yawMax,
   window: CUE.window,
+  formWindow: FORM.window,
 }
 // head：アプリが頭に使う値（首の角度の増えと、頭の位置そのものの増えの小さいほう）。neck・headLean はそれぞれの増え
 export function compare(bad: WindowStat, good: WindowStat) {
@@ -249,10 +253,10 @@ export function coachSim(ticks: Tick[], parts: { from: number; to: number; sec: 
     switchAt,
     ref,
     refAt,
-    // 基準ができたときの「最初から頭が前に出ている」（HEAD_ABS）の声は headAbs として分ける
+    // 正しいフォームの線で言った声は「整」を付けて分ける（直った・整ったは整ok・整note）
     cues: coach.cues.map((c) => {
       const tt = runFrom + c.t
-      const item = c.item === 'head' && refAt !== null && Math.abs(tt - refAt) < 1.5 ? 'headAbs' : c.item
+      const item = c.lead ? `整${c.item === 'recover' ? 'ok' : c.item === 'praise' ? 'note' : c.item}` : c.item
       return { t: +tt.toFixed(1), item }
     }),
   }

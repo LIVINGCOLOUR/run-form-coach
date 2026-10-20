@@ -8,7 +8,7 @@ export interface Pt {
 // 1コマの骨格（MediaPipe Pose の33点）
 export type Frame = Pt[]
 
-// 姿勢の項目。trunkBack・bodyBack は、上体・体全体が走り始めの自分より起きすぎた（後ろに傾いた）側
+// 姿勢の項目。trunkBack・bodyBack は、上体・体全体が起きすぎた（後ろに傾いた）側
 export type ItemKey = 'head' | 'trunk' | 'trunkBack' | 'body' | 'bodyBack' | 'hip'
 // 並び順が、声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰）
 export const ITEM_KEYS: ItemKey[] = ['head', 'trunk', 'trunkBack', 'body', 'bodyBack', 'hip']
@@ -24,19 +24,37 @@ export interface Baseline {
 // 1秒ごとの記録
 export interface Sample {
   t: number // 練習開始からの秒（一時停止中は進まない）
-  head: number // 走り始めの自分の首の角度との差（度）。基準ができるまでは 0
+  head: number // 今日の基準（整えたあとの形）から頭が前に出た量（度）。基準ができるまでは 0
   trunk: number
   body: number
-  hipDrop: number // 序盤の自分の腰の高さからの下がり（%）
+  hipDrop: number // 今日の基準の腰の高さからの下がり（%）
   score: number // 姿勢スコア 0〜100
   quiet: boolean // 声なしで確認している時間か
-  // 判定に使った値（上体と体全体は、走り始めの自分からの増え方を LIMITS の目盛りに直したもの）。ないときは trunk・body そのもの
+  // 今日の基準からの崩れ（上体と体全体の増え方を LIMITS の目盛りに直したもの）。基準ができるまでは無い
   judge?: { trunk: number; body: number }
-  // 起きすぎの側の判定の値（LIMITS の目盛り）。基準ができる前は、決まった線と比べる値（後ろへの傾き）
+  // 起きすぎの側（今日の基準から後ろへ傾いた量を、LIMITS の目盛りに直したもの）。基準ができるまでは無い
   back?: { trunk: number; body: number }
   headLean?: number // 頭の位置そのもの（肩→耳の前傾、度）
-  // 顎：耳→鼻の線の上向きの、走り始めの自分からの変化（度。上体が起きた分は差し引く）。測って記録するだけで、声はかけない
+  neck?: number // 首の角度そのもの（肩→耳の前傾 − 腰→肩の前傾、度）
+  yaw?: number // スマホが体の前側から（正）か後ろ側から（負）撮っているか（geometry の yawSign の1秒の平均）
+  // 正しいフォームの線（camera/params.ts の FORM）を外れた量を、LIMITS の目盛りに直したもの。判定しなかった項目は無い
+  form?: Partial<Record<ItemKey, number>>
+  // 顎：耳→鼻の線の上向きの、今日の基準からの変化（度。上体が起きた分は差し引く）。測って記録するだけで、声はかけない
   chin?: number
+}
+
+// 正しいフォームとの比べ（カメラ版、src/modes/camera/form.ts）。結果の画面と次の一歩に使う
+export type FormGroup = 'body' | 'trunk' | 'head'
+export interface FormResult {
+  group: FormGroup
+  key: ItemKey // 外れていた側（内側なら、近いほうの線の側）
+  value: number // 走っていた秒の平均（度）。頭は首の角度
+  value2?: number // 頭の位置そのもの（頭だけ）
+  over: number // 平均が線からどれだけ外れていたか（度。内側なら負）
+  inside: number // 線と比べた窓の平均（FORM.window 秒）のうち、内側だった割合（0〜1）
+  cues: number // 正しいフォームの線で知らせた回数
+  fixed: boolean // 知らせたあと、線の内側に入った（直った）ことがある
+  judged: boolean // 線と比べられた（頭は、斜めから撮っているときは比べない）
 }
 
 export type Category = 'good' | 'mid' | 'bad'
@@ -53,6 +71,7 @@ export interface CueLog {
   t: number
   item: ItemKey | 'praise' | 'recover'
   text: string
+  lead?: boolean // 正しいフォームの線で言った声（整える・直った・整った）
 }
 
 export interface Session {
@@ -71,6 +90,7 @@ export interface Session {
   logId?: string // 調整用の記録
   standing?: { head: number; trunk: number; issue: 'head' | 'back' | null } // 走る前の立ち姿勢（猫背のチェック）
   focus?: { level: 'beginner' | 'intermediate' | 'advanced'; step: number } // この走りのレベルと、注意した項目の段階（level.ts）
+  form?: FormResult[] // 正しいフォームとの比べ（カメラ版）
 }
 
 // 調整用の記録（カメラ版は src/modes/camera/log.ts の LogRecorder で作る）

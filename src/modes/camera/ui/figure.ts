@@ -37,11 +37,11 @@ function rotateSet(f: Frame, idx: number[], pivot: Pt, deg: number): Frame {
 const hipMid = (f: Frame) => mid(f[L.leftHip], f[L.rightHip])
 const shoulderMid = (f: Frame) => mid(f[L.leftShoulder], f[L.rightShoulder])
 
-// 次の一歩：直す項目だけを from → to に直した形
+// 次の一歩：直す項目だけを from → to に直した形（起きすぎの側は、to が from より大きいので前へ傾く）
 export function nextStepFrame(f: Frame, item: ItemKey, from: number, to: number): Frame {
   const d = from - to
   if (item === 'head') return rotateSet(f, FACE, shoulderMid(f), d)
-  if (item === 'trunk' || item === 'body') return rotateSet(f, UPPER, hipMid(f), d)
+  if (item === 'trunk' || item === 'body' || item === 'trunkBack' || item === 'bodyBack') return rotateSet(f, UPPER, hipMid(f), d)
   const lift = (d / 100) * LEG
   return f.map((p, i) => (i <= 26 ? { ...p, y: p.y - lift } : p))
 }
