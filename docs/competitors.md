@@ -18,6 +18,7 @@
 |---|---|---|
 | [RunForm AI - Running Coach](https://apps.apple.com/app/id6763226958) | 中国系の個人開発（Zhang Wei）。トレッドミルの横に iPhone を置き、走りながら声で指導、13項目とうたう。月 $2.99〜3.99 | 評価数が表示されない。宣伝文だけで、ライバル未満 |
 | [running-form-analyzer](https://github.com/henryczup/running-form-analyzer)、[RunTrack](https://github.com/DrDraesel/runtrack) | GitHub の個人の試作。カメラ＋骨格推定＋その場の表示や音声 | 製品ではない |
+| [Gait Coach](https://github.com/mihirk460/gait_analysis)（2026-09） | 作りはこのアプリとほぼ同じ（iPhone の Safari＋MediaPipe、横と後ろ、読み上げ） | 作者は実機の iPhone で動かしていないと書いている。製品ではない |
 
 **ちゃんとした製品はまだない。空いている席。**
 
@@ -35,8 +36,8 @@
 
 | 名前 | 中身 | 見立て |
 |---|---|---|
-| [StrideCoach](https://apps.apple.com/jp/app/id6746169274)（Beflex、国内） | **AirPods の動きのセンサー**で、走りながら声で指導。ピッチ・接地時間・上下動・衝撃・**頭の角度**・左右差など8項目。月800円、年5,000円。評価16件・平均4.9 | **一番近い対抗馬**。外でも使え、機器も要らない。ただし頭しか見えず、上体・体全体・腰は見えない |
-| [Runmetrix](https://runmetrix.casio.com/jp/application/)（カシオ・アシックス） | 腰のセンサー（14,080円）。トレッドミル対応。声はペース・ピッチ・ストライドが中心 | 姿勢を声で直すかは未確認 |
+| [StrideCoach](https://apps.apple.com/jp/app/id6746169274)（Beflex、韓国） | **AirPods の動きのセンサー**で、走りながら声で指導。ピッチ・接地時間・上下動・衝撃・**頭の角度**・左右差など8項目。月800円、年5,000円。評価16件・平均4.9 | **一番近い対抗馬**。外でも使え、機器も要らない。ただし頭しか見えず、上体・体全体・腰は見えない |
+| [Runmetrix](https://runmetrix.casio.com/jp/application/)（カシオ・アシックス） | 腰のセンサー（14,080円）。走りながらの「[リアルタイムコーチング](https://runmetrix.casio.com/jp/rtc/)」（目的別に基本・健康・フォーム改善。イヤホンが要る）を足した | リアルタイムコーチングは**トレッドミルでは使えない**と公式に書いてある（2026-10-20 確認）。声で何を言うかは未確認 |
 | [Lumo Run](https://lumobodytech.com/lumo-run) | 腰のセンサーで、その場で声でフォーム指導していた | **販売終了**。その場のフォーム指導に払い続けてもらう難しさの前例 |
 | NURVV Run（中敷き）、STRIV（中敷き） | 足裏のセンサーで、その場の指導 | 今の状態は未確認 |
 
@@ -48,7 +49,7 @@
 | [Runeasi](https://runeasi.ai/)、[DorsaVI](https://dorsavi.com/ai-motion-analysis/) | 理学療法士向け。センサーや動画AI |
 | [LEOMO Performance Center Tokyo](https://jp.leomo.io/pages/lpco) | センサーを5か所に付ける対面の有料診断 |
 | [ジー・サーチ ランニングフォーム診断](https://kyodonewsprwire.jp/index.php/release/202510297997) | 富士通の骨格認識。法人向け |
-| Peloton | カメラでのフォーム指導はあるが、筋トレ向け。走りに使えるかは未確認 |
+| Peloton Run Analysis（2026-10-01 開始） | 新しいトレッドミルのカメラで、ピッチ・歩幅・上下動を見て、走った後に点数（1〜100）と助言。**走っている最中は直さない**：ウィスコンシン大学の生体力学の専門家に相談して「走りながら歩幅を大きく変えさせるのは気が散る・危ない」と判断した（[Pelobuddy](https://www.pelobuddy.com/?p=45644)）。このアプリは、この点への答えを持っておく |
 
 ### 5. 時計（Apple Watch・Garmin）との比較（2026-10-12）
 
@@ -91,6 +92,12 @@
 5. ジム・コーチ向けでは強みがある。Visbody はトレッドミルごと買い替えさせるが、こちらは**今あるトレッドミルにスマホを置くだけ**。
 
 ## 調べた記録
+
+### 2026-10-20（海外と競合を足した）
+
+- 海外の YouTuber（22チャンネル）と競合アプリを `~/Developer/research-data/creators-overseas-2026-10-20.md` にまとめた（専門家の言うことの一致と食い違いも）。
+- StrideCoach の Beflex は韓国の会社（KAIST の研究者が作った）。前回「国内」としたのは誤り。
+- 大手は走っている最中の声を避けた（Peloton）か、外だけにした（Runmetrix）。カメラで走りながら声をうたう製品は今も RunForm AI だけ（評価は表示されないまま）。
 
 ### 2026-10-09（初回）
 
