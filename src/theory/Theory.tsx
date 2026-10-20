@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
 import { demoStride, REFERENCE } from '../modes/camera/ui/figure'
-import { FORM, LIMITS, REL_LIMITS } from '../modes/camera/params'
+import { FORM, LANDING, LIMITS, REL_LIMITS } from '../modes/camera/params'
 import { Logic } from './Logic'
 
 // フォームの見方：見本のフォームが何から作られているか、9つの観点それぞれの基準・ずれたときに何が起きるか・根拠
@@ -126,8 +126,8 @@ const POINTS: Point[] = [
     title: '着地の位置',
     base: `着地の瞬間のすねが鉛直に近い（見本は前に${Math.round(ideal.shankAtContact[0])}°）。足は腰の少し前に着く。`,
     off: `着地のすねが前に倒れているほど（足を前に出しすぎて着くほど）、記録が悪かった。研究データ全体の平均は前に${Math.round(normal.shankAtContact[0])}°で、見本はその中でも鉛直に近い4分の1の人たち。前に着くほどブレーキがかかる。`,
-    how: '接地の瞬間（足首が一番前に出た瞬間）のすねの角度を測る予定。',
-    status: 'next',
+    how: `足が一番前に出た瞬間（1歩ずつ）の、かかとが腰より前に出た量（脚の長さに対する割合）を、${LANDING.window}秒の中央値で見る。今日の基準（走り出しに整えた形）より脚の長さの${Math.round(LIMITS.landing.cue * 100)}%以上前に着く状態が続いたら声をかける。速さで大きく変わるので、速さを変えたら基準を作り直す。速さで補正した決まった線（+${Math.round(FORM.landing.max * 100)}%）は${FORM.landing.say ? '、走り出しに整える' : '試しで、いまは声にせず、越えている間は「整いました」と言わない'}。測れるのは足が前に着く形で、ブレーキの力そのものではない（くわしくは判定のロジックの 13）。`,
+    status: 'coach',
     refs: ['folland', 'fukuchi'],
     demo: { lean: 7, head: 0, drop: 0, over: 1 },
     offLabel: '足を前に出しすぎて着く形',

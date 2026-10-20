@@ -37,11 +37,27 @@ function rotateSet(f: Frame, idx: number[], pivot: Pt, deg: number): Frame {
 const hipMid = (f: Frame) => mid(f[L.leftHip], f[L.rightHip])
 const shoulderMid = (f: Frame) => mid(f[L.leftShoulder], f[L.rightShoulder])
 
-// 次の一歩：直す項目だけを from → to に直した形（起きすぎの側は、to が from より大きいので前へ傾く）
+// 次の一歩：直す項目だけを from → to に直した形（起きすぎの側は、to が from より大きいので前へ傾く）。
+// 着地は、腰より前にある脚の足（足首・かかと・つま先）を、脚の長さ × 差だけ後ろへ（膝はその半分）。前に出ているほど大きく動かす
 export function nextStepFrame(f: Frame, item: ItemKey, from: number, to: number): Frame {
   const d = from - to
   if (item === 'head') return rotateSet(f, FACE, shoulderMid(f), d)
   if (item === 'trunk' || item === 'body' || item === 'trunkBack' || item === 'bodyBack') return rotateSet(f, UPPER, hipMid(f), d)
+  if (item === 'landing') {
+    const hx = hipMid(f).x
+    const out = f.slice()
+    for (const [knee, foot] of [
+      [L.leftKnee, [L.leftAnkle, L.leftHeel, L.leftFoot]],
+      [L.rightKnee, [L.rightAnkle, L.rightHeel, L.rightFoot]],
+    ] as [number, number[]][]) {
+      const w = Math.min(1, Math.max(0, (f[foot[0]].x - hx) / (0.3 * LEG)))
+      if (!w) continue
+      const dx = d * LEG * w
+      out[knee] = { ...f[knee], x: f[knee].x - dx / 2 }
+      for (const i of foot) out[i] = { ...f[i], x: f[i].x - dx }
+    }
+    return out
+  }
   const lift = (d / 100) * LEG
   return f.map((p, i) => (i <= 26 ? { ...p, y: p.y - lift } : p))
 }

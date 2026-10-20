@@ -1,11 +1,13 @@
 // トレッドミルの検証の採点。Mac の声で区間を指示した記録（npm run drill の drill-….json）と、
 // 同じ時間に撮ったカメラ版・スマホ版の記録（npm run logs で取ってきた rfc-….json / rfc-phone-….json）を時計で合わせ、
 // 区間ごとに「その崩しを見つけたか・区間の始まりから最初の声までの秒数・ふつうの区間で出た誤った声・戻しの区間で声が止まったか」を表にする。
+// カメラ版は、走り出しの声（整える間）と、区間ごとの着地の値（いまのコードに通し直した、窓の値と今日の基準からの増え）・前側後ろ側の値も出す。
 //
 // 使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [オプション]
 //   （カメラ版・スマホ版はどちらか1つでもよく、順番も問わない。中身で見分ける）
 //   --set 名前=値          線を上書きして、記録をもう一度判定に通す（何回でも）。例 --set head=7 --set trunkRel=4
 //                          短い名前：head・hip（LIMITS の cue）、trunkRel・bodyRel（REL_LIMITS の cue）、bodyMin・bodyMax・trunkMin・trunkMax・headNeck・headLean（正しいフォームの線 FORM）、window、
+//                          landing（着地の基準からの増えの線）・landingMax（着地の決まった線）・landingSay（1 で着地の決まった線を声にする）・speedGuard、
 //                          cadence・bounce・braking（スマホ）。ほかは LIMITS.head.full のように場所で
 //   --grace 秒             崩しの区間が終わってから、この秒数までに出た声は、その崩しを見つけたと数える（既定 10）
 //   --camera-offset 秒     カメラ版の時計 − Mac の時計（既定 0。ジャンプの表で大きくずれていたら入れる）
@@ -209,7 +211,7 @@ const label = (c, s) => `${c.lead ? '整' : ''}${c.item} ${fmt(sec(c.T - s.start
 
 function grade(cues, kind) {
   const rows = []
-  const sum = { judged: 0, hit: 0, lat: [], falseNormal: [], normalSec: 0, gapVoices: 0, gapCount: 0, gapStopped: 0, mount: 0 }
+  const sum = { judged: 0, hit: 0, lat: [], falseNormal: [], normalSec: 0, falseSpeed: [], speedSec: 0, gapVoices: 0, gapCount: 0, gapStopped: 0, mount: 0 }
   for (const s of sections) {
     const expect = s.kind === 'drill' ? (STEPS[s.key]?.[kind] ?? []) : []
     const all = inSec(cues, s.start, s.end)
@@ -234,6 +236,11 @@ function grade(cues, kind) {
       sum.normalSec += runSec
       sum.falseNormal.push(...v)
       cell = v.length ? `誤り ${v.length}：${v.map((c) => label(c, s)).join('、')}` : '誤り 0'
+    } else if (s.kind === 'speed') {
+      // 速さを変えて、ふつうの形で走る区間：出た声は誤り（着地は、速さの目安が大きく変わったら比べずに基準を作り直す）
+      sum.speedSec += sec(s.end - s.start)
+      sum.falseSpeed.push(...v)
+      cell = v.length ? `誤り ${v.length}：${v.map((c) => label(c, s)).join('、')}` : '誤り 0'
     } else if (s.kind === 'gap') {
       sum.gapCount++
       sum.gapVoices += v.length
@@ -246,14 +253,66 @@ function grade(cues, kind) {
   return { rows, sum }
 }
 
-const KIND_NAME = { prep: '立つ', walk: '歩く', stop: '止める', jump: 'ジャンプ', speedup: '速さを上げる', normal: 'ふつう', drill: '崩し', gap: '戻し', cool: '歩く' }
+const KIND_NAME = { prep: '立つ', walk: '歩く', stop: '止める', jump: 'ジャンプ', speedup: '速さを上げる', normal: 'ふつう', drill: '崩し', gap: '戻し', speed: '速さを変える', move: 'スマホを動かす', moved: '動かしたあと', cool: '歩く' }
+const L = R.PARAMS.LANDING
+const pct = (x) => (x === null || x === undefined || !Number.isFinite(x) ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x * 1000) / 10)}%`)
+const median = (xs) => {
+  const v = xs.filter(Number.isFinite).sort((a, b) => a - b)
+  return v.length ? v[v.length >> 1] : NaN
+}
+const mmss = (ms) => `${ms < 0 ? '−' : ''}${Math.floor(Math.abs(ms) / 60000)}:${String(Math.floor((Math.abs(ms) % 60000) / 1000)).padStart(2, '0')}`
+
+// 走り出しの声：ジョグの最初の区間（起きた形の走り出しか、最初のふつう）の始まりから、今日の基準ができるまで（なければ6分）に、
+// アプリが話した言葉。整える声に従って直せたかを見るため。「整」は正しいフォームの線で言った声（通し直したものだけ印がある）
+function startVoices(d) {
+  const first = sections.find((x) => x.key === 'upright' || x.key === 'normal1')
+  if (!first) return
+  const until = d.now?.ref ? d.now.ref.to - d.off + 60_000 : first.start + 6 * 60_000
+  p(`### 走り出しの声（「${first.name}」の始まりから${d.now?.ref ? '、今日の基準ができた1分あとまで' : '6分'}。時刻は区間の始まりから）`)
+  p()
+  for (const src of d.sources.filter((x) => x.name !== '上書き')) {
+    const evs = (src.name === 'そのとき' ? R.loggedEvents(d.f.data).events : (src.name === 'いまの線' ? d.now : d.over).events)
+      .map((e) => ({ ...e, T: e.T - d.off }))
+      .filter((e) => e.T >= first.start - 15_000 && e.T <= until && R.isPhrase(e.text))
+    p(`- ${src.name}：${evs.length ? evs.map((e) => `${mmss(e.T - first.start)} ${e.lead ? '整 ' : ''}「${e.text}」`).join('／') : '声なし'}`)
+  }
+  p()
+}
+
+// 着地（カメラ版）：区間ごとの、窓の値（手前の脚のかかとの前・速さの目安・速さで補正した値）と、今日の基準からの増え。
+// 窓（${L.window}秒、間引いて見ている間は${L.thinWindow}秒）が区間の値に入れ替わるよう、区間のはじめ（${L.window}秒か、区間の半分の短いほう）は除く
+function landingTable(d, r, name) {
+  if (!r?.secs?.length) return
+  const ref = r.landRef
+  p(`### 着地と前側・後ろ側の値（${name}）`)
+  p()
+  p(`今日の着地の基準：${ref ? `かかとの前 ${pct(ref.heel)}（手前の脚 ${ref.near}、山 ${ref.n}）・速さの目安 ${fmt(ref.speed, 2)}` : 'できなかった'}。速さの目安が ±${Math.round(L.speedGuard * 100)}% を越えて変わって作り直した回数：${r.landRebuilds ?? 0}。` +
+    `値は脚の長さに対する割合。速さで補正した値は、かかとの前 −（${L.fit.a} ＋ ${L.fit.b} × 速さの目安）で、試しの線 ${pct(R.PARAMS.FORM.landing.max)}・よい例 ${pct(R.PARAMS.GOOD.landing.max)}まで。基準からの増えの線は ${pct(R.PARAMS.LIMITS.landing.cue)}`)
+  p()
+  p('| 区間 | 種類 | 長さ | かかとの前（中央） | 速さの目安（中央） | 速さで補正（中央・最大） | 基準からの増え（中央・最大） | 前側・後ろ側の値（中央） | 着地の声 |')
+  p('|---|---|---|---|---|---|---|---|---|')
+  const landCues = cuesOf(r.events, d.off).filter((c) => c.item === 'landing')
+  for (const s of sections.filter((x) => ['normal', 'drill', 'gap', 'speed', 'moved', 'speedup'].includes(x.kind))) {
+    const skip = Math.min(L.window, sec(s.end - s.start) / 2) * 1000
+    const xs = r.secs.filter((x) => x.T - d.off >= s.start + skip && x.T - d.off < s.end)
+    const ls = xs.filter((x) => x.land).map((x) => x.land)
+    const dr = ls.map((x) => x.drift).filter((x) => x !== undefined)
+    const said = landCues.filter((c) => c.T >= s.start && c.T < s.end + grace * 1000)
+    const nm = s.kind === 'gap' ? `戻し（${STEPS[s.after]?.name ?? s.after ?? ''}のあと）` : s.name
+    p(`| ${nm} | ${KIND_NAME[s.kind] ?? s.kind} | ${fmt(sec(s.end - s.start), 0)}秒 | ${pct(median(ls.map((x) => x.heel)))} | ${fmt(median(ls.map((x) => x.speed)), 2)} | ${pct(median(ls.map((x) => x.res)))}・${pct(ls.length ? Math.max(...ls.map((x) => x.res)) : NaN)} | ${dr.length ? `${pct(median(dr))}・${pct(Math.max(...dr))}` : '—'} | ${fmt(median(xs.map((x) => x.yaw)), 3)} | ${said.length ? said.map((c) => `${c.lead ? '整' : ''}${fmt(sec(c.T - s.start))}秒`).join('、') : ''} |`)
+  }
+  p()
+  const lr = r.form?.find((x) => x.group === 'landing')
+  if (lr) p(`結果の画面の着地：速さで補正 ${pct(lr.value)}（かかとの前 ${pct(lr.heel)}・速さの目安 ${fmt(lr.speed, 2)}）、試しの線の内側だった窓 ${Math.round(lr.inside * 100)}%`)
+  p()
+}
 for (const d of devices) {
   const name = d.kind === 'camera' ? 'カメラ版' : 'スマホ版'
   const graded = d.sources.map((src) => ({ src, ...grade(src.cues, d.kind) }))
   p(`## 区間ごと（${name}）`)
   p()
   if (d.kind === 'camera') {
-    p('出てほしい項目：head＝頭が前、trunk＝上体の前傾、body＝体全体の前傾、hip＝腰が落ちた。「整」は正しいフォームの線で言った声（走り出しに整える間と、そのあとも線を外れたとき）。今日の基準（整えたあとの形）ができるまでは、基準からの崩れは判定しない')
+    p('出てほしい項目：head＝頭が前、trunk＝上体の前傾、body＝体全体の前傾、bodyBack・trunkBack＝体全体・上体の起きすぎ、hip＝腰が落ちた、landing＝足が体より前に着く（今日の基準からの増え。ピッチを1割落とす崩しは、仮想実験で声が出たのが半分あまり）。「整」は正しいフォームの線で言った声（走り出しに整える間と、そのあとも線を外れたとき）。今日の基準（整えたあとの形）ができるまでは、基準からの崩れは判定しない')
     const items = d.sources.find((s) => s.items)?.items
     if (items) p(`声をかける項目（${itemsAll ? '--items all：すべて' : '撮ったときのランナーのレベル'}）：${items.join('・')}。ほかの項目は、大きく崩れたとき（点数が 50 未満）だけ声が出る（この声は cue の線ではなく、full・zero で決まる点数で出る）`)
   }
@@ -274,6 +333,7 @@ for (const d of devices) {
   row('見つけるまでの秒数（平均・最大）', (s) => (s.lat.length ? `${fmt(s.lat.reduce((a, b) => a + b, 0) / s.lat.length)}・${fmt(Math.max(...s.lat))}` : '—'))
   row('ふつうの区間の誤った声', (s) => `${s.falseNormal.length}（${fmt(s.normalSec / 60)}分。10分あたり ${fmt(s.normalSec ? (s.falseNormal.length / s.normalSec) * 600 : null)}）`)
   row('　うち正しいフォームの線（整）／今日の基準からの崩れ', (s) => `${s.falseNormal.filter((c) => c.lead).length}／${s.falseNormal.filter((c) => !c.lead).length}`)
+  if (sections.some((x) => x.kind === 'speed')) row('速さを変えた区間の誤った声', (s) => `${s.falseSpeed.length}（${fmt(s.speedSec / 60)}分）${s.falseSpeed.length ? `：${s.falseSpeed.map((c) => `${c.lead ? '整' : ''}${c.item}`).join('、')}` : ''}`)
   row('戻しの区間で声が止まった', (s) => `${s.gapStopped} / ${s.gapCount}（続いた声 ${s.gapVoices}）`)
   if (d.kind === 'phone') row('付け方の確認の声（ずっと腰に付けているので、出たら誤り）', (s) => `${s.mount}`)
   p()
@@ -285,6 +345,11 @@ for (const d of devices) {
     const how = d.faithful === d.now ? 'いまの線で通し直しても' : '撮ったときと同じ条件（記録の始めから、撮ったときの項目で）で通し直すと'
     p(`通し直しの確かめ：そのときの声 ${logged.length} 回のうち、${how} ±2秒以内に同じ項目で出たもの ${match} 回（通し直しの声は ${re.length} 回）。大きく違うときは、撮ったあとに判定のコードが変わったか、通し直しが撮ったときと違う`)
     p()
+  }
+  if (d.kind === 'camera' && d.now) {
+    startVoices(d)
+    landingTable(d, d.now, 'いまの線')
+    if (d.over) landingTable(d, d.over, '上書き')
   }
   // 今日の基準（整えたあとの形）を、どの区間で作ったか（カメラ版）。歩きや崩しの区間が混ざっていると、ふつうに走っても声が出る・崩しを見逃す
   if (d.kind === 'camera') {

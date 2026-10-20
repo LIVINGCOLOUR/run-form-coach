@@ -10,14 +10,15 @@
 //   thin を付けると、全コマの記録をふだんの間引き（Live.tsx と同じく、コーチが要ると言ったコマだけ見る）に通し直せる。
 //   記録の moving 列は1コマずつの判定なので、走り始め・止まりは撮ったときと同じく Coach の中で直近のコマの割合から決め直す。
 //   running: 'steps' を付けると、1コマずつの判定を歩数（ピッチ RUNNING.runSpm 以上）だけにする（記録の by 列が steps のコマだけ走っている）。
-//   その場で走るフリの見分け（RUNNING.inPlaceForTesting）を入れて撮った記録を、いまの判定（切っている）で通すため
+//   その場で走るフリの見分け（RUNNING.inPlaceForTesting）を入れて撮った記録を、いまの判定（切っている）で通すため。
+//   骨格の点（記録の19点）があるコマは、撮ったときと同じくコマとしてコーチに渡す（着地の位置は点から測る。src/modes/camera/landing.ts）
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
-import { LIMITS, REL_LIMITS, FORM } from '../../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, FORM, LANDING, GOOD } from '../../src/modes/camera/params'
 import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
-import { CUE, RECOVER, SAY, PHRASES, FORM_SAY } from '../../src/core/phrases'
+import { CUE, RECOVER, SAY, PHRASES, FORM_SAY, phraseId } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'
-import { ITEM_KEYS, type ItemKey, type RunLog, type Session } from '../../src/core/types'
+import { ITEM_KEYS, type Frame, type ItemKey, type RunLog, type Session } from '../../src/core/types'
 import type { Measure } from '../../src/modes/camera/types'
 import { PhoneRun } from '../../src/modes/phone/session'
 import { PHONE_CUE } from '../../src/modes/phone/analyzer'
@@ -27,7 +28,7 @@ import type { DrillOptions } from '../../src/modes/phone/drill'
 
 // --set で書き換えられる入れ物
 export const PARAMS: Record<string, Record<string, unknown>> = {
-  LIMITS, REL_LIMITS, FORM, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
+  LIMITS, REL_LIMITS, FORM, LANDING, GOOD, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
 }
 // 短い名前 → 入れ物の場所
 export const ALIASES: Record<string, string> = {
@@ -43,14 +44,18 @@ export const ALIASES: Record<string, string> = {
   trunkMax: 'FORM.trunk.max', // 正しいフォームの線：前かがみ（度より大きい）
   headNeck: 'FORM.head.neck', // 正しいフォームの線：頭が前（首の角度、度）
   headLean: 'FORM.head.headLean', // 正しいフォームの線：頭が前（頭の位置、度）
+  landing: 'LIMITS.landing.cue', // 着地：今日の基準からのかかとの前の増え（脚の長さに対する割合）
+  landingMax: 'FORM.landing.max', // 着地の決まった線（速さで補正したかかとの前）
+  landingSay: 'FORM.landing.say', // 着地の決まった線を声にするか（1 で声にする、0 で声にしない）
+  speedGuard: 'LANDING.speedGuard', // 着地：速さの目安がこの割合を越えて変わったら、比べずに基準を作り直す
   window: 'CUE.window', // 声をかける窓（秒）
   cadence: 'PHONE_LIMITS.cadence.cue', // スマホ：ピッチの下がり（%）
   bounce: 'PHONE_LIMITS.bounce.cue',
   braking: 'PHONE_LIMITS.braking.cue',
 }
 
-// 「名前=値」を入れ物に書き込む。戻り値は書き込んだ場所と、前の値
-export function setParam(spec: string): { path: string; before: unknown; after: number } {
+// 「名前=値」を入れ物に書き込む。戻り値は書き込んだ場所と、前の値。はい・いいえの値（FORM.landing.say）は 0 か 1 で渡す
+export function setParam(spec: string): { path: string; before: unknown; after: number | boolean } {
   const i = spec.indexOf('=')
   if (i < 0) throw new Error(`--set は 名前=値 の形で渡してください（${spec}）`)
   const name = spec.slice(0, i).trim()
@@ -61,12 +66,13 @@ export function setParam(spec: string): { path: string; before: unknown; after: 
   let obj: Record<string, unknown> | undefined = PARAMS[keys[0]]
   for (const k of keys.slice(1, -1)) obj = obj?.[k] as Record<string, unknown> | undefined
   const last = keys[keys.length - 1]
-  if (!obj || keys.length < 2 || typeof obj[last] !== 'number') {
+  if (!obj || keys.length < 2 || (typeof obj[last] !== 'number' && typeof obj[last] !== 'boolean')) {
     throw new Error(`--set の名前が分かりません（${name}）。短い名前: ${Object.keys(ALIASES).join(', ')}。または ${Object.keys(PARAMS).join('・')} の中の場所（例 LIMITS.head.cue）`)
   }
   const before = obj[last]
-  obj[last] = value
-  return { path, before, after: value }
+  const after = typeof before === 'boolean' ? value !== 0 : value
+  obj[last] = after
+  return { path, before, after }
 }
 
 // 話した言葉 → 項目。声かけでない言葉は null
@@ -76,6 +82,9 @@ for (const [k, text] of Object.entries(CUE)) BY_TEXT.set(text, { item: k, kind: 
 for (const [k, text] of Object.entries(PHONE_CUE)) BY_TEXT.set(text, { item: k, kind: k === 'mount' || k === 'loose' || k === 'place' ? 'mount' : 'cue' })
 for (const text of [...RECOVER, FORM_SAY.ok]) BY_TEXT.set(text, { item: 'recover', kind: 'recover' })
 for (const text of [SAY.praise5, SAY.quietStart, SAY.quietDone, PHRASES.phonePraise5, PHRASES.phoneQuietDone, FORM_SAY.set, FORM_SAY.good]) BY_TEXT.set(text, { item: 'praise', kind: 'praise' })
+// アプリの言葉か（走り出しの声を並べるとき、段の切り替えなどの記録を除くため）
+export const isPhrase = (text: string) => phraseId(text) !== undefined
+
 export function classify(text: string): Said {
   const tone = /^tone:on:([^:]+)/.exec(text)
   if (tone) return { item: tone[1], kind: 'tone' }
@@ -138,6 +147,12 @@ export interface ReplayOut {
   runStartT: number | null // 走り始めた（しくみが running になった）時刻
   // 走り始めの自分の基準（HIP_REF の区間）を作った時刻（ふつうの時刻）と、その値。カメラ版だけ。基準ができなければ null
   ref?: { from: number; to: number; neck: number; trunk: number; body: number; headLean: number; hipRatio: number | null } | null
+  // カメラ版の1秒ごとの記録（ふつうの時刻）：前側・後ろ側の値（yawSign）と、着地の窓の値（Sample.land。窓の山が足りない秒は無い）。
+  // あわせて、着地の今日の基準と、速さが変わって作り直した回数
+  secs?: { T: number; yaw?: number; land?: NonNullable<Session['samples'][number]['land']> }[]
+  landRef?: { heel: number; speed: number; near: string; n: number } | null
+  landRebuilds?: number
+  form?: Session['form'] // 正しいフォームとの比べ（結果の画面の値）
 }
 
 // fromMs：この時刻（その端末の時計、ms）より前のコマは通さない（歩いている間にしくみが走り始めていても、基準をジョグで作り直すため）
@@ -167,6 +182,15 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   else if (opts.items !== 'all') warnings.push('結果（session）に「注意した項目」（focus）がないので、すべての項目で声をかけるとして通しました')
   const coach = new Coach({ pause: RUNNING.pauseEnabled, items })
   const events: Ev[] = []
+  // 骨格の点（記録の19点）からコマを作る（撮ったときにコーチに渡していたもの。なめらかにして傾きを直したあとの点）
+  const off = log.columns.length - 1
+  const npts = log.points?.length ?? 0
+  const frameOf = (r: number[]): Frame | undefined => {
+    if (!npts || r.length < off + npts * 3) return undefined
+    const f: Frame = Array.from({ length: 33 }, () => ({ x: 0, y: 0, v: 0 }))
+    log.points.forEach((pi, k) => (f[pi] = { x: r[off + k * 3], y: r[off + k * 3 + 1], v: r[off + k * 3 + 2] }))
+    return f
+  }
   let runStartT: number | null = null
   // 走り始めの基準にためた最初の秒・最後の秒の時刻（基準ができる前に止まって作り直したら、数え直す）
   let refFrom: number | null = null
@@ -180,7 +204,14 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   let ended = false
   // 話した言葉が、しくみの声の記録（coach.cues）のどれか。正しいフォームの線で言った声（lead）を見分けるため
   let ci = 0
+  // 1秒ごとの記録ができた時刻（ふつうの時刻）と、前側・後ろ側の値・着地の値
+  const secs: NonNullable<ReplayOut['secs']> = []
+  let seen = 0
   const handle = (ev: ReturnType<Coach['update']>, t: number) => {
+    for (; seen < coach.samples.length; seen++) {
+      const x = coach.samples[seen]
+      secs.push({ T: toT(t), yaw: x.yaw, ...(x.land ? { land: x.land } : {}) })
+    }
     const n = coach.refSeconds
     if (n < refCount || n === 0) refFrom = null
     if (n > refCount) {
@@ -217,15 +248,16 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     const visible = r[iv] === 1
     const moving = opts.running === 'steps' ? r[iby] === BY_STEPS : r[imov] === 1
     const m: Measure | undefined = visible && r[ineck] !== -999 ? { neck: r[ineck], trunk: r[itrunk], body: r[ibody], hipRatio: r[ihip], yaw: r[iyaw], headLean: r[ilean], chin: ichin < 0 ? 0 : r[ichin], dir: 1 } : undefined
-    handle(coach.update({ t, present: visible, moving, m }), t)
+    handle(coach.update({ t, present: visible, moving, m, frame: m ? frameOf(r) : undefined }), t)
     lastT = t
     lastPresent = visible
     lastMoving = moving
   }
   const lr = coach.leanRef
-  const hipRef = (coach as unknown as { analyzer: { hipRef: number | null } }).analyzer.hipRef
+  const analyzer = (coach as unknown as { analyzer: { hipRef: number | null; drift: { ref: ReplayOut['landRef']; rebuilds: number } } }).analyzer
+  const hipRef = analyzer.hipRef
   const ref = lr && refFrom !== null && refTo !== null ? { from: refFrom, to: refTo, neck: lr.neck, trunk: lr.trunk, body: lr.body, headLean: lr.headLean, hipRatio: hipRef } : null
-  return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref }
+  return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref, secs, landRef: analyzer.drift.ref, landRebuilds: analyzer.drift.rebuilds, form: coach.finish().form }
 }
 
 // ---- スマホ版：生の値を PhoneRun にもう一度通す ----

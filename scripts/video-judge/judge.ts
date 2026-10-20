@@ -39,6 +39,7 @@ export interface Tick {
   moving: boolean // MotionDetector の1コマずつの判定
   cadence: number | null
   m?: Measure
+  f?: Frame // なめらかにした骨格（見えたコマだけ。コーチに渡して、着地の位置を測る）
   chin?: number
   feetCut: boolean // 足（かかと・つま先）が画面の下の端にかかっている
   keyVis: number // 腰・膝・足首の確からしさの平均
@@ -65,6 +66,7 @@ export function track(c: LandmarkClip): Tick[] {
     if (visible) {
       const m = measure(f)
       tick.m = m
+      tick.f = f
       tick.moving = md.update(f, t)
       tick.cadence = md.cadence
       tick.chin = m.chin
@@ -222,11 +224,12 @@ export function compare(bad: WindowStat, good: WindowStat) {
   }
 }
 
-// 区間のコマをくり返して長い走りにし、今のコーチに通す（pipeline.ts の replay と同じく、ふだんの間引きをする）
+// 区間のコマをくり返して長い走りにし、今のコーチに通す（pipeline.ts の replay と同じく、ふだんの間引きをする）。
+// 骨格のコマも渡すので、着地の位置（今日の基準からの増え）も測る（くり返しのつなぎ目では足の位置がとぶ）
 export function coachSim(ticks: Tick[], parts: { from: number; to: number; sec: number }[]) {
   const fps = 15
   const coach = new Coach({ pause: false })
-  const seq: { m?: Measure; present: boolean }[][] = parts.map((p) => ticks.filter((k) => k.t >= p.from && k.t < p.to).map((k) => ({ m: k.m, present: !!k.m })))
+  const seq: { m?: Measure; f?: Frame; present: boolean }[][] = parts.map((p) => ticks.filter((k) => k.t >= p.from && k.t < p.to).map((k) => ({ m: k.m, f: k.f, present: !!k.m })))
   let t = 0
   const switchAt: number[] = []
   let lastPresent = true
@@ -242,7 +245,7 @@ export function coachSim(ticks: Tick[], parts: { from: number; to: number; sec: 
         if (refAt === null && coach.leanRef) refAt = t
         continue
       }
-      coach.update({ t, present: k.present, moving: k.present, m: k.m })
+      coach.update({ t, present: k.present, moving: k.present, m: k.m, frame: k.f })
       lastPresent = k.present
       if (refAt === null && coach.leanRef) refAt = t
     }

@@ -20,6 +20,7 @@ import { film, replay, BASE, BASE_NOISE, type Extra, type Stream } from './pipel
 import type { Placement, Noise, Body } from './camera'
 import { LIMITS, REL_LIMITS, FORM } from '../src/modes/camera/params'
 import { HIP_REF, CUE as CUE_P } from '../src/core/params'
+import { FORM_SAY } from '../src/core/phrases'
 import { activeItems, ALL } from '../src/core/level'
 import { ITEM_KEYS, type ItemKey } from '../src/core/types'
 
@@ -29,7 +30,7 @@ const RBDS = process.env.RBDS_DIR
 const OUT = process.env.SIM_OUT ?? 'sim/result-coach.md'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
-const ITEM_JA: Record<ItemKey, string> = { head: '頭', trunk: '上体', trunkBack: '上体の起きすぎ', body: '体全体', bodyBack: '体全体の起きすぎ', hip: '腰' }
+const ITEM_JA: Record<ItemKey, string> = { head: '頭', trunk: '上体', trunkBack: '上体の起きすぎ', body: '体全体', bodyBack: '体全体の起きすぎ', hip: '腰', landing: '着地' }
 const zeros = () => Object.fromEntries(ITEMS.map((k) => [k, 0])) as Record<ItemKey, number>
 const LEVELS = [
   { label: '初心者（最初）', items: activeItems(0) },
@@ -124,8 +125,9 @@ function bodyFn(r: Runner, kind?: DistortKind, size = 0, onset = ONSET): (t: num
   }
 }
 
+// legs：着地の測り方が使う脚の点も残して、コーチにコマとして渡す（着地もアプリと同じに測る）
 function filmOf(r: Runner, k: number, c: (typeof CONDS)[number], sec: number, body: (t: number) => Body, seed: number): Stream {
-  return film({ sec, seed: seed * 1009 + k, pl: { ...BASE, ...c.pl }, noise: { ...BASE_NOISE, ...c.noise }, extra: c.extra, body })
+  return film({ sec, seed: seed * 1009 + k, pl: { ...BASE, ...c.pl }, noise: { ...BASE_NOISE, ...c.noise }, extra: c.extra, body, legs: true })
 }
 
 const NECK_RANGE_MAX = 20
@@ -175,7 +177,8 @@ function loadRigletRunners(): Runner[] {
 
 // 誤った声の数え方：今日の基準ができたあと（refAt より後）の10分あたりの、基準からの崩れの声（after）と、
 // 正しいフォームの線で言った声（整える間＝stage、基準ができたあと＝formAfter）。仮想のランナーは直さないので、
-// 線の外にいる人には、整える間に FORM.tries 回まで声が出て、そのあとは FORM.later 秒に1回になる
+// 線の外にいる人には、整える間に FORM.tries 回まで声が出て、そのあとは FORM.later 秒に1回になる。
+// settled：整え終わりに「姿勢は整っています／整いました」と言った走りの数。landingOver：結果の着地が試しの線を越えた走りの数
 function falseCues(reps: { r: ReturnType<typeof replay>; end: number }[]) {
   const after = zeros()
   const stage = zeros()
@@ -185,10 +188,14 @@ function falseCues(reps: { r: ReturnType<typeof replay>; end: number }[]) {
   let anyRunner = 0
   let stageRunner = 0
   let formRunner = 0
+  let settled = 0
+  let landingOver = 0
   for (const { r, end } of reps) {
     const ref = r.refAt ?? end
     minutes += Math.max(0, end - ref) / 60
     runners++
+    if (r.cues.some((c) => c.lead && (c.text === FORM_SAY.good || c.text === FORM_SAY.set))) settled++
+    if (r.form?.some((x) => x.group === 'landing' && x.over > 0)) landingOver++
     let any = false
     let st = false
     let fa = false
@@ -211,7 +218,7 @@ function falseCues(reps: { r: ReturnType<typeof replay>; end: number }[]) {
     if (fa) formRunner++
   }
   const per10 = (n: number) => (minutes ? (n / minutes) * 10 : 0)
-  return { after, stage, formAfter, per10, runners, anyRunner, stageRunner, formRunner, minutes }
+  return { after, stage, formAfter, per10, runners, anyRunner, stageRunner, formRunner, minutes, settled, landingOver }
 }
 
 describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
@@ -231,8 +238,9 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
       `「基準からの崩れ」は、今日の基準（整えたあとの形）ができたあとの10分あたり。カッコ内は、声が1回でも出た走りの割合。` +
       `「整える間」は、走り出しに正しいフォームの線（体全体 ${FORM.body.min}〜${FORM.body.max}°、上体 ${FORM.trunk.min}〜${FORM.trunk.max}°、頭 首 ${FORM.head.neck}°・頭の位置 ${FORM.head.headLean}°）で言った声の合計（${FI.map((k) => ITEM_JA[k]).join('/')}）と、声が出た走りの数。` +
       `「線（あと）」は、基準ができたあとに正しいフォームの線で言った声の、10分あたりの回数と走りの数。` +
-      `仮想のランナーは直さないので、線の外にいる人には、整える間に${FORM.tries}回まで声が出る。\n\n` +
-      `| 置き方・ぶれ | レベル | ${ITEMS.map((k) => ITEM_JA[k]).join(' | ')} | 基準からの崩れの合計（声が出た走り） | 整える間（声が出た走り） | 線（あと）（走り） |\n|---|---|${ITEMS.map(() => '---').join('|')}|---|---|---|\n`
+      `仮想のランナーは直さないので、線の外にいる人には、整える間に${FORM.tries}回まで声が出る。` +
+      `「整った」は、整え終わりに「姿勢は整っています／整いました」と言った走りの数。「着地が線の外」は、結果の着地（速さで補正したかかとの前）が試しの線 +${FORM.landing.max} を越えた走りの数（越えている間は整ったと言わない）。\n\n` +
+      `| 置き方・ぶれ | レベル | ${ITEMS.map((k) => ITEM_JA[k]).join(' | ')} | 基準からの崩れの合計（声が出た走り） | 整える間（声が出た走り） | 線（あと）（走り） | 整った | 着地が線の外 |\n|---|---|${ITEMS.map(() => '---').join('|')}|---|---|---|---|---|\n`
     for (const c of CONDS) {
       const ss = runners.map((r, k) => filmOf(r, k, c, NORMAL_SEC, bodyFn(r), 1))
       if (c === CONDS[1]) ss.forEach((s, k) => streams.set(`${c.label}|${k}|normal`, s))
@@ -245,7 +253,7 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
         }
         const tot = ITEMS.reduce((a, k) => a + f.after[k], 0)
         const fa = ITEMS.reduce((a, k) => a + f.formAfter[k], 0)
-        text += `| ${c.label} | ${lv.label} | ${ITEMS.map((k) => f.per10(f.after[k]).toFixed(2)).join(' | ')} | ${f.per10(tot).toFixed(2)}（${pct(f.anyRunner / f.runners)}） | ${FI.map((k) => f.stage[k]).join('/')}（${f.stageRunner}本） | ${f.per10(fa).toFixed(2)}（${f.formRunner}本） |\n`
+        text += `| ${c.label} | ${lv.label} | ${ITEMS.map((k) => f.per10(f.after[k]).toFixed(2)).join(' | ')} | ${f.per10(tot).toFixed(2)}（${pct(f.anyRunner / f.runners)}） | ${FI.map((k) => f.stage[k]).join('/')}（${f.stageRunner}本） | ${f.per10(fa).toFixed(2)}（${f.formRunner}本） | ${f.settled} / ${f.runners}本 | ${f.landingOver}本 |\n`
       }
     }
     text += `\n（${runners.length}本 × 10分 = ${runners.length * 10}分ずつ）\n`
@@ -467,7 +475,7 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
       return sz === undefined ? `${sizes[sizes.length - 1]}でも届かない` : `${sz}（${Math.round(det![sz].latSec)}秒）`
     }
     const item: Record<DistortKind, ItemKey> = { head: 'head', hunch: 'trunk', trunk: 'trunk', body: 'body', sit: 'hip', trunkBack: 'trunkBack', bodyBack: 'bodyBack', uprightHead: 'trunkBack' }
-    const lineNow: Record<ItemKey, string> = { head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, trunkBack: `後ろへ ${REL_LIMITS.trunkBack.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, bodyBack: `後ろへ ${REL_LIMITS.bodyBack.cue}°`, hip: `${LIMITS.hip.cue}%` }
+    const lineNow: Record<ItemKey, string> = { head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, trunkBack: `後ろへ ${REL_LIMITS.trunkBack.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, bodyBack: `後ろへ ${REL_LIMITS.bodyBack.cue}°`, hip: `${LIMITS.hip.cue}%`, landing: `増え +${LIMITS.landing.cue}` }
     const summary =
       `## まとめ（上級、実機なみのずれ、${runners.length}本）\n\n` +
       `「9割」は、崩しに合った声を9割の走りで${HOLD}秒以内に出せた、いちばん小さい崩しの大きさ（カッコ内は声までの秒数の中央値）。誤った声は今日の基準ができたあとの10分あたりの、基準からの崩れの声。` +
@@ -541,7 +549,7 @@ describe.skipIf(!VH)('Van Hooren：本当に前に倒した走り', () => {
       const [nt, nb] = tr(norm)
       const [lt, lb] = tr(lean)
       const f = (c: (typeof CONDS)[number], sec: number, run: LongRun, seed: number) =>
-        film({ sec, seed, pl: { ...BASE, ...c.pl }, noise: { ...BASE_NOISE, ...c.noise }, extra: c.extra, body: (t) => run.at(t) })
+        film({ sec, seed, pl: { ...BASE, ...c.pl }, noise: { ...BASE_NOISE, ...c.noise }, extra: c.extra, body: (t) => run.at(t), legs: true })
       people.push({
         id: s,
         lean: [CONDS[0], CONDS[1]].map((c) => f(c, ONSET + HOLD + 20, leanRun, 500 + k)),

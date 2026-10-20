@@ -1,6 +1,6 @@
 import type { Baseline, RunLog, Session } from './types'
 import type { VoiceKind } from './voices'
-import { startProgress, type Level, type Progress } from './level'
+import { migrateProgress, startProgress, type Level, type Progress } from './level'
 
 // 記録は端末の中だけ（IndexedDB）。基準と設定は localStorage
 const DB = 'run-form-coach'
@@ -129,8 +129,11 @@ export interface Settings {
 export const loadSettings = (): Settings => ({ voice: 'female', ...(read<Partial<Settings>>('rfc.settings') ?? {}), screen: 'dark', camera: 'back' }) // 今の段階は背面カメラだけを使う
 export const saveSettings = (s: Settings) => write('rfc.settings', s)
 
-// ランナーのレベルと、注意する項目の段階。初めては初心者から
-export const loadProgress = (): Progress => read<Progress>('rfc.progress') ?? startProgress('beginner')
+// ランナーのレベルと、注意する項目の段階。初めては初心者から。段階の並びを変える前の記録は、いまの並びに直して読む
+export const loadProgress = (): Progress => {
+  const p = read<Progress>('rfc.progress')
+  return p ? migrateProgress(p) : startProgress('beginner')
+}
 export const saveProgress = (p: Progress) => write('rfc.progress', p)
 export const setLevel = (level: Level): Progress => {
   const p = startProgress(level)

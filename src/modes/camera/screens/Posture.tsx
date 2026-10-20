@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Screen } from '../../../App'
 import type { Category, ItemKey, Session } from '../../../core/types'
-import { bestSession, deg1, nextItem, NEXT_TEXT } from '../nextStep'
+import { bestSession, nextItem, NEXT_TEXT, valueOf } from '../nextStep'
 import { FORM } from '../params'
 import { Mannequin } from '../ui/Mannequin'
 import { nextStepFrame, normalizeStride } from '../ui/figure'
@@ -10,7 +10,7 @@ import { ShareBar } from '../../../ui/ShareBar'
 
 const CAT_LABEL: Record<Category, string> = { good: '良い', mid: 'ふつう', bad: '悪い' }
 const CAT_COLOR: Record<Category, string> = { good: '#7C8A4A', mid: '#C98A5A', bad: '#FF8A3D' }
-const ITEM_LABEL: Record<ItemKey, string> = { head: '頭', trunk: '体幹', trunkBack: '体幹', body: '体全体', bodyBack: '体全体', hip: '腰' }
+const ITEM_LABEL: Record<ItemKey, string> = { head: '頭', trunk: '体幹', trunkBack: '体幹', body: '体全体', bodyBack: '体全体', hip: '腰', landing: '着地' }
 type Overlay = 'next' | 'best' | 'none'
 
 export function Posture({ session: s, sessions, go }: { session: Session; sessions: Session[]; go: (x: Screen) => void }) {
@@ -106,11 +106,11 @@ export function Posture({ session: s, sessions, go }: { session: Session; sessio
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div className="row">
             <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 700 }}>次に意識すること</div>
-            <div style={{ fontSize: 11 }} className="muted">{next.kind === 'line' ? '声をかける線から一番外れていた1つだけ' : 'よい例から一番離れていた1つだけ'}</div>
+            <div style={{ fontSize: 11 }} className="muted">{next.kind === 'line' ? `${next.group === 'landing' && !FORM.landing.say ? '試しの線' : '声をかける線'}から一番外れていた1つだけ` : 'よい例から一番離れていた1つだけ'}</div>
           </div>
           <div style={{ fontSize: 17, fontWeight: 900 }}>{NEXT_TEXT[next.item].title}</div>
           <div style={{ fontSize: 12, lineHeight: 1.55 }} className="muted">
-            「次の一歩」は、あなたのベストの走りで、{ITEM_LABEL[next.item]}だけを {deg1(next.from)} → {deg1(next.to)}（{next.kind === 'line' ? '声をかける線' : 'よい例の範囲の端'}）にした形です。今はこの1つだけを意識してください。
+            「次の一歩」は、あなたのベストの走りで、{ITEM_LABEL[next.item]}だけを {valueOf(next.group, next.from)} → {valueOf(next.group, next.to)}（{next.kind === 'line' ? (next.group === 'landing' && !FORM.landing.say ? '試しの線' : '声をかける線') : 'よい例の範囲の端'}）にした形です。今はこの1つだけを意識してください。
           </div>
         </div>
       )}

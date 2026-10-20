@@ -5,10 +5,14 @@
 // 使い方: npm run drill [-- オプション]
 //   --dry-run              声を出さずに、時刻表だけ出す
 //   --try                  1区間だけ（崩しの最初の区間を16秒）声を出して試す。記録は一時フォルダに置く
-//   --steps a,b,…          崩しの並び（既定 head,down,hunch,lean,armstill,armcross,sit,slow。ほかに bouncy,heel,flat）
+//   --steps a,b,…          崩しの並び（既定 head,down,hunch,lean,armstill,armcross,sit,heel,slow。ほかに bouncy,flat,upright）
 //   --walk 秒 / --walk-kmh 5.0   最初の歩き（0 で歩かない）と速さ
 //   --jog 秒 / --jog-kmh 8.0     ジョグ全体と速さ
+//   --upright 秒           起きた形で走り出し、アプリの声に従って直す区間（既定 90。0 で入れない）
 //   --first 秒 / --sec 秒 / --gap 秒   最初のふつう・崩し・崩しのあとの戻し（0 で戻しなし）
+//   --cadence 歩/分        いつものピッチ（既定 165。2026-10-19 の時速8km のふつうの区間）。ピッチを落とす区間のメトロノームは、この 0.9 倍
+//   --speeds 9,10 / --speed-sec 60   速さを段階的に変える区間（時速。最後にジョグの速さへ戻す。none で入れない）と、1段の長さ
+//   --moved 秒 / --move-sec 秒       ジョグのあと、スマホを走る向きと反対へ約30cm動かして走る長さ（既定 120。0 で入れない）と、動かす間
 //   --cool 秒              最後の歩き
 //   --prep 秒              歩き始めるまで（ベルトの上に立つ間）
 //   --no-jump              ジャンプの合図をしない
@@ -18,11 +22,13 @@
 //   --out フォルダ         置き場所（既定は環境変数 RFC_RUNS_DIR、なければ ~/Developer/research-data/runs/）
 // 書き出すもの: <置き場所>/drill-YYYYMMDD-HHMM.json。区間の始まり（言い終えた時刻）と終わり（次の区間の言葉を言い始めた時刻）を、
 //   Mac の時計のエポックミリ秒で残す。言うたびに書き直すので、Ctrl+C で止めても、それまでの時刻は残る
+// メトロノーム：ピッチを落とす区間は、区間の言葉を言い終えてから、Mac で afplay を使ってクリック音を鳴らす（区間の長さぶんの WAV を
+//   一時フォルダに作る）。Mac は走っている人のピッチをその場では測れないので、テンポは --cadence（いつものピッチ）の 0.9 倍で決め打ち
 import { spawn } from 'node:child_process'
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { buildPlan, clock, DEFAULTS, len, stamp } from './treadmill/plan.mjs'
+import { buildPlan, clickWav, clock, DEFAULTS, len, stamp } from './treadmill/plan.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => {
@@ -57,8 +63,15 @@ const rate = opt('--rate') ?? '190'
 const note = opt('--note')
 const outOpt = opt('--out')
 const stepsOpt = opt('--steps')
+const speedsOpt = opt('--speeds')
 let o = {
   steps: stepsOpt ? stepsOpt.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+  speeds: speedsOpt === undefined ? DEFAULTS.speeds : speedsOpt === 'none' ? [] : speedsOpt.split(',').map(Number),
+  upright: num('--upright', DEFAULTS.upright),
+  cadence: num('--cadence', DEFAULTS.cadence),
+  speedSec: num('--speed-sec', DEFAULTS.speedSec),
+  moved: num('--moved', DEFAULTS.moved),
+  moveSec: num('--move-sec', DEFAULTS.moveSec),
   prep: num('--prep', DEFAULTS.prep),
   walk: num('--walk', DEFAULTS.walk),
   walkKmh: num('--walk-kmh', DEFAULTS.walkKmh),
@@ -72,13 +85,13 @@ let o = {
   hrEvery: num('--hr-every', DEFAULTS.hrEvery) || DEFAULTS.hrEvery,
   jump: !noJump,
 }
-if (args.length) {
-  console.error(`分からないオプション: ${args.join(' ')}（使い方は scripts/treadmill-drill.mjs の先頭）`)
+if (args.length || o.speeds.some((v) => !(v > 0 && v <= 12))) {
+  console.error(`分からないオプション: ${args.join(' ') || `--speeds ${speedsOpt}`}（使い方は scripts/treadmill-drill.mjs の先頭。トレッドミルは時速12kmまで）`)
   process.exit(1)
 }
 if (tryOne) {
   // 崩しの最初の区間だけを16秒：「次は、…。16秒。」→「あと5秒。」→ おわり
-  o = { ...o, steps: [(o.steps ?? ['head'])[0]], prep: 0, walk: 0, jump: false, speedup: 0, first: 0, sec: 16, gap: 0, jog: 16, cool: 0, hr: 0 }
+  o = { ...o, steps: [(o.steps ?? ['head'])[0]], prep: 0, walk: 0, jump: false, speedup: 0, upright: 0, first: 0, sec: 16, gap: 0, jog: 16, speeds: [], moved: 0, cool: 0, hr: 0 }
 }
 
 let plan
@@ -94,16 +107,20 @@ if (tryOne) {
   plan.cues = plan.cues.filter((c) => !['3', '2', '1', 'スタート。'].includes(c.say) && !/^ふつうに走ります/.test(c.say ?? ''))
   plan.sections = plan.sections.filter((s) => s.kind === 'drill')
   const t0 = plan.sections[0].plannedStart
-  for (const s of plan.sections) s.plannedStart -= t0
+  for (const s of plan.sections) {
+    s.plannedStart -= t0
+    s.plannedSec = 16
+  }
   for (const c of plan.cues) {
     c.at -= t0
     if (c.begin !== undefined) c.begin = 0
+    if (c.sec) c.sec = 16
   }
 }
 
 // 時刻表を出す
 const startGuess = Date.now()
-const runSec = plan.sections.filter((s) => ['normal', 'drill', 'gap'].includes(s.kind)).reduce((a, s) => a + s.plannedSec, 0)
+const runSec = plan.sections.filter((s) => ['normal', 'drill', 'gap', 'speed', 'moved'].includes(s.kind)).reduce((a, s) => a + s.plannedSec, 0)
 console.log(`区間 ${plan.sections.length} 個・全体 ${len(plan.total)}（うち走る ${len(runSec)}）。声: ${voice}`)
 for (const w of plan.warnings) console.log(`注意: ${w}`)
 console.log('')
@@ -111,11 +128,11 @@ console.log('  始めから  時刻(今始めたら)  長さ    速さ   区間'
 for (const s of plan.sections) {
   const at = `${Math.floor(s.plannedStart / 60)}:${String(Math.round(s.plannedStart % 60)).padStart(2, '0')}`.padStart(6)
   const kmh = s.kmh === undefined ? '' : s.kmh ? `${s.kmh.toFixed(1)}` : '止'
-  console.log(`  ${at}    ${clock(startGuess + s.plannedStart * 1000)}        ${len(s.plannedSec).padEnd(5)}  ${kmh.padStart(4)}   ${s.kind.padEnd(7)} ${s.key}（${s.name}）`)
+  console.log(`  ${at}    ${clock(startGuess + s.plannedStart * 1000)}        ${len(s.plannedSec).padEnd(5)}  ${kmh.padStart(4)}   ${s.kind.padEnd(7)} ${s.key}（${s.name}）${s.metronome ? `  メトロノーム ${s.metronome}歩/分` : ''}`)
 }
 if (dry) {
   console.log('\n言う言葉:')
-  for (const c of plan.cues) console.log(`  ${String(Math.round(c.at * 10) / 10).padStart(6)}秒  ${c.say ?? ''}${c.jump ? '  ← ジャンプの時刻' : ''}`)
+  for (const c of plan.cues) console.log(`  ${String(Math.round(c.at * 10) / 10).padStart(6)}秒  ${c.say ?? ''}${c.jump ? '  ← ジャンプの時刻' : ''}${c.metronome ? `  ← 言い終えたら、メトロノーム ${c.metronome}歩/分を ${len(c.sec)}` : ''}`)
   console.log('\n（--dry-run：声は出さず、記録も書きません）')
   process.exit(0)
 }
@@ -133,7 +150,7 @@ const record = {
   options: plan.options,
   voice,
   note: note ?? undefined,
-  plan: plan.sections.map((s) => ({ key: s.key, kind: s.kind, plannedStart: s.plannedStart, plannedSec: s.plannedSec })),
+  plan: plan.sections.map((s) => ({ key: s.key, kind: s.kind, plannedStart: s.plannedStart, plannedSec: s.plannedSec, ...(s.metronome ? { metronome: s.metronome } : {}) })),
   // 区間：announceAt（言い始めた）・start（言い終えた＝区間の始まり）・end（次の区間の言葉を言い始めた＝区間の終わり）
   sections: [],
   jumpAt: null, // ジャンプの「はい」を言い始めた時刻
@@ -143,6 +160,24 @@ const record = {
 const save = () => {
   writeFileSync(`${file}.part`, JSON.stringify(record, null, 1))
   renameSync(`${file}.part`, file)
+}
+
+// メトロノーム：区間の長さぶんのクリック音の WAV を前もって作り、区間の言葉を言い終えたら afplay で鳴らす。次の区間の言葉で止める
+let click = null
+const stopClick = () => {
+  click?.kill()
+  click = null
+}
+const wavs = new Map()
+for (const c of plan.cues.filter((x) => x.metronome)) {
+  const f = join(tmpdir(), `rfc-click-${c.metronome}-${c.sec}.wav`)
+  writeFileSync(f, clickWav(c.metronome, c.sec))
+  wavs.set(c, f)
+}
+const playClick = (c) => {
+  stopClick()
+  click = spawn('afplay', [wavs.get(c)], { stdio: 'ignore' })
+  click.on('error', (e) => console.error(`afplay を使えませんでした（${e.message}）。メトロノームなしで、言葉の指示だけになります`))
 }
 
 let child = null
@@ -173,6 +208,7 @@ process.on('SIGINT', () => {
   if (stopping) process.exit(130)
   stopping = true
   child?.kill()
+  stopClick()
   const at = Date.now()
   closeOpen(at)
   record.stoppedAt = at
@@ -194,9 +230,12 @@ for (const c of plan.cues) {
   if (!c.say) continue
   // 区間の始まりの言葉：言い始めた時刻で前の区間を閉じる
   const announceAt = Date.now()
-  if (s || c.end) closeOpen(announceAt)
+  if (s || c.end) {
+    closeOpen(announceAt)
+    stopClick()
+  }
   if (c.jump) record.jumpAt = announceAt
-  const entry = s ? { key: s.key, kind: s.kind, name: s.name, kmh: s.kmh, after: s.after, plannedStart: s.plannedStart, plannedSec: s.plannedSec, announceAt, start: null, end: null } : null
+  const entry = s ? { key: s.key, kind: s.kind, name: s.name, kmh: s.kmh, after: s.after, plannedStart: s.plannedStart, plannedSec: s.plannedSec, ...(s.metronome ? { metronome: s.metronome } : {}), announceAt, start: null, end: null } : null
   if (entry) record.sections.push(entry)
   save()
   const r = await speak(c.say)
@@ -204,8 +243,10 @@ for (const c of plan.cues) {
   record.said.push([r.begin, r.end, c.say])
   if (entry) entry.start = r.end
   if (c.end) record.endedAt = r.end
+  if (c.metronome) playClick(c)
   save()
 }
+stopClick()
 if (!stopping) {
   record.done = true
   save()

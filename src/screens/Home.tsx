@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
-import { bestSession, todayFocus } from '../modes/camera/nextStep'
+import { bestSession, pct0, todayFocus } from '../modes/camera/nextStep'
 import { loadProgress, loadSettings, saveSettings, setLevel, type Settings } from '../core/storage'
 import { ALL, LEVEL_LABEL, LEVEL_NOTE, type Level, type Progress } from '../core/level'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
@@ -23,10 +23,12 @@ import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/s
 import { flushUploads } from '../core/upload/uploads'
 import { UploadKeyButton, UploadPanel } from '../ui/Upload'
 
-const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり' }
+const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり', landing: '着地の位置' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
 // 小数1桁まで（よい例までの差は1°に満たないことがあり、整数に丸めると「7° → 7°」になるため）
 const fmt1 = (x: number) => String(Math.round(x * 10) / 10)
+// 着地は、速さで補正したかかとの前（脚の長さに対する割合）を % で
+const show = (item: ItemKey, x: number) => (item === 'landing' ? pct0(x) : `${fmt1(x)}${unit(item)}`)
 
 // 形が変わっていく割合 k を 0↔1 でなめらかに動かす
 function useMorph(on: boolean) {
@@ -85,7 +87,9 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
     let exaggerated = false
     if (next) {
       const d = next.from - next.to
-      const shown = Math.abs(d) < 4 ? Math.sign(d || 1) * 4 : d
+      // 差が小さいと見えないので、角度は4°、着地は脚の長さの5%までは大きく見せる
+      const least = next.group === 'landing' ? 0.05 : 4
+      const shown = Math.abs(d) < least ? Math.sign(d || 1) * least : d
       exaggerated = shown !== d
       ghost = frames.map((f) => nextStepFrame(f, next.item, next.from, next.from - shown))
     }
@@ -208,8 +212,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           <div style={{ position: 'absolute', right: 14, top: 64, textAlign: 'right' }}>
             <div style={{ fontSize: 11 }} className="muted">{next.kind === 'good' ? `${next.group === 'head' ? '首の角度' : ITEM_LABEL[next.group]}（よい例へ）` : ITEM_LABEL[next.item]}</div>
             <div className="num" style={{ fontSize: 30 }}>
-              <span className="muted">{fmt1(next.from)}{unit(next.item)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
-              <span style={{ color: 'var(--accent)' }}>{fmt1(next.to)}{unit(next.item)}</span>
+              <span className="muted">{show(next.item, next.from)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
+              <span style={{ color: 'var(--accent)' }}>{show(next.item, next.to)}</span>
             </div>
             <div style={{ fontSize: 11, paddingTop: 4 }} className="muted">ほかはそのまま</div>
             {exaggerated && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>差は見やすく強調</div>}

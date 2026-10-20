@@ -285,7 +285,11 @@ describe('コーチの流れ', () => {
     const trunk = s.form!.find((r) => r.group === 'trunk')!
     expect(trunk.value).toBeGreaterThan(good.trunk)
     expect(trunk.cues).toBeGreaterThan(0)
-    expect(s.form!.map((r) => r.group)).toEqual(['body', 'trunk', 'head'])
+    expect(s.form!.map((r) => r.group)).toEqual(['body', 'landing', 'trunk', 'head'])
+    // 見本の走りの着地（速さで補正したかかとの前）は、試しの線の内側
+    const landing = s.form!.find((r) => r.group === 'landing')!
+    expect(landing.over).toBeLessThan(0)
+    expect(landing.cues).toBe(0)
   })
 })
 
@@ -656,7 +660,7 @@ describe('よい例との差', () => {
     const head = form.find((r) => r.group === 'head')!
     expect(head.yaw).toBeCloseTo(SETUP.frontMax + 0.03, 5)
     expect(head.judged).toBe(true) // 線と比べるのをやめる yawMax よりは小さい
-    expect(formRows(form)[2].note).toBe(HEAD_NOTE)
+    expect(formRows(form).find((r) => r.group === 'head')!.note).toBe(HEAD_NOTE)
     expect(form.find((r) => r.group === 'body')!.yaw).toBeUndefined()
   })
 })

@@ -1,6 +1,8 @@
 // 仮想実験の道具：長い走りを仮想のスマホで映し、アプリと同じ順（なめらかにする → 全身が見えるか → 測る → 走っているか）で
 // 1コマずつの測定を作り、今のコーチ（Coach）に通して声かけを数える
 //   映すのは毎秒15コマ。骨格の点はアプリと同じ One Euro フィルターでなめらかにする
+//   legs を付けると、着地の測り方（src/modes/camera/landing.ts）が使う点（腰・膝・足首・かかと・つま先と、向きを決める鼻・耳）も
+//   残し、通すときにコーチへコマとして渡す（着地も、アプリと同じく骨格を取ったコマだけで測る）
 //   コーチに通すときは、アプリのふだんと同じく、安定して走れている間は骨格を取らない（10秒のうち3秒だけ見る）。
 //   取らなかったコマは時間だけ進める（Live.tsx の onSkip と同じ）
 import { makeCamera, toFrame, rng, W, H, type Placement, type Noise, type Body } from './camera'
@@ -21,7 +23,12 @@ const F = 11
 export interface Stream {
   n: number
   d: Float32Array
+  // legs のとき：LEG_POINTS の点の x・y（0.1画素の整数）と確からしさ（0〜250）。記録（camera/log.ts）と同じ細かさ
+  p?: Int16Array
+  pv?: Uint8Array
 }
+// 着地の測り方が使う点（鼻・左右の耳・左右の腰・膝・足首・かかと・つま先）
+export const LEG_POINTS = [0, 7, 8, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
 
 // extra：測った値に足す、ゆっくり変わるずれ（[大きさ（度）, 続く長さ（秒）]）。実機の記録のばらつきに合わせるためのもの
 //   （研究データの走りは1分ほどで、数分かけての揺れが入らない。骨格の推定の、服や光によるゆっくりしたずれも入らない）
@@ -37,6 +44,7 @@ export interface FilmOpts {
   noise?: Noise
   body: (t: number) => Body
   extra?: Extra
+  legs?: boolean
 }
 
 export function film(o: FilmOpts): Stream {
@@ -50,6 +58,9 @@ export function film(o: FilmOpts): Stream {
   const md = new MotionDetector()
   const n = Math.floor(o.sec * FPS)
   const d = new Float32Array(n * F)
+  const NP = LEG_POINTS.length
+  const pp = o.legs ? new Int16Array(n * NP * 2) : undefined
+  const pv = o.legs ? new Uint8Array(n * NP) : undefined
   const ex = { neck: 0, trunk: 0, body: 0 }
   const keys = ['neck', 'trunk', 'body'] as const
   // 最初の値も、続いているときと同じ散らばりから取る
@@ -70,6 +81,13 @@ export function film(o: FilmOpts): Stream {
     const j = i * F
     d[j] = t
     d[j + 1] = vis ? 1 : 0
+    if (vis && pp && pv) {
+      LEG_POINTS.forEach((k, q) => {
+        pp[(i * NP + q) * 2] = Math.round(f[k].x * 10)
+        pp[(i * NP + q) * 2 + 1] = Math.round(f[k].y * 10)
+        pv[i * NP + q] = Math.round(Math.min(1, Math.max(0, f[k].v)) * 250)
+      })
+    }
     if (vis) {
       const m = measure(f)
       d[j + 2] = md.update(f, t) ? 1 : 0
@@ -83,7 +101,18 @@ export function film(o: FilmOpts): Stream {
       d[j + 10] = m.chin
     }
   }
-  return { n, d }
+  return pp && pv ? { n, d, p: pp, pv } : { n, d }
+}
+
+// legs で残した点から、コーチに渡すコマを作る（残していない点は 0）
+function frameAt(s: Stream, i: number): Frame | undefined {
+  if (!s.p || !s.pv) return undefined
+  const NP = LEG_POINTS.length
+  const f: Frame = Array.from({ length: 33 }, () => ({ x: 0, y: 0, v: 0 }))
+  LEG_POINTS.forEach((k, q) => {
+    f[k] = { x: s.p![(i * NP + q) * 2] / 10, y: s.p![(i * NP + q) * 2 + 1] / 10, v: s.pv![i * NP + q] / 250 }
+  })
+  return f
 }
 
 export interface Replay {
@@ -93,8 +122,10 @@ export interface Replay {
   formAt: number | null // 整え終わった時刻
   ref: Coach['leanRef'] // 今日の基準の値
   quietSec: [number, number][] // 声なしで見守っていた時間（絶対の時刻）
-  // 1秒ごとの判定の値（今日の基準からの崩れ。基準ができるまでの trunk・body は傾きそのもの）と、傾きそのもの（raw…）
-  values: { t: number; head?: number; trunk?: number; body?: number; hip?: number; trunkBack?: number; bodyBack?: number; chin?: number; rawTrunk: number; rawBody: number }[]
+  // 1秒ごとの判定の値（今日の基準からの崩れ。基準ができるまでの trunk・body は傾きそのもの）と、傾きそのもの（raw…）。
+  // 着地は、窓の速さで補正したかかとの前（landRes）と、今日の基準からの増え（landing。比べた秒だけ）
+  values: { t: number; head?: number; trunk?: number; body?: number; hip?: number; trunkBack?: number; bodyBack?: number; chin?: number; rawTrunk: number; rawBody: number; landing?: number; landRes?: number }[]
+  form?: ReturnType<Coach['finish']>['form'] // 正しいフォームとの比べ（結果の画面の値）
 }
 
 // thin：アプリのふだんの間引き（false なら全コマ記録 ?full=1 と同じ）
@@ -123,7 +154,7 @@ export function replay(s: Stream, opts: { items?: ItemKey[]; thin?: boolean; mut
       const m = present
         ? { neck: s.d[j + 3], headLean: s.d[j + 4], yaw: s.d[j + 5], trunk: s.d[j + 6], body: s.d[j + 7], hipRatio: s.d[j + 8], dir: (s.d[j + 9] >= 0 ? 1 : -1) as 1 | -1, chin: s.d[j + 10] }
         : undefined
-      coach.update({ t, present, moving, m })
+      coach.update({ t, present, moving, m, frame: present ? frameAt(s, i) : undefined })
       lastPresent = present
       lastMoving = moving
     }
@@ -139,11 +170,11 @@ export function replay(s: Stream, opts: { items?: ItemKey[]; thin?: boolean; mut
       nSamples = coach.samples.length
       const sm = coach.samples[nSamples - 1]
       const tt = runFrom + sm.t
-      values.push({ t: tt, head: coach.leanRef ? sm.head : undefined, trunk: sm.judge?.trunk ?? sm.trunk, body: sm.judge?.body ?? sm.body, hip: sm.hipDrop, trunkBack: sm.back?.trunk, bodyBack: sm.back?.body, chin: sm.chin, rawTrunk: sm.trunk, rawBody: sm.body })
+      values.push({ t: tt, head: coach.leanRef ? sm.head : undefined, trunk: sm.judge?.trunk ?? sm.trunk, body: sm.judge?.body ?? sm.body, hip: sm.hipDrop, trunkBack: sm.back?.trunk, bodyBack: sm.back?.body, chin: sm.chin, rawTrunk: sm.trunk, rawBody: sm.body, landing: sm.land?.drift, landRes: sm.land?.res })
     }
   }
   if (quietFrom >= 0) quietSec.push([quietFrom, s.d[(s.n - 1) * F]])
-  return { cues: coach.cues.map((c) => ({ ...c, t: runFrom + c.t })), runFrom, refAt, formAt, ref: coach.leanRef, quietSec, values }
+  return { cues: coach.cues.map((c) => ({ ...c, t: runFrom + c.t })), runFrom, refAt, formAt, ref: coach.leanRef, quietSec, values, form: coach.finish().form }
 }
 
 // 1秒ごとの値の生の数字（頭・上体・体全体・腰の高さ）を、1秒平均で出す（ばらつきを実機と比べるため）

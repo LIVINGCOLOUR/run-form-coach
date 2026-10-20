@@ -8,10 +8,11 @@ export interface Pt {
 // 1コマの骨格（MediaPipe Pose の33点）
 export type Frame = Pt[]
 
-// 姿勢の項目。trunkBack・bodyBack は、上体・体全体が起きすぎた（後ろに傾いた）側
-export type ItemKey = 'head' | 'trunk' | 'trunkBack' | 'body' | 'bodyBack' | 'hip'
-// 並び順が、声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰）
-export const ITEM_KEYS: ItemKey[] = ['head', 'trunk', 'trunkBack', 'body', 'bodyBack', 'hip']
+// 姿勢の項目。trunkBack・bodyBack は、上体・体全体が起きすぎた（後ろに傾いた）側。landing は着地の位置（足が体より前に着く）
+export type ItemKey = 'head' | 'trunk' | 'trunkBack' | 'body' | 'bodyBack' | 'hip' | 'landing'
+// 並び順が、声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰 → 着地）。
+// 着地は最後：体が後ろに残る・腰が落ちると、着地も前に出る（3R の動画）ので、もとの崩れを先に言う
+export const ITEM_KEYS: ItemKey[] = ['head', 'trunk', 'trunkBack', 'body', 'bodyBack', 'hip', 'landing']
 
 // 初回だけ取る直立の基準
 export interface Baseline {
@@ -41,16 +42,21 @@ export interface Sample {
   form?: Partial<Record<ItemKey, number>>
   // 顎：耳→鼻の線の上向きの、今日の基準からの変化（度。上体が起きた分は差し引く）。測って記録するだけで、声はかけない
   chin?: number
+  // 着地（camera/landing.ts）：その秒の窓（ふつう16秒、間引いて見ている間は30秒）の、手前の脚のかかとの前（heel）・速さの目安（speed）・
+  // 速さで補正したかかとの前（res）・山の数（n）と、今日の基準からの増え（drift。比べた秒だけ）。窓の山が足りない秒は無い
+  land?: { heel: number; speed: number; res: number; n: number; drift?: number }
 }
 
 // 正しいフォームとの比べ（カメラ版、src/modes/camera/form.ts）。結果の画面と次の一歩に使う。
 // よい例（camera/params.ts の GOOD）との差は、ここには入れず、画面に出すときに value から出す（よい例を合わせ直したら、前の走りにも効くように）
-export type FormGroup = 'body' | 'trunk' | 'head'
+export type FormGroup = 'body' | 'trunk' | 'head' | 'landing'
 export interface FormResult {
   group: FormGroup
   key: ItemKey // 外れていた側（内側なら、近いほうの線の側）
-  value: number // 走っていた秒の平均（度）。頭は首の角度
+  value: number // 走っていた秒の平均（度）。頭は首の角度。着地は、速さで補正したかかとの前（脚の長さに対する割合。30秒ごとの中央値の平均）
   value2?: number // 頭の位置そのもの（頭だけ）
+  heel?: number // 着地だけ：手前の脚のかかとの前そのものの中央値（速さで補正する前）
+  speed?: number // 着地だけ：速さの目安の中央値（脚の長さ／秒）
   over: number // 平均が線からどれだけ外れていたか（度。内側なら負）
   inside: number // 線と比べた窓の平均（FORM.window 秒）のうち、内側だった割合（0〜1）
   cues: number // 正しいフォームの線で知らせた回数

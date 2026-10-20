@@ -6,10 +6,11 @@ import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
 import { FORM, REL_LIMITS, STRIDE } from './params'
 import { RunningGate } from './motion'
-import { clampInside, formOver, formScale, FormStage, FORM_ORDER, type FormValues } from './form'
+import { clampInside, formOver, formScale, FormStage, FORM_ORDER, voiced, type FormValues } from './form'
+import { LandingDrift, LandingWatch, refOf, type Peak } from './landing'
 import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from '../../core/engine'
 
-// カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体（前に倒れすぎ・起きすぎ）・腰を見る。顎は測って記録するだけ。
+// カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体（前に倒れすぎ・起きすぎ）・腰・着地の位置を見る。顎は測って記録するだけ。
 // 走り出したら、まず正しいフォームの線と比べて1つずつ直してもらい（form.ts の「整える」）、直った形を今日の基準にする。
 // そのあとは、今日の基準からの崩れ（REL_LIMITS など）と、正しいフォームの線の両方で見る。
 // 声かけのしくみ（いつ声をかけ、ほめ、黙って見守るか）は engine.ts で、どのモードでも共通。
@@ -30,7 +31,7 @@ interface GatedInput extends CoachInput {
   steps?: boolean
 }
 
-// 測る項目。並び順が、今日の基準からの崩れで声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰）。
+// 測る項目。並び順が、今日の基準からの崩れで声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰 → 着地）。
 // 正しいフォームの線で知らせる順は form.ts の FORM_ORDER
 export const CAMERA_ITEMS: ItemSpec<ItemKey>[] = ITEM_KEYS.map((key) => ({ key, limits: LIMITS[key], cue: CUE[key] }))
 
@@ -38,9 +39,16 @@ type Ref = { neck: number; trunk: number; body: number; headLean: number; yaw: n
 const REF_KEYS = ['neck', 'trunk', 'body', 'headLean', 'yaw', 'chin'] as const
 
 // 今日の基準にためる値：項目ごとに、その項目が正しいフォームの線の内側にいた秒だけ（in）と、走っていた秒のすべて（all）。
-// 腰は、体全体と上体の両方が線の内側にいた秒（整えた形）
-type Pool = { in: Record<FormGroup, FormValues[]>; all: FormValues[]; hipIn: number[]; hipAll: number[]; yaw: number[]; chin: number[] }
-const emptyPool = (): Pool => ({ in: { body: [], trunk: [], head: [] }, all: [], hipIn: [], hipAll: [], yaw: [], chin: [] })
+// 腰は、体全体と上体の両方が線の内側にいた秒（整えた形）。着地は、その秒に振り分けた山と速さの目安（着地の線の内側にいた秒だけと、すべて）
+type Steps = { peaks: Peak[]; sv: number[]; secs: number }
+type Pool = { in: Record<FormGroup, FormValues[]>; all: FormValues[]; hipIn: number[]; hipAll: number[]; yaw: number[]; chin: number[]; landIn: Steps; landAll: Steps }
+const emptySteps = (): Steps => ({ peaks: [], sv: [], secs: 0 })
+const emptyPool = (): Pool => ({ in: { body: [], landing: [], trunk: [], head: [] }, all: [], hipIn: [], hipAll: [], yaw: [], chin: [], landIn: emptySteps(), landAll: emptySteps() })
+const addSteps = (p: Steps, s: { peaks: Peak[]; sv: number[] }) => {
+  p.peaks.push(...s.peaks)
+  p.sv.push(...s.sv)
+  p.secs++
+}
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 const meanOf = (xs: FormValues[]): FormValues => ({ trunk: mean(xs.map((x) => x.trunk)), body: mean(xs.map((x) => x.body)), neck: mean(xs.map((x) => x.neck)), headLean: mean(xs.map((x) => x.headLean)) })
@@ -54,6 +62,9 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   leanRef: Ref | null = null
   // 正しいフォームへ整える（form.ts）。走り出しから走り終わりまで、線と比べ続ける
   form = new FormStage()
+  // 着地（landing.ts）：骨格を取ったコマごとに山を取り、歩数で走っていた秒の山だけを残す。今日の基準からの増えは drift
+  land = new LandingWatch()
+  drift = new LandingDrift()
 
   // 今日の基準は、歩数で走っていると見た秒だけで作る。running は Coach が決めた「走っている」（RunningGate）。
   // runFrom は、いまの走りの始まり（しくみの秒）。基準ができる前に止まったら null にして、整え直す
@@ -66,11 +77,13 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   private candidates: Record<Category, Stride[]> = { good: [], mid: [], bad: [] }
   private lastStrideAt = -1e9
 
-  // 走っている間の1コマ：その秒に走っていたかを数え、走り姿のアニメーション用に骨格をためる
+  // 走っている間の1コマ：その秒に走っていたかを数え、着地の山を取り、走り姿のアニメーション用に骨格をためる
   input(inp: GatedInput) {
     if (inp.steps === true) this.secOn++
     else if (inp.steps === false) this.secOff++
+    this.land.tick(inp.t)
     if (!inp.frame || !inp.m) return
+    this.land.frame(inp.frame, inp.t)
     // 骨格を取っていない間があいたら、つながらないので捨てる
     const last = this.ring[this.ring.length - 1]
     if (last && inp.t - last.t > 0.3) this.ring = []
@@ -99,8 +112,10 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const off = this.secOff
     this.secOn = 0
     this.secOff = 0
-    if (b.length < 3) return null
     const stepping = this.running && (on + off === 0 || on >= off)
+    // 着地：1つ前の秒の山を、その秒に走っていたかで振り分ける（骨格を取らなかった秒も、時間は進める）
+    const steps = this.land.second(stepping && b.length >= 3)
+    if (b.length < 3) return null
     const now = Object.fromEntries(REF_KEYS.map((k) => [k, mean(b.map((m) => m[k]))])) as Ref
     const { neck, headLean, trunk, body, yaw } = now
     const v: FormValues = { trunk, body, neck, headLean }
@@ -108,7 +123,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const rt = this.runFrom === null ? null : t - this.runFrom
 
     // 正しいフォームの線と比べ、外れていれば1つずつ知らせる（走り出してからの秒が分かるときだけ）
-    const lead = rt === null ? { hold: false } : this.form.second(t, rt, stepping, v, yaw, ctx.since)
+    const lead = rt === null ? { hold: false } : this.form.second(t, rt, stepping, v, yaw, ctx.since, steps)
 
     // 今日の基準にためる：整え終わってから（走り出して HIP_REF.from 秒より後）の、歩数で走っていた秒。項目ごとに、
     // 直近 FORM.hold 秒の平均が線の内側で、知らせて直るのを待っていない秒だけ（直したあとの形。直す前の形を混ぜない）
@@ -119,10 +134,12 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
       p.hipAll.push(hipRatio)
       p.yaw.push(yaw)
       p.chin.push(now.chin)
+      addSteps(p.landAll, steps)
       const ins = this.form.holdInside(t)
       if (ins) {
         for (const g of FORM_ORDER) if (ins[g] && !this.form.waiting(g)) p.in[g].push(v)
         if (ins.body && ins.trunk) p.hipIn.push(hipRatio)
+        if (ins.landing && !this.form.waiting('landing')) addSteps(p.landIn, steps)
       }
     }
     // 走り出して長くたっても整え終わらない（値が足りない）ときは、打ち切る
@@ -140,12 +157,21 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
         const head = at('head')
         this.leanRef = { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body, yaw: mean(p.yaw), chin: mean(p.chin) }
         this.hipRef = p.hipIn.length >= FORM.refMin ? mean(p.hipIn) : mean(p.hipAll)
+        // 着地の基準：着地の線の内側にいた秒の山。足りなければ、走っていた秒すべての山（線の内側に寄せない：着地の線は速さの当てはめが
+        // 仮想のスマホのもので、まだ確かめていない。寄せると、線の外の人ほど基準からの増えの線が実際より近くなり、ふつうに走るだけで声が出る）。
+        // 山が足りなければ（足が映りにくい）、このあと走りながらためて作る
+        this.drift.set((p.landIn.secs >= FORM.refMin ? refOf(p.landIn.peaks, p.landIn.sv) : null) ?? refOf(p.landAll.peaks, p.landAll.sv))
       }
     }
     const ref = this.leanRef
     const hipDrop = this.hipRef ? Math.max(0, ((this.hipRef - hipRatio) / this.hipRef) * 100) : 0
     // 頭は、今日の基準との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
     const head = ref ? headForward(neck - ref.neck, headLean - ref.headLean) : 0
+    // 着地：窓（細かく見ていれば16秒、間引いて見ている間は30秒）の、基準と同じ脚の山の中央値と基準の差。歩数で走っていた秒だけ。
+    // 速さの目安が基準から大きく変わった秒は比べず、基準を作り直す（landing.ts の LandingDrift）
+    const lw = this.land.window(undefined, this.drift.ref?.near)
+    const landing = ref ? this.drift.judge(lw, steps, stepping) : undefined
+    const shown = lw ?? this.land.window()
     const judge = ref ? { trunk: toScale('trunk', trunk - ref.trunk), body: toScale('body', body - ref.body) } : undefined
     const back = ref ? { trunk: toScale('trunkBack', ref.trunk - trunk), body: toScale('bodyBack', ref.body - body) } : undefined
     // しくみが声をかける値：今日の基準からの崩れ（基準ができるまでは無い）。
@@ -160,12 +186,19 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
       }
       values.head = head
       if (this.hipRef) values.hip = hipDrop
+      if (landing !== undefined) values.landing = landing
     }
-    // 正しいフォームの線を外れた量（点数の目盛り）。歩数で走っていた秒だけ。頭は斜めから撮っているように見える秒は比べない
+    // 正しいフォームの線を外れた量（点数の目盛り）。歩数で走っていた秒だけ。頭は斜めから撮っているように見える秒は比べない。
+    // 着地は窓の値（FormStage の、いちばん新しい窓）で、声にする項目にしたときだけ点数に入れる（声にしない線で点数を下げると、
+    // 声なしの見守りやほめる声が、理由を言われないまま来なくなるため）
     const form: Values<ItemKey> = {}
     if (stepping && rt !== null && rt >= FORM.from) {
       for (const g of FORM_ORDER) {
-        if (!FormStage.judgeable(g, yaw)) continue
+        if (g === 'landing') {
+          if (voiced(g) && this.form.landing !== undefined) form.landing = formScale(g, 'landing', this.form.landing - FORM.landing.max)
+          continue
+        }
+        if (!FormStage.judgeable(g, { yaw })) continue
         const o = formOver(g, v)
         form[o.key] = formScale(g, o.key, o.over)
       }
@@ -177,6 +210,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     // 顎：測って記録するだけ。上体が起きた分（頭は上体といっしょに回る）を差し引く
     const chin = ref ? now.chin - ref.chin + (trunk - ref.trunk) : undefined
     const sample: Sample = { t, head, trunk, body, hipDrop, score: score ?? 100, quiet: ctx.quiet, judge, back, headLean, neck, yaw, form, chin }
+    if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }
     this.maybeKeepStride(sample)
     return { sample, values, ready, score, say: lead.say, hold: lead.hold }
   }
@@ -214,8 +248,10 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   // items: 今日の基準からの崩れで声をかける項目（ランナーのレベルで決まる。ほかの項目は大きく崩れたときだけ）。なければすべて。
   //   正しいフォームの線で整える声（form.ts）は、どのレベルでもかける（フォームの土台なので。それでも一度に1つずつ）
   // 走る前に立って測る基準は、猫背の確認にだけ使い、ここには渡さない（頭は今日の基準と比べる）
+  // 判定しなかった秒（values に入れなかった秒）には、その項目で新しく知らせない（holdUnjudged）：着地は速さが変わった秒、
+  // 起きすぎと着地は歩数で走っていない秒に判定を止めるので、止めた直後に、止める前の秒の値で知らせないため
   constructor(opts: { pause?: boolean; items?: ItemKey[] } = {}) {
-    super(new CameraAnalyzer(), opts)
+    super(new CameraAnalyzer(), { holdUnjudged: true, ...opts })
   }
 
   private get camera() {
@@ -297,7 +333,8 @@ export function judged(s: Sample, k: ItemKey): number {
   if (k === 'head') return Math.max(f, s.judge ? s.head : -Infinity)
   if (k === 'trunkBack') return Math.max(f, s.back?.trunk ?? -Infinity)
   if (k === 'bodyBack') return Math.max(f, s.back?.body ?? -Infinity)
-  return Math.max(f, s.judge?.[k] ?? -Infinity)
+  if (k === 'landing') return Math.max(f, s.land?.drift ?? -Infinity)
+  return Math.max(f, s.judge?.[k as 'trunk' | 'body'] ?? -Infinity)
 }
 
 // 増え方を、点数の目盛り（LIMITS）に直す：増え方の満点・声をかける線・0点が、LIMITS のそれぞれに重なるように

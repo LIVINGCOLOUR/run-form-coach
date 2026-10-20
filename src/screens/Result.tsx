@@ -5,7 +5,7 @@ import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
-import { formRows, nextItem, nextNote, NEXT_TEXT, type FormRow, type Next } from '../modes/camera/nextStep'
+import { formRows, nextItem, nextNote, noNextNote, NEXT_TEXT, type FormRow, type Next } from '../modes/camera/nextStep'
 import { GOOD } from '../modes/camera/params'
 import type { FormResult } from '../core/types'
 
@@ -169,12 +169,12 @@ export function Result({ session: s, sessions, go }: { session: Session; session
 
 // よい例との差：項目ごとに、走っていた秒の平均と、よい例の範囲と、その差（主役）。声をかける線（正しいフォームの線）との
 // 比べは、控えめに添える（線は外れた声にならないよう広く取っているので、ふつうはどれも内側に入る）。次に意識する1つも。
+// 着地の位置は、試しの測り方（params.ts の FORM.landing.say が false の間）であることを、行の下に添える。
 // 言葉は nextStep.ts の formRows で決める
 function FormCard({ form, next }: { form: FormResult[]; next: Next | undefined }) {
   const rows = formRows(form)
   // 線の外は warn、よい例から離れていたら mid、ほぼ同じは文字の色、よい例の範囲なら accent
   const color = (r: FormRow) => (r.lineOut ? 'var(--warn)' : r.state === 'off' ? 'var(--mid)' : r.state === 'near' ? 'var(--text)' : 'var(--accent)')
-  const skippedHead = !next && rows.some((r) => r.state === 'off' && r.note)
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -221,9 +221,7 @@ function FormCard({ form, next }: { form: FormResult[]; next: Next | undefined }
             <div style={{ fontSize: 12 }} className="muted">{nextNote(next)}</div>
           </>
         ) : (
-          <div style={{ fontSize: 12 }} className="muted">
-            {skippedHead ? '頭のほかは、よい例の範囲か、差はわずかでした（頭は大きく出ているかもしれないので、次に意識することには選びません）' : 'どの項目も、よい例の範囲か、差はわずかでした'}
-          </div>
+          <div style={{ fontSize: 12 }} className="muted">{noNextNote(rows)}</div>
         )}
       </div>
     </div>

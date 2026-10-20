@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeItems, afterRun, startPhrase, startProgress } from './level'
+import { activeItems, afterRun, ALL, migrateProgress, PROGRESS_VERSION, startPhrase, startProgress, STEPS, type Progress } from './level'
 import { PHRASES } from './phrases'
 import { LEVEL } from './params'
 import { category } from './scoring'
@@ -62,9 +62,35 @@ describe('ランナーのレベル', () => {
   it('中級は腰から、上級は最初からすべて見る', () => {
     expect(activeItems(startProgress('intermediate').step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack'])
     const adv = startProgress('advanced')
-    expect(activeItems(adv.step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack', 'head'])
+    expect(activeItems(adv.step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack', 'landing', 'head'])
     expect(startPhrase(adv)).toBe(PHRASES.focusAll)
     expect(afterRun(adv, run(900)).step).toBe(adv.step)
+  })
+
+  it('着地は腰のあと、頭の前の1つの段階。腰の段階を終えたら着地を足して伝え、着地で声がかからない走りが続いたら頭へ', () => {
+    let p: Progress = { ...startProgress('beginner'), step: 1 }
+    p = afterRun(p, run(900))
+    p = afterRun(p, run(900))
+    expect(p.step).toBe(2)
+    expect(activeItems(p.step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack', 'landing'])
+    expect(startPhrase(p)).toBe(PHRASES.stepLanding)
+    p = afterRun(p, run(900, ['landing']))
+    expect(p.clean).toBe(0)
+    expect(startPhrase(p)).toBe(PHRASES.focusLanding)
+    p = afterRun(afterRun(p, run(900, ['head'])), run(900))
+    expect(p.step).toBe(3)
+    expect(startPhrase(p)).toBe(PHRASES.stepHead)
+    expect(STEPS[2].add).toEqual(['landing'])
+  })
+
+  it('段階の並びを変える前の記録（頭の段階・すべて・上級）は、いまの並びに直して読む', () => {
+    const old = (level: Progress['level'], step: number): Progress => ({ level, step, clean: 1 })
+    expect(migrateProgress(old('beginner', 1))).toMatchObject({ step: 1, clean: 1, v: PROGRESS_VERSION })
+    expect(migrateProgress(old('beginner', 2))).toMatchObject({ step: 2, clean: 1 }) // 頭の段階 → 新しく入った着地の段階から
+    expect(migrateProgress(old('beginner', 3))).toMatchObject({ step: ALL, clean: 0 }) // すべて
+    expect(migrateProgress(old('advanced', 3))).toMatchObject({ step: ALL })
+    const now = startProgress('advanced')
+    expect(migrateProgress(now)).toBe(now)
   })
 })
 

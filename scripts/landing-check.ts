@@ -1,12 +1,12 @@
 // 着地が体より前か（オーバーストライド）の測り方の試しを、本物の骨格の点に通す（scripts/landing-check.mjs から rolldown で読む）。
-// アプリ本体（src/）は読むだけで変えない。測り方は sim/landing.ts（仮想実験と同じもの）
+// アプリ本体（src/）は読むだけで変えない。測り方はアプリと同じ src/modes/camera/landing.ts（sim/landing.ts から読む）
 //   動画（scripts/video-judge の点）：毎秒30コマで取った点と、毎秒15コマで取った点。30コマの点は、15・13コマに間引いても見る。
 //     アプリと同じく One Euro でなめらかにし、全身が見えるコマだけを使う（なめらかにしない場合も出す）
 //   記録（カメラ版の記録 rfc-….json）：記録の点は、アプリがなめらかにして傾きを直したあとのもの。Mac の声の区間（drill-….json）で切る
 import { OneEuro } from '../src/modes/camera/filter'
 import { bodyVisible } from '../src/modes/camera/motion'
 import type { Frame, RunLog } from '../src/core/types'
-import { LandingMeter, summarize, hipSway, speedOf, FEATURES, value, type Feature, type Peak, type Side } from '../sim/landing'
+import { LandingMeter, summarize, hipSway, speedOf, expectedHeel, FEATURES, value, type Feature, type Peak, type Side } from '../sim/landing'
 import { findJump } from './treadmill/replay'
 
 export interface LandmarkClip {
@@ -176,7 +176,7 @@ export function logStats(drill: { sections: DrillSection[]; jumpAt?: number }, f
   // 区間ごと（はじめの 8 秒は、走り方を変えている途中なので除く）
   const SETTLE = 8
   const sections = drill.sections
-    .filter((s) => ['normal', 'drill', 'gap', 'speedup'].includes(s.kind))
+    .filter((s) => ['normal', 'drill', 'gap', 'speedup', 'speed', 'moved'].includes(s.kind))
     .map((s) => {
       const t0 = fromMs(s.start) + SETTLE
       const t1 = fromMs(s.end)
@@ -230,8 +230,7 @@ export function driftCheck(L: ReturnType<typeof logStats>, o: { feature: Feature
   return { ref, near, n: ws.length, minutes, q05: q(ds, 0.05), q50: q(ds, 0.5), q95: q(ds, 0.95), max: q(ds, 1), sd: sd(ds), lines, drills }
 }
 
-// 速さを考えた「着地の前」：かかとの前 −（仮想実験のふつうの走り185本の当てはめ −0.057 ＋ 0.130 × 速さの目安）。sim/result-landing.md の ④
-export const HEEL_FIT = { a: -0.057, b: 0.13 }
+// 速さを考えた「着地の前」：かかとの前 −（仮想実験のふつうの走り185本の当てはめ。アプリと同じ LANDING.fit）。sim/result-landing.md の ④
 export function absCheck(L: ReturnType<typeof logStats>, keys: string[], len = 16) {
   const out: { t: number; heel: number; speedL: number; res: number; shank: number }[] = []
   for (const s of L.sections.filter((x) => keys.includes(x.key))) {
@@ -240,7 +239,7 @@ export function absCheck(L: ReturnType<typeof logStats>, keys: string[], len = 1
       const w = summarize(L.m.peaks, a, a + len, near)
       const sp = speedOf(L.m.track, a, a + len)
       if (!w || w.n < 5 || !Number.isFinite(sp)) continue
-      out.push({ t: a, heel: w.med.heel, speedL: sp, res: w.med.heel - (HEEL_FIT.a + HEEL_FIT.b * sp), shank: w.med.shank })
+      out.push({ t: a, heel: w.med.heel, speedL: sp, res: w.med.heel - expectedHeel(sp), shank: w.med.shank })
     }
   }
   return out

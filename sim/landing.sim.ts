@@ -7,6 +7,8 @@
 //   ④ 速さの目安（接地している足首が後ろへ動く速さ）と、速さを考えた決まった線
 //   ⑤ 長い走り（10分）での、今日の基準からの増えの揺れ（誤った声）と、途中でピッチを下げた・速さを上げたときに線を越えるか
 //   ⑥ 短いスロー撮影（毎秒30〜120コマ）で着地の瞬間を見つけて測る（アプリのスロー分析）のと比べて
+//   ⑦ アプリのコーチ（src/modes/camera/coach.ts。着地の見方は src/modes/camera/landing.ts）に、10分の走りと、途中でピッチを下げる・速さを上げる走りを
+//      アプリと同じ間引きで通し、着地の声（今日の基準からの増え）がふつうに走って何回出るか、変えたときに出るか、速さを変えたときに出ないか（sim/result-landing-coach.md）
 // 動かし方：RBDS_DIR=… RIGLET_DIR=… VH_DIR=… VH_CAD_DIR=… npx vitest run --config sim/vitest.config.ts sim/landing.sim.ts
 //   VH_CAD_DIR は Van Hooren のピッチの条件（Sub_XX_lowfreq.c3d・highfreq.c3d、OSF 7qbxc の「0. C3D files」から取った）。
 //   LANDING_CACHE=<json> を付けると、映した結果をためて、2回目からはまとめだけを書き直す（数分 → 1秒）
@@ -18,6 +20,13 @@ import { summarize, hipSway, speedOf, type Feature, type Peak } from './landing'
 import { bodyAt, filmFrames, meterOf, runningSpan, type FilmOpts } from './landing-film'
 import { LongRun } from './longrun'
 import { analyzeRun } from '../src/modes/camera/slowmo'
+import { Coach } from '../src/modes/camera/coach'
+import { MotionDetector } from '../src/modes/camera/motion'
+import { measure } from '../src/modes/camera/geometry'
+import { FORM, LANDING, LIMITS } from '../src/modes/camera/params'
+import { FORM_SAY } from '../src/core/phrases'
+import { CUE as CUE_P } from '../src/core/params'
+import type { Frame } from '../src/core/types'
 
 const RBDS = process.env.RBDS_DIR
 const RIGLET = process.env.RIGLET_DIR
@@ -584,3 +593,142 @@ function report(c: Cache): string {
   p()
   return L.join('\n') + '\n'
 }
+
+// ---- ⑦ アプリのコーチに通す ----
+// 映したコマを、アプリと同じ順（測る → 走っているか → コーチ）で Coach に渡す。thin なら、アプリのふだんと同じく、
+// コーチが要らないと言ったコマは骨格を取らずに時間だけ進める（全コマ記録 ?full=1 なら thin なし）。仮想のランナーは声を聞いても直さない
+interface CoachRun {
+  landing: number[] // 着地の声（今日の基準からの増え）の時刻（秒）
+  refAt: number | null
+  settled: boolean // 整え終わりに「整っています／整いました」と言った
+  over: boolean // 結果の着地が試しの線（FORM.landing.max）を越えた
+  res: number // 結果の着地（速さで補正したかかとの前）
+  rebuilds: number
+  hasRef: boolean // 着地の基準ができた（終わりの時点で）
+}
+function coachRun(frames: { t: number; f: Frame }[], thin: boolean): CoachRun {
+  const coach = new Coach({ pause: false })
+  const md = new MotionDetector()
+  let lastMoving = false
+  let runFrom = -1
+  let refAt: number | null = null
+  for (const { t, f } of frames) {
+    if (thin && coach.state === 'running' && !coach.wantsDetail()) coach.update({ t, present: true, moving: lastMoving })
+    else {
+      lastMoving = md.update(f, t)
+      coach.update({ t, present: true, moving: lastMoving, m: measure(f), frame: f })
+    }
+    if (runFrom < 0 && coach.state === 'running') runFrom = t - coach.active
+    if (refAt === null && coach.leanRef) refAt = t
+  }
+  const a = (coach as unknown as { analyzer: { drift: { ref: unknown; rebuilds: number } } }).analyzer
+  const lr = coach.finish().form?.find((x) => x.group === 'landing')
+  return {
+    landing: coach.cues.filter((c) => c.item === 'landing' && !c.lead).map((c) => runFrom + c.t),
+    refAt,
+    settled: coach.cues.some((c) => c.lead && (c.text === FORM_SAY.good || c.text === FORM_SAY.set)),
+    over: !!lr && lr.over > 0,
+    res: lr?.value ?? NaN,
+    rebuilds: a.drift.rebuilds,
+    hasRef: !!a.drift.ref,
+  }
+}
+
+describe.skipIf(!ANY)('着地：アプリのコーチに通す', () => {
+  itAll('ふつうの走り・ピッチを下げる・速さを上げる', () => {
+    // ピッチが 130〜230 歩／分に入らない記録（印の名前の取り違えなど。VH の Sub_18 ピッチを上げる）は除く（①〜⑥ と同じ）
+    const trials = loadAll().filter((tr) => {
+      const R = tr.contacts.filter((x) => x.side === 'R')
+      const c = 120 / medianOf(R.slice(1).map((x, i) => x.on - R[i].on))
+      return c >= 130 && c <= 230
+    })
+    const normal: { tr: LandingTrial; thin: CoachRun; full: CoachRun }[] = []
+    trials.forEach((tr, k) => {
+      const run = new LongRun()
+      try {
+        run.append(tr, LONG_SEC, 4242 + k)
+      } catch {
+        return
+      }
+      const frames = filmFrames((t) => run.at(t), 0, LONG_SEC, { timing: 'log', seed: 777 + k })
+      normal.push({ tr, thin: coachRun(frames, true), full: coachRun(frames, false) })
+      if (k % 20 === 0) console.log(`⑦ ${k + 1}/${trials.length}`)
+    })
+    // 途中で変える走り（⑤ と同じつなぎ方）：前の走り 300 秒 → あとの走り 120 秒
+    const by = new Map(trials.map((t) => [`${t.dataset}|${t.subject}|${t.cond}`, t]))
+    const KINDS: [string, string, string, string][] = [
+      ['vh', 'highfreq', 'lowfreq', 'VH 同じ速さでピッチを約10%下げる'],
+      ['rbds', '25', '35', 'RBDS 秒速2.5m → 3.5m（速さ +1m/s）'],
+      ['riglet', '楽', '速い', 'Riglet 楽なペース → 速いペース（速さ +0.5m/s）'],
+    ]
+    const sw: { kind: string; thin: CoachRun; full: CoachRun }[] = []
+    let k = 0
+    for (const t of trials) {
+      for (const [ds, a, b, kind] of KINDS) {
+        if (t.dataset !== ds || t.cond !== a) continue
+        const tb = by.get(`${ds}|${t.subject}|${b}`)
+        if (!tb) continue
+        const run = new LongRun()
+        try {
+          run.append(t, 300, 5151 + k)
+          run.append(tb, 120, 6161 + k)
+        } catch {
+          continue
+        }
+        const frames = filmFrames((u) => run.at(u), 0, 420, { timing: 'log', seed: 919 + k++ })
+        sw.push({ kind, thin: coachRun(frames, true), full: coachRun(frames, false) })
+      }
+    }
+    const per10 = (rs: CoachRun[], end: number) => {
+      let n = 0
+      let min = 0
+      for (const r of rs) {
+        if (r.refAt === null) continue
+        n += r.landing.filter((x) => x > r.refAt!).length
+        min += (end - r.refAt) / 60
+      }
+      return min ? (n / min) * 10 : NaN
+    }
+    const L: string[] = []
+    const p = (x = '') => L.push(x)
+    p(`# 着地の声を、アプリのコーチに通す（仮想実験）`)
+    p()
+    p(
+      `sim/result-landing.md と同じ研究データの走り（${normal.length}本）を、1本ずつ LongRun で${LONG_SEC / 60}分にのばし、実機の記録のコマの間隔で仮想のスマホに映して、` +
+        `アプリのコーチ（src/modes/camera/coach.ts、着地の見方は src/modes/camera/landing.ts）にそのまま通した。「間引き」はアプリのふだん（安定して走っている間は10秒のうち3秒だけ骨格を取る）、` +
+        `「全コマ」は全コマ記録（?full=1）。着地の声は、今日の基準（整えたあとの形、走り始めて約3分）より、かかとの前の中央値（${LANDING.window}秒、間引いている間は${LANDING.thinWindow}秒）の増えの、` +
+        `${CUE_P.window}秒平均が +${LIMITS.landing.cue} を越えたとき（ほかの項目と同じしくみ）。速さの目安が基準から ±${Math.round(LANDING.speedGuard * 100)}% を越えた秒（一度越えたら ±${Math.round(LANDING.speedBack * 100)}% に戻るまで）と、` +
+        `ピッチが基準より +${Math.round(LANDING.cadenceUp * 100)}% を越えて上がった秒は比べず、それが${LANDING.speedHold}秒続いたら${LANDING.rebuild}秒ためて基準を作り直す。` +
+        `仮想のランナーは声を聞いても直さない。上体のないデータ（RBDS）は仮の上体なので、ここでは着地の声だけを数える。`,
+    )
+    p()
+    p(`## ふつうに走ったとき（${normal.length}本 × ${LONG_SEC / 60}分。今日の基準ができたあと）`)
+    p()
+    p(`| 見方 | 着地の誤った声（10分あたり） | 声が出た走り | 着地の基準ができなかった走り | 速さが変わったとみて作り直した回数（1本あたり） | 「整いました／整っています」と言った走り | 結果の着地が試しの線（+${FORM.landing.max}）を越えた走り |`)
+    p(`|---|---|---|---|---|---|---|`)
+    for (const [lab, get] of [['間引き（アプリのふだん）', (x: (typeof normal)[number]) => x.thin], ['全コマ（?full=1）', (x: (typeof normal)[number]) => x.full]] as const) {
+      const rs = normal.map(get)
+      p(`| ${lab} | ${f2(per10(rs, LONG_SEC))} | ${rs.filter((r) => r.refAt !== null && r.landing.some((x) => x > r.refAt!)).length} / ${rs.length} | ${rs.filter((r) => !r.hasRef).length} | ${f2(meanOf(rs.map((r) => r.rebuilds)))} | ${rs.filter((r) => r.settled).length} | ${rs.filter((r) => r.over).length} |`)
+    }
+    p()
+    const byDs = (ds: string) => normal.filter((x) => x.tr.dataset === ds)
+    p(`データごと（間引き）：${['rbds', 'riglet', 'vh'].map((ds) => `${DS_JA[ds]} ${f2(per10(byDs(ds).map((x) => x.thin), LONG_SEC))}回（${byDs(ds).length}本）`).join('、')}`)
+    p()
+    p(`## 途中で変えたとき（前の走り 300秒 → あとの走り 120秒。あとの走りの間に着地の声が出た人の割合）`)
+    p()
+    p(`| 変えたこと | 人数 | 間引き：あとで声 | 間引き：前で声（誤り） | 全コマ：あとで声 | 全コマ：前で声（誤り） | 作り直した回数（1本あたり、間引き） |`)
+    p(`|---|---|---|---|---|---|---|`)
+    for (const [, , , kind] of KINDS) {
+      const ss = sw.filter((x) => x.kind === kind)
+      if (!ss.length) continue
+      const after = (r: CoachRun) => r.landing.some((x) => x >= 300 && x <= 420)
+      const before = (r: CoachRun) => r.refAt !== null && r.landing.some((x) => x > r.refAt! && x < 300)
+      p(`| ${kind} | ${ss.length} | ${pc(ss.filter((x) => after(x.thin)).length / ss.length)} | ${pc(ss.filter((x) => before(x.thin)).length / ss.length)} | ${pc(ss.filter((x) => after(x.full)).length / ss.length)} | ${pc(ss.filter((x) => before(x.full)).length / ss.length)} | ${f2(meanOf(ss.map((x) => x.thin.rebuilds)))} |`)
+    }
+    p()
+    p(`速さを上げた走り（RBDS・Riglet）であとに声が出たら、それは誤った声（速さで着地は前に出るので、比べずに基準を作り直すはず）。ピッチを下げた走り（VH）は、本当のかかとの前の増えが平均 +0.025 で、⑤ の16秒の窓の数え方では 56% が線を越えた。`)
+    p()
+    writeFileSync(OUT.replace(/\.md$/, '-coach.md'), L.join('\n') + '\n')
+    console.log(L.join('\n'))
+  })
+})
