@@ -252,7 +252,8 @@ export class FormStage {
     if (this.doneAt === null) this.doneAt = t
   }
 
-  // 結果：項目ごとの、走っていた秒の平均と、線と比べた結果
+  // 結果：項目ごとの、走っていた秒の平均と、線と比べた結果。頭には、走っていた秒の前側・後ろ側の値の平均も付ける
+  // （頭が大きく出ているかもしれないことを、結果の画面に書くため）
   results(): FormResult[] {
     if (!this.all.length) return []
     const v: FormValues = {
@@ -266,7 +267,10 @@ export class FormStage {
       const o = formOver(g, v)
       const value = g === 'body' ? v.body : g === 'trunk' ? v.trunk : v.neck
       const r: FormResult = { group: g, key: o.key, value, over: o.over, inside: s.windows ? s.insideWindows / s.windows : 1, cues: s.cues, fixed: s.fixed, judged: s.windows > 0 }
-      if (g === 'head') r.value2 = v.headLean
+      if (g === 'head') {
+        r.value2 = v.headLean
+        r.yaw = mean(this.all.map((x) => x.yaw))
+      }
       return r
     })
   }

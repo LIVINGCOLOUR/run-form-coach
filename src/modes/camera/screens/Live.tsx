@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { RUNNING } from '../../../core/params'
 import { BASELINE, CORRECT, SETUP } from '../params'
-import { ITEM_KEYS, type Baseline, type Frame, type ItemKey, type Sample } from '../../../core/types'
+import { ITEM_KEYS, type Baseline, type Frame, type ItemKey, type Sample, type Session } from '../../../core/types'
 import type { Measure } from '../types'
 import { Coach, judged, type CoachEvent, type CoachState } from '../coach'
 import { facing, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../geometry'
@@ -11,7 +11,8 @@ import { overCue } from '../scoring'
 import { gravityAvailable, gravityPitch, gravityRoll, phoneStillSec } from '../gravity'
 import { queueUpload } from '../../../core/upload/uploads'
 import { loadBaselines, loadProgress, loadSettings, saveBaseline, saveLog, saveProgress, saveSession } from '../../../core/storage'
-import { activeItems, afterRun, startPhrase } from '../../../core/level'
+import { activeItems, afterRun } from '../../../core/level'
+import { todayFocus } from '../nextStep'
 import { LogRecorder } from '../log'
 import { preloadVoice, speak, stopVoice } from '../../../core/voice'
 import { PHRASES } from '../../../core/phrases'
@@ -41,7 +42,8 @@ const bodySpan = (f: Frame, h: number) => (Math.max(f[L.leftAnkle].y, f[L.rightA
 
 const ITEM_TEXT: Record<ItemKey, string> = { head: '頭が前に出ています', trunk: '上体が倒れすぎています', trunkBack: '上体が起きています', body: '体が倒れすぎています', bodyBack: '体が後ろに残っています', hip: '腰が落ちています' }
 
-export function Live({ video: file, onDone }: { video?: File; onDone: (id?: string) => void }) {
+// sessions：これまでの走り（新しい順）。走り出す前に言う「今日意識するのは…」を、ホームの「今日の意識」と同じ1つにするため
+export function Live({ video: file, sessions = [], onDone }: { video?: File; sessions?: Session[]; onDone: (id?: string) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const tapsRef = useRef<number[]>([])
@@ -119,6 +121,8 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
 
     // ランナーのレベルと、今日注意する項目（走り終わったら、続いて声がかからなかったかで次の段階へ）
     const progress = loadProgress()
+    // 今日意識すること（ホームの「今日の意識」と同じ1つ。nextStep.ts の todayFocus）
+    const focus = todayFocus(sessions, progress)
 
     const finish = async () => {
       if (finished) return
@@ -406,7 +410,7 @@ export function Live({ video: file, onDone }: { video?: File; onDone: (id?: stri
               saveBaseline({ neck: today, createdAt, ...st })
               standing = { ...st, issue }
               say(!issue ? PHRASES.baseGood : issue === 'head' ? PHRASES.baseHeadLeft : PHRASES.baseBackLeft, t)
-              say(startPhrase(progress), t) // 今日意識すること（前の言葉のあとに続けて話す）
+              say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
               lastNextSay = t
               setPhase('run')
             }

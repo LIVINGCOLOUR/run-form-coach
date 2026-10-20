@@ -2,10 +2,9 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
-import { bestSession, deg, GROUP_LABEL, nextItem, NEXT_TEXT, rangeText } from '../modes/camera/nextStep'
+import { bestSession, todayFocus } from '../modes/camera/nextStep'
 import { loadProgress, loadSettings, saveSettings, setLevel, type Settings } from '../core/storage'
-import { ALL, LEVEL_LABEL, LEVEL_NOTE, STEPS, type Level, type Progress } from '../core/level'
-import { LEVEL } from '../core/params'
+import { ALL, LEVEL_LABEL, LEVEL_NOTE, type Level, type Progress } from '../core/level'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
 import { preloadVoice, speak, unlockVoice } from '../core/voice'
 import { PHRASES } from '../core/phrases'
@@ -26,6 +25,8 @@ import { UploadKeyButton, UploadPanel } from '../ui/Upload'
 
 const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
+// 小数1桁まで（よい例までの差は1°に満たないことがあり、整数に丸めると「7° → 7°」になるため）
+const fmt1 = (x: number) => String(Math.round(x * 10) / 10)
 
 // 形が変わっていく割合 k を 0↔1 でなめらかに動かす
 function useMorph(on: boolean) {
@@ -69,9 +70,9 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   const last = sessions[0]
   const prev = sessions[1]
   const best = bestSession(sessions)
-  const next = best ? nextItem(best) : undefined
-  // 前回の走りで、正しいフォームから一番離れていた項目（正しいフォームと比べた記録があるときだけ）
-  const lastOff = last?.form?.length ? nextItem(last) : undefined
+  // 今日の意識：走り出す前に言う1つと同じもの（nextStep.ts の todayFocus）。走り姿の「今日のフォーム」も、この1つだけを変えて見せる
+  const focus = useMemo(() => todayFocus(sessions, progress), [sessions, progress])
+  const next = focus.next
 
   const { base, ghost, idealFrames, exaggerated } = useMemo(() => {
     const stride = best?.strides.good
@@ -92,19 +93,6 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   }, [best, next])
 
   const shown = k > 0 ? base.map((f, i) => lerpFrame(f, idealFrames[i % idealFrames.length], k)) : base
-  // 今日の意識：前回、正しいフォームから外れていた項目があれば、一番離れていたもの（走り出しに、まずそこを整える）。
-  // なければ、注意する項目を広げている途中ならその段階のこと、すべて見る段階ならベストの走りで正しいフォームから一番離れていたもの
-  const stepping = progress.step < ALL
-  const focus = lastOff
-    ? { title: NEXT_TEXT[lastOff.item].title, reason: `前回は${GROUP_LABEL[lastOff.group]}が ${deg(lastOff.from)}（正しいフォーム ${rangeText(lastOff.group)}）。走り出しに、まずここを整えます` }
-    : stepping
-      ? {
-          title: STEPS[progress.step].title,
-          reason: `${Math.round(LEVEL.minRunSec / 60)}分以上の走りで、これについて声がかからない走りが${LEVEL.advanceAfter}回続いたら、次へ進みます（いま ${progress.clean}/${LEVEL.advanceAfter}回）`,
-        }
-      : next
-        ? NEXT_TEXT[next.item]
-        : { title: '胸のライトで前を照らす', reason: best ? 'あなたのベストは、正しいフォームの範囲に入っています' : '走り出しに、正しいフォームへ整えます' }
   const chooseLevel = (level: Level) => {
     if (level === progress.level) return
     setProgress(setLevel(level))
@@ -216,12 +204,12 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
             )}
           </div>
         )}
-        {k < 0.05 && !ideal && next && (
+        {k < 0.05 && !ideal && ghost && next && (
           <div style={{ position: 'absolute', right: 14, top: 64, textAlign: 'right' }}>
-            <div style={{ fontSize: 11 }} className="muted">{ITEM_LABEL[next.item]}</div>
+            <div style={{ fontSize: 11 }} className="muted">{next.kind === 'good' ? `${next.group === 'head' ? '首の角度' : ITEM_LABEL[next.group]}（よい例へ）` : ITEM_LABEL[next.item]}</div>
             <div className="num" style={{ fontSize: 30 }}>
-              <span className="muted">{Math.round(next.from)}{unit(next.item)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
-              <span style={{ color: 'var(--accent)' }}>{Math.round(next.to)}{unit(next.item)}</span>
+              <span className="muted">{fmt1(next.from)}{unit(next.item)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
+              <span style={{ color: 'var(--accent)' }}>{fmt1(next.to)}{unit(next.item)}</span>
             </div>
             <div style={{ fontSize: 11, paddingTop: 4 }} className="muted">ほかはそのまま</div>
             {exaggerated && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>差は見やすく強調</div>}

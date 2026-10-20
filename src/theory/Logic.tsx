@@ -1,13 +1,23 @@
 import type { ReactNode } from 'react'
 import { LEVEL_LABEL, STEPS } from '../core/level'
 import { ABSENCE, BREAKDOWN, CUE, HIP_REF, LEVEL, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../core/params'
-import { BASELINE, CORRECT, FORM, LIMITS, REL_LIMITS, SETUP, STRIDE } from '../modes/camera/params'
+import { BASELINE, CORRECT, FORM, GOOD, LIMITS, REL_LIMITS, SETUP, STRIDE } from '../modes/camera/params'
 import { ITEM_KEYS } from '../core/types'
 import { FORM_ORDER } from '../modes/camera/form'
+import { measure } from '../modes/camera/geometry'
+import { demoStride } from '../modes/camera/ui/figure'
 import { PHRASES } from '../core/phrases'
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる
+
+// 見本の絵（研究データの脚に、上体7°を足した1歩）を、アプリの測り方（measure）に通した値。よい例の範囲と並べて見せる
+const MODEL = (() => {
+  const ms = demoStride({ lean: 7, head: 0, drop: 0 }).map(measure)
+  const avg = (k: 'body' | 'trunk' | 'neck' | 'headLean') => ms.reduce((a, m) => a + m[k], 0) / ms.length
+  return { body: avg('body'), trunk: avg('trunk'), neck: avg('neck'), headLean: avg('headLean') }
+})()
+const d1 = (x: number) => `${Math.round(x * 10) / 10}`
 
 const ITEM_NAME = { head: '頭の位置', trunk: '上体の傾き', trunkBack: '上体の起きすぎ', body: '体全体の傾き', bodyBack: '体全体の起きすぎ', hip: '腰の高さ' } as const
 const GROUP_NAME = { body: '体全体', trunk: '上体', head: '頭' } as const
@@ -108,9 +118,10 @@ export function Logic() {
           </tbody>
         </table>
         <Row>
-          体全体：人の動画（3R のトレッドミル）で、講師のよい例は7.0〜9.6°、作者が「上体が起きている」「ブレーキ」「腰落ち」「足を前に出す」と言う例は2.2〜5.4°。研究データ（楽なペース、約時速9km、30本）を仮想のスマホで映すと、本ごとの平均でいちばん小さい人が5.7°。線をよい例と崩しの間の低いほうにしたのは、線の際の人に、ぶれだけで声と「その形です」が行き来しないため（自分のトレッドミルの記録では、時速8kmのふつうの走りが{FORM.window}秒平均で5.1〜7.6°）。倒れすぎの側は、研究データでわざと前に倒したときの平均14.4°（ふつうは7〜13°）より少し上。
-          上体：よい例は4.8〜9.9°、作者が「上体の突っ込み」と言う例は11.1〜11.4°。研究データのふつうの走りにも0°前後の人がいるので、後ろ側は鉛直よりはっきり後ろだけ（上体が起きる崩しは、体全体の線でも分かる）。
-          頭：アプリの点では、よい姿勢でも大きく出る（講師のよい例で首22〜31°・頭の位置30〜38°、自分のトレッドミルのふつうの走りの{FORM.window}秒平均で最大43°・46°）ので、わざと前に出したとき（59°・68°）や猫背（52°・63°）のように、はっきり前に出たときだけ言う。首の角度だけだと上体が起きたときに、頭の位置だけだと体ごと前に倒したときに、頭は前に出ていなくても大きく出るので、両方が越えたときだけ。
+          体全体：人の動画（3R のトレッドミル）で、講師のよい例は{d1(GOOD.body.min)}〜{d1(GOOD.body.max)}°、作者が「上体が起きている」「ブレーキ」「腰落ち」「足を前に出す」と言う例は2.2〜5.4°。研究データ（楽なペース、約時速9km、30本）を仮想のスマホで映すと、本ごとの平均でいちばん小さい人が5.7°。線をよい例と崩しの間の低いほうにしたのは、線の際の人に、ぶれだけで声と「その形です」が行き来しないため（自分のトレッドミルの記録では、時速8kmのふつうの走りが{FORM.window}秒平均で5.1〜7.6°）。倒れすぎの側は、研究データでわざと前に倒したときの平均14.4°（ふつうは7〜13°）より少し上。
+          上体：講師のよい例は{d1(GOOD.trunk.min)}〜{d1(GOOD.trunk.max)}°、作者が「上体の突っ込み」と言う例は11.1〜11.4°。研究データのふつうの走りにも0°前後の人がいるので、後ろ側は鉛直よりはっきり後ろだけ（上体が起きる崩しは、体全体の線でも分かる）。
+          頭：アプリの点では、よい姿勢でも大きく出る（講師のよい例で首{d1(GOOD.head.neck.min)}〜{d1(GOOD.head.neck.max)}°・頭の位置{d1(GOOD.head.headLean.min)}〜{d1(GOOD.head.headLean.max)}°、自分のトレッドミルのふつうの走りの{FORM.window}秒平均で最大43°・46°）ので、わざと前に出したとき（59°・68°）や猫背（52°・63°）のように、はっきり前に出たときだけ言う。首の角度だけだと上体が起きたときに、頭の位置だけだと体ごと前に倒したときに、頭は前に出ていなくても大きく出るので、両方が越えたときだけ。
+          この線は外れた声を出さないために広く取っているので、ふつうに走る人はほとんど内側に入る。よい例にどれだけ近いかは、走り終わってから結果の画面で見る（11 の「よい例との差」）。
         </Row>
         <Row>
           外れている項目は、優先の順（体全体 → 上体 → 頭）に1つずつ、何が起きているかと直し方を言う。体全体を足首から傾けると上体も同じだけ傾き、上体を変えると体全体もその半分ほど変わり（研究データ）、頭（首の角度）は上体に左右されるので、大きなところから直す。言ったあと{FORM.hold}秒の平均が線の内側に入ったら（線のすぐ際でのぶれで言わないよう、体全体{FORM.body.margin}°・上体{FORM.trunk.margin}°・頭{FORM.head.margin}°内側）「{PHRASES.formOk}」と伝え、{FORM.next}秒あけて次の項目へ。
@@ -183,7 +194,7 @@ export function Logic() {
         <Row>
           ランナーのレベル：基準からの崩れで声をかける項目を、{LEVEL_LABEL.beginner}は1つずつ足していく（{STEPS.map((x) => x.title).join(' → ')} → すべて）。{LEVEL_LABEL.intermediate}は2つ目から、{LEVEL_LABEL.advanced}は最初からすべて見る。上体・体全体の起きすぎ（基準から後ろへの崩れ）は、腰の段階で足す（腰が落ちる走りは、上体が起きる形に出ることが多い）。
           正しいフォームの線で整える声は、どのレベルでもかける（フォームの土台なので。それでも一度に1つずつ）。
-          走り出す前の立ち姿勢の確認のあとに、今日意識することを1つだけ言う。いま足した項目で声がかからない走り（{Math.round(LEVEL.minRunSec / 60)}分以上）が{LEVEL.advanceAfter}回続いたら、次の項目を足し、次の走り出しでそれを伝える。
+          走り出す前の立ち姿勢の確認のあとに、今日意識することを1つだけ言う（ホームの「今日の意識」と同じもの。選び方は 11）。いま足した項目で声がかからない走り（{Math.round(LEVEL.minRunSec / 60)}分以上）が{LEVEL.advanceAfter}回続いたら、次の項目を足し、次の走り出しでそれを伝える。
           まだ注意していない項目も測って記録し、大きく崩れたとき（その項目の点数が{SCORE.mid}点未満）だけ声をかける。一度に意識できるのは1つなので、全部を言うと、どれも残らないため。
         </Row>
         <Row>
@@ -236,7 +247,63 @@ export function Logic() {
         </Row>
         <Row>良い・ふつう・悪いの割合：1秒ごとの記録を、次の記録までの時間で重みを付けて数える。</Row>
         <Row>
-          正しいフォームとの比べ：項目ごとに、走っていた秒の平均と正しいフォームの範囲を並べる（例：体全体の前傾 あなた 5°／正しいフォーム {FORM.body.min}〜{FORM.body.max}°）。整える間に直ったか、直らなかったかも出す。次に走る前の「今日の意識」と、走り姿の「次の一歩」は、正しいフォームから一番離れていた項目を1つだけ選ぶ（離れ方は、項目ごとの0点までの幅で割って比べる）。
+          よい例との差：項目ごとに、走っていた秒の平均と、よい例の範囲と、その差を並べる（例：体全体の前傾「よい例より 0.8° 起きています」あなた {d1(GOOD.body.min - 0.8)}°／よい例 {d1(GOOD.body.min)}〜{d1(GOOD.body.max)}°）。差は範囲の外にいた量で、内側なら「よい例の範囲です」。その下に、声をかける線（4 の正しいフォームの線）の内側だったか、整える間に直ったかを小さく添える。
+        </Row>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ color: 'var(--faint)', textAlign: 'left' }}>
+              <th style={TH}>項目</th>
+              <th style={TH}>よい例の範囲（真ん中）</th>
+              <th style={TH}>声をかける線</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={TD}>体全体</td>
+              <td style={{ ...TD, color: 'var(--accent)' }}>
+                {d1(GOOD.body.min)}〜{d1(GOOD.body.max)}°（{d1(GOOD.body.mid)}°）
+              </td>
+              <td style={TD}>
+                {FORM.body.min}°より小さい・{FORM.body.max}°より大きい
+              </td>
+            </tr>
+            <tr>
+              <td style={TD}>上体</td>
+              <td style={{ ...TD, color: 'var(--accent)' }}>
+                {d1(GOOD.trunk.min)}〜{d1(GOOD.trunk.max)}°（{d1(GOOD.trunk.mid)}°）
+              </td>
+              <td style={TD}>
+                {FORM.trunk.min}°より小さい・{FORM.trunk.max}°より大きい
+              </td>
+            </tr>
+            <tr>
+              <td style={TD}>頭</td>
+              <td style={{ ...TD, color: 'var(--accent)' }}>
+                首 {d1(GOOD.head.neck.min)}〜{d1(GOOD.head.neck.max)}°（{d1(GOOD.head.neck.mid)}°）・頭の位置 {d1(GOOD.head.headLean.min)}〜{d1(GOOD.head.headLean.max)}°（{d1(GOOD.head.headLean.mid)}°）。前に出た側だけ見る
+              </td>
+              <td style={TD}>
+                首{FORM.head.neck}°と頭の位置{FORM.head.headLean}°を両方越える
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <Row>
+          線が2つある理由：声をかける線は、走っている間に外れた声を出さないため、また線の際で声と「その形です」が行き来しないために、広く取っている。ふつうに走る人はほとんど内側に入る（自分の2026-10-19の走りも全部内側だった）。よい例の範囲は、走り終わってから「よい例にどれだけ近いか」を見るためのもので、これで声はかけない。
+        </Row>
+        <Row>
+          よい例の範囲の決め方：人の動画（3R のトレッドミル）の講師のよい例{GOOD.examples}本を、アプリと同じ骨格の推定に通して測った、いちばん小さい〜いちばん大きい値（真ん中は中央値）。{GOOD.examples}本はほぼ1人の講師の走りで、時速{GOOD.kmh.min}〜{GOOD.kmh.max}km。大勢の人のよい例ではないので、ほかの人の正しいフォームが範囲の外にあることもある（人数を増やしたら合わせ直す）。
+          体全体の傾きは速いほど大きい（研究データで、楽なペースから速いペースへ真ん中9.0°→10.7°）ので、講師より遅く走ると、そのぶん小さく出る。
+          上体のよい例は、研究データのふつうの走りの真ん中（4.0〜4.5°）より前寄り（講師は「上半身をやや前傾に」と勧める。研究には、上体がまっすぐに近い人ほど記録が良かったという報告もある）。
+          見本の絵（研究データの脚に上体7°を足した1歩）をアプリの測り方に通すと、体全体{d1(MODEL.body)}°・上体{d1(MODEL.trunk)}°で、よい例の範囲に入る。頭は首{d1(MODEL.neck)}°・頭の位置{d1(MODEL.headLean)}°で、アプリの骨格の点（よい姿勢でも大きく出る）とは比べられないので、頭のよい例は講師の値だけで決めた。
+        </Row>
+        <Row>
+          差の出し方：頭は前に出た側だけを見て、首の角度と頭の位置の両方が上の端を越えたとき、越えた量の小さいほう（4 の線と同じ考え方）。差が体全体{GOOD.body.near}°・上体{GOOD.trunk.near}°・頭{GOOD.head.near}°より小さいときは「ほぼ同じ」と書き、次の一歩には選ばない（正しいフォームの線の際のぶれと同じ大きさ。頭は講師1人の中でも区間で9°ちがうので大きめ）。
+        </Row>
+        <Row>
+          頭の注意：走っていた秒の「前側から／後ろ側から」の値の平均が+{SETUP.frontMax}を越えた走りは、頭の行に「実際より大きく出ているかもしれません」と添え（数字は隠さない）、頭は次の一歩に選ばない。スマホが前側に1°ずれるごとに、首は+0.72°・頭の位置は+0.55°大きく出る（仮想実験）。講師の動画の走りは+0.009〜+0.019。自分の記録の+0.07前後が、スマホの向きのずれか点の取り方かは、まだ見分けられていない。
+        </Row>
+        <Row>
+          次の一歩・今日の意識：声をかける線の外にいた項目があれば、そのうち一番外れていたもの。なければ、よい例から一番離れていた項目（離れ方は、項目ごとの0点までの幅（体全体{FORM.body.span}°・上体{FORM.trunk.span}°・頭{FORM.head.span}°）で割って比べる）。ホームの「今日の意識」と、走り出す前に言う「今日意識するのは…」は同じ1つにする：段階が上がった次の走りは、新しく見る段階のこと。そうでなければ前回の走りの次の一歩。それもなければ、レベルの段階のこと（すべて見る段階なら「すべての項目を見ます」）。
         </Row>
         <Row>
           崩れ始め：{BREAKDOWN.minRun / 60}分以上走ったとき、{BREAKDOWN.window / 60}分平均の姿勢スコアが序盤より{BREAKDOWN.drop}点以上下がった最初の時刻。

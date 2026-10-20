@@ -57,6 +57,7 @@ export default function App() {
       return (
         <Live
           video={screen.video}
+          sessions={sessions}
           onDone={async (id) => {
             await reload()
             setScreen(id ? { name: 'result', id } : { name: 'home' })

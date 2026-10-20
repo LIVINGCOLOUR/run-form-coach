@@ -53,9 +53,13 @@ export const PHRASES = {
   baseHeadLeft: '頭が少し前に出たままですが、今日はこの姿勢で始めます。走り出すと始まります。',
   baseBackLeft: '背中が少し丸まったままですが、今日はこの姿勢で始めます。走り出すと始まります。',
   waitRun: 'まだ始まっていません。走り出すと始まります。',
+  // 今日意識すること（走り出す前に言う1つ。ホームの「今日の意識」と同じもの）。項目ごとの言葉は下の FOCUS
   focusUpright: '今日意識するのは、ひとつだけ。胸のライトで前を照らすように、背を高くして走りましょう。目線は正面に。',
   focusHip: '今日意識するのは、腰の高さです。上から吊られているように、腰を高く保って走りましょう。',
   focusHead: '今日意識するのは、頭の位置です。耳を肩の真上に乗せるように走りましょう。',
+  focusTrunkBack: '今日意識するのは、上体の傾きです。上体を少しだけ前に傾けて走りましょう。',
+  focusBody: '今日意識するのは、体全体の傾きです。倒れすぎずに、上から吊られているように走りましょう。',
+  focusBodyBack: '今日意識するのは、体全体の傾きです。足首から、少しだけ前に体を預けて走りましょう。',
   focusAll: '今日は、すべての項目を見ます。崩れたときだけ声をかけます。',
   stepHip: '前かがみにならずに走れるようになりました。今日から、腰の高さも見ます。腰を高く保って走りましょう。',
   stepHead: '腰も高く保てています。今日から、頭の位置も見ます。耳を肩の真上に乗せるように走りましょう。',
@@ -117,6 +121,16 @@ export const CUE: Record<ItemKey, string> = {
   body: PHRASES.cueBody,
   bodyBack: PHRASES.cueBodyBack,
   hip: PHRASES.cueHip,
+}
+
+// 今日意識すること（項目ごと）。ホームの「今日の意識」の見出し（camera/nextStep.ts の NEXT_TEXT）と同じことを言う
+export const FOCUS: Record<ItemKey, string> = {
+  head: PHRASES.focusHead,
+  trunk: PHRASES.focusUpright,
+  trunkBack: PHRASES.focusTrunkBack,
+  body: PHRASES.focusBody,
+  bodyBack: PHRASES.focusBodyBack,
+  hip: PHRASES.focusHip,
 }
 
 export const RECOVER = [PHRASES.recover1, PHRASES.recover2]

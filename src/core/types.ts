@@ -43,7 +43,8 @@ export interface Sample {
   chin?: number
 }
 
-// 正しいフォームとの比べ（カメラ版、src/modes/camera/form.ts）。結果の画面と次の一歩に使う
+// 正しいフォームとの比べ（カメラ版、src/modes/camera/form.ts）。結果の画面と次の一歩に使う。
+// よい例（camera/params.ts の GOOD）との差は、ここには入れず、画面に出すときに value から出す（よい例を合わせ直したら、前の走りにも効くように）
 export type FormGroup = 'body' | 'trunk' | 'head'
 export interface FormResult {
   group: FormGroup
@@ -55,6 +56,9 @@ export interface FormResult {
   cues: number // 正しいフォームの線で知らせた回数
   fixed: boolean // 知らせたあと、線の内側に入った（直った）ことがある
   judged: boolean // 線と比べられた（頭は、斜めから撮っているときは比べない）
+  // 走っていた秒の、前側・後ろ側の値（geometry の yawSign）の平均（頭だけ）。SETUP.frontMax を越えていたら、
+  // スマホが前側から撮っていたか点の取り方がずれていて、頭は実際より大きく出ているかもしれない
+  yaw?: number
 }
 
 export type Category = 'good' | 'mid' | 'bad'

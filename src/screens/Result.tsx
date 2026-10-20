@@ -5,7 +5,8 @@ import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
-import { deg, GROUP_LABEL, nextItem, NEXT_TEXT, rangeText } from '../modes/camera/nextStep'
+import { formRows, nextItem, nextNote, NEXT_TEXT, type FormRow, type Next } from '../modes/camera/nextStep'
+import { GOOD } from '../modes/camera/params'
 import type { FormResult } from '../core/types'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
@@ -166,36 +167,65 @@ export function Result({ session: s, sessions, go }: { session: Session; session
   )
 }
 
-// 正しいフォームとの比べ：項目ごとに、走っていた秒の平均と正しいフォームの範囲。次に意識する1つも
-function FormCard({ form, next }: { form: FormResult[]; next: ReturnType<typeof nextItem> }) {
-  const state = (r: FormResult) =>
-    !r.judged
-      ? { text: '今日は見ていません（斜めから撮っているように見えました）', warn: false }
-      : r.over > 0
-        ? { text: r.cues && !r.fixed ? '外れていました（声をかけても、範囲に入りませんでした）' : '外れていました', warn: true }
-        : r.fixed
-          ? { text: '声をかけて、範囲に入りました', warn: false }
-          : { text: '正しい範囲です', warn: false }
+// よい例との差：項目ごとに、走っていた秒の平均と、よい例の範囲と、その差（主役）。声をかける線（正しいフォームの線）との
+// 比べは、控えめに添える（線は外れた声にならないよう広く取っているので、ふつうはどれも内側に入る）。次に意識する1つも。
+// 言葉は nextStep.ts の formRows で決める
+function FormCard({ form, next }: { form: FormResult[]; next: Next | undefined }) {
+  const rows = formRows(form)
+  // 線の外は warn、よい例から離れていたら mid、ほぼ同じは文字の色、よい例の範囲なら accent
+  const color = (r: FormRow) => (r.lineOut ? 'var(--warn)' : r.state === 'off' ? 'var(--mid)' : r.state === 'near' ? 'var(--text)' : 'var(--accent)')
+  const skippedHead = !next && rows.some((r) => r.state === 'off' && r.note)
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ fontSize: 15, fontWeight: 700 }}>正しいフォームとの比べ</div>
-      {form.map((r) => {
-        const st = state(r)
-        return (
-          <div key={r.group} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 14, lineHeight: 1.5 }}>
-              {GROUP_LABEL[r.group]}：あなた <span className="num" style={{ fontSize: 18, fontWeight: 600, color: st.warn ? 'var(--warn)' : 'var(--text)' }}>{deg(r.value)}</span>／正しいフォーム {rangeText(r.group)}
-            </div>
-            <div style={{ fontSize: 12, color: st.warn ? 'var(--warn)' : 'var(--muted)' }}>{st.text}</div>
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>よい例との差</div>
+        <div style={{ fontSize: 12 }} className="muted">走っていた間の平均を、よい例の範囲と比べました</div>
+      </div>
+      {rows.map((r) => (
+        <div key={r.group} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 13 }} className="muted">{r.label}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 6px', color: color(r) }}>
+            {r.state === 'in' ? (
+              <span style={{ fontSize: 22, fontWeight: 900 }}>よい例の範囲です</span>
+            ) : (
+              <>
+                <span style={{ fontSize: 15, fontWeight: 700 }}>よい例より</span>
+                <span className="num" style={{ fontSize: 40, fontWeight: 600 }}>{r.gap}</span>
+                <span style={{ fontSize: 15, fontWeight: 700 }}>{r.word}</span>
+                {r.state === 'near' && <span style={{ fontSize: 12, color: 'var(--muted)' }}>差はわずかで、ほぼ同じ</span>}
+              </>
+            )}
           </div>
-        )
-      })}
-      {next && (
-        <div style={{ fontSize: 13, lineHeight: 1.6, paddingTop: 4, borderTop: '1px solid var(--line)' }}>
-          次に意識すること：<span style={{ fontWeight: 700 }}>{NEXT_TEXT[next.item].title}</span>
-          <div style={{ fontSize: 12 }} className="muted">正しいフォームから一番離れていた項目です。次の走り出しで、まずここを整えます</div>
+          <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+            あなた{' '}
+            {r.youParts.map((p, i) => (
+              <span key={p.label}>
+                {i > 0 && '・'}
+                {p.label}
+                <span className="num" style={{ fontSize: 17, fontWeight: 600 }}>{p.value}</span>
+              </span>
+            ))}
+            <span className="muted">／よい例 {r.good}</span>
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.5, color: r.lineOut ? 'var(--warn)' : 'var(--faint)' }}>{r.line}</div>
+          {r.note && <div style={{ fontSize: 12, lineHeight: 1.5, color: '#E0B341' }}>{r.note}</div>}
         </div>
-      )}
+      ))}
+      <div style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--faint)' }}>
+        よい例は、ランニングの講師1人の手本{GOOD.examples}本を、アプリと同じ骨格の推定で測った値です（時速{GOOD.kmh.min}〜{GOOD.kmh.max}km。体全体の傾きは、速く走るほど大きく出ます）。声をかける線の内側なら、走っている間は声をかけません。
+      </div>
+      <div style={{ fontSize: 13, lineHeight: 1.6, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+        {next ? (
+          <>
+            次に意識すること：<span style={{ fontWeight: 700 }}>{NEXT_TEXT[next.item].title}</span>
+            <div style={{ fontSize: 12 }} className="muted">{nextNote(next)}</div>
+          </>
+        ) : (
+          <div style={{ fontSize: 12 }} className="muted">
+            {skippedHead ? '頭のほかは、よい例の範囲か、差はわずかでした（頭は大きく出ているかもしれないので、次に意識することには選びません）' : 'どの項目も、よい例の範囲か、差はわずかでした'}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

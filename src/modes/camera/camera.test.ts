@@ -2,19 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
 import { itemScore, postureScore } from './scoring'
 import { Coach, headForward, toScale } from './coach'
-import { FORM, LIMITS, REL_LIMITS } from './params'
+import { FORM, GOOD, LIMITS, REL_LIMITS, SETUP } from './params'
 import { formOver, formScale } from './form'
-import { activeItems } from '../../core/level'
-import { nextItem } from './nextStep'
+import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
+import { formRows, gapSentence, gapState, goodGap, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
 import { capBaseline, standingIssue } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
 import { fullFrames } from './fullFrames'
 import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, RunningGate, bodyVisible } from './motion'
 import { HIP_REF, RUNNING } from '../../core/params'
-import { PHRASES } from '../../core/phrases'
+import { FOCUS, PHRASES, phraseId } from '../../core/phrases'
 import { demoStride, strideStats, DEMO_SPM, REFERENCE } from './ui/figure'
-import type { Frame, Session } from '../../core/types'
+import type { FormGroup, FormResult, Frame, Session } from '../../core/types'
 import type { Measure } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
@@ -540,20 +540,169 @@ describe('見下ろしの補正', () => {
 })
 
 describe('次の一歩', () => {
-  it('正しいフォームから一番離れていた項目を1つだけ選ぶ（離れ方は、0点までの幅で割って比べる）', () => {
+  it('声をかける線（正しいフォームの線）の外の項目があれば、一番外れていたものを1つだけ選ぶ（離れ方は、0点までの幅で割って比べる）', () => {
     const form = (body: number, trunk: number, neck: number): Session['form'] =>
       (['body', 'trunk', 'head'] as const).map((g) => {
         const o = formOver(g, { body, trunk, neck, headLean: neck + 10 })
         return { group: g, key: o.key, value: g === 'body' ? body : g === 'trunk' ? trunk : neck, over: o.over, inside: 0, cues: 0, fixed: false, judged: true }
       })
     const at = (f: Session['form']) => nextItem({ form: f, strides: {} } as unknown as Session)
-    expect(at(form(4, 13, 30))).toMatchObject({ item: 'bodyBack', from: 4, to: FORM.body.min }) // 体全体 1.5/4 > 上体 1/6
+    expect(at(form(4, 13, 30))).toMatchObject({ kind: 'line', item: 'bodyBack', from: 4, to: FORM.body.min }) // 体全体 1.5/4 > 上体 1/6
     expect(at(form(9, 16, 30))?.item).toBe('trunk')
-    expect(at(form(9, 7, 30))).toBeUndefined() // 全部が正しい範囲
+    expect(at(form(9, 7, 30))).toBeUndefined() // 全部が線の内側で、よい例の範囲にも入っている
   })
   it('正しいフォームとの比べがない前の版の記録は、良い姿勢の1歩の平均で見る', () => {
     const s = { strides: { good: { frames: [], dir: 1, score: 90, avg: { head: 2, trunk: 14, body: 9, hipDrop: 1 } } } } as unknown as Session
     expect(nextItem(s)?.item).toBe('trunk')
+  })
+})
+
+// その走りの正しいフォームとの比べ（Session.form）を作る。指定しない値は、よい例の真ん中
+const formOf = (group: FormGroup, value: number, extra: Partial<FormResult> = {}): FormResult => {
+  const v = { body: GOOD.body.mid, trunk: GOOD.trunk.mid, neck: GOOD.head.neck.mid, headLean: extra.value2 ?? GOOD.head.headLean.mid, [group === 'head' ? 'neck' : group]: value }
+  const o = formOver(group, v)
+  return { group, key: o.key, value, over: o.over, inside: 1, cues: 0, fixed: false, judged: true, ...(group === 'head' ? { value2: v.headLean } : {}), ...extra }
+}
+const runOf = (body: number, trunk: number, neck: number, headLean: number, yaw = 0.01): Session =>
+  ({
+    id: 'r',
+    startedAt: 0,
+    durationSec: 900,
+    samples: [],
+    cues: [],
+    strides: {},
+    share: { good: 1, mid: 0, bad: 0 },
+    quietHeldSec: 0,
+    form: [formOf('body', body), formOf('trunk', trunk), formOf('head', neck, { value2: headLean, yaw })],
+  }) as Session
+
+describe('よい例との差', () => {
+  it('差は、よい例の範囲の外にいた量。内側なら 0 で、近いほうの端の側', () => {
+    expect(goodGap({ group: 'body', value: GOOD.body.min - 0.8 })).toEqual({ key: 'bodyBack', gap: expect.closeTo(0.8, 5) })
+    expect(goodGap({ group: 'body', value: GOOD.body.max + 0.4 })).toEqual({ key: 'body', gap: expect.closeTo(0.4, 5) })
+    expect(goodGap({ group: 'body', value: GOOD.body.max - 0.2 })).toEqual({ key: 'body', gap: 0 })
+    expect(goodGap({ group: 'trunk', value: GOOD.trunk.min - 1 })).toEqual({ key: 'trunkBack', gap: expect.closeTo(1, 5) })
+    expect(goodGap({ group: 'trunk', value: GOOD.trunk.max + 1.5 })).toEqual({ key: 'trunk', gap: expect.closeTo(1.5, 5) })
+  })
+
+  it('頭は前に出た側だけを見て、首の角度と頭の位置の両方が上の端を越えたときに、越えた量の小さいほう', () => {
+    expect(goodGap({ group: 'head', value: GOOD.head.neck.max + 5, value2: GOOD.head.headLean.max + 2 }).gap).toBeCloseTo(2, 5)
+    expect(goodGap({ group: 'head', value: GOOD.head.neck.max + 5, value2: GOOD.head.headLean.max - 1 }).gap).toBe(0) // 首の角度だけ（上体が起きた）
+    expect(goodGap({ group: 'head', value: GOOD.head.neck.max - 3, value2: GOOD.head.headLean.max + 6 }).gap).toBe(0) // 頭の位置だけ（体ごと前）
+    expect(goodGap({ group: 'head', value: GOOD.head.neck.min - 10, value2: GOOD.head.headLean.min - 10 }).gap).toBe(0) // 後ろ側は見ない
+    expect(goodGap({ group: 'head', value: GOOD.head.neck.max + 4 }).gap).toBeCloseTo(4, 5) // 頭の位置がない記録は首の角度だけ
+  })
+
+  it('画面に出す数字（小数1桁）で、範囲の内側・ほぼ同じ・離れているを分ける', () => {
+    expect(gapState('body', 0.04)).toBe('in') // 「0°」の差は言わない
+    expect(gapState('body', GOOD.body.near - 0.2)).toBe('near')
+    expect(gapState('body', GOOD.body.near)).toBe('off')
+    expect(gapState('trunk', GOOD.trunk.near - 0.04)).toBe('off') // 画面では near と同じ数字になる
+    expect(gapState('head', GOOD.head.near - 0.1)).toBe('near')
+  })
+
+  it('結果の画面の行：差（主役）、あなたの値とよい例の範囲、声をかける線との比べ', () => {
+    const rows = formRows(runOf(GOOD.body.min - 0.8, GOOD.trunk.mid, GOOD.head.neck.max + 5.1, GOOD.head.headLean.max + 1.9, SETUP.frontMax + 0.02).form!)
+    expect(rows.map((r) => r.label)).toEqual(['体全体の前傾', '上体の前傾', '頭の位置'])
+    expect(rows[0]).toMatchObject({ state: 'off', gap: '0.8°', word: '起きています', you: `${GOOD.body.min - 0.8}°`, good: `${GOOD.body.min}°〜${GOOD.body.max}°`, lineOut: false })
+    expect(rows[0].line).toBe(`声をかける線 ${FORM.body.min}°〜${FORM.body.max}°：内側でした`)
+    expect(gapSentence(rows[0])).toBe('よい例より 0.8° 起きています')
+    expect(rows[0].note).toBeUndefined()
+    expect(gapSentence(rows[1])).toBe('よい例の範囲です')
+    expect(rows[1].line).toBe(`声をかける線 後ろ${-FORM.trunk.min}°〜${FORM.trunk.max}°：内側でした`)
+    // 頭：差は 1.9°（頭の位置）で、ほぼ同じ。スマホが前側から撮っていたように見えたので、数字は出したまま注意を添える
+    expect(rows[2]).toMatchObject({ state: 'near', gap: '1.9°', word: '前に出ています', good: `首${GOOD.head.neck.max}°・頭の位置${GOOD.head.headLean.max}°まで`, note: HEAD_NOTE })
+    expect(rows[2].you).toBe(`首${Math.round((GOOD.head.neck.max + 5.1) * 10) / 10}°・頭の位置${Math.round((GOOD.head.headLean.max + 1.9) * 10) / 10}°`)
+    expect(gapSentence(rows[2])).toBe('よい例より 1.9° 前に出ています（ほぼ同じ）')
+    expect(rows[2].line).toBe(`声をかける線 首${FORM.head.neck}°と頭の位置${FORM.head.headLean}°：内側でした`)
+    // 真横から撮れていれば、注意は出さない
+    expect(formRows(runOf(8, 7, 36, 39.7, SETUP.frontMax - 0.02).form!)[2].note).toBeUndefined()
+  })
+
+  it('声をかける線との比べは、外れていたか・声をかけて直ったかを添える', () => {
+    const out = formRows([formOf('body', FORM.body.min - 1, { cues: FORM.tries, fixed: false })])[0]
+    expect(out.lineOut).toBe(true)
+    expect(out.line).toBe(`声をかける線 ${FORM.body.min}°〜${FORM.body.max}°：外でした（声をかけても、内側に入りませんでした）`)
+    expect(gapSentence(out)).toBe(`よい例より ${Math.round((GOOD.body.min - FORM.body.min + 1) * 10) / 10}° 起きています`)
+    expect(formRows([formOf('trunk', GOOD.trunk.mid, { cues: 1, fixed: true })])[0].line).toContain('声をかけて、内側に入りました')
+    expect(formRows([formOf('head', 60, { value2: 70, judged: false })])[0].line).toContain('比べていません')
+  })
+
+  it('線の外の項目がなければ、よい例から一番離れていた項目を選ぶ（0点までの幅で割って比べ、ほぼ同じのものは選ばない）', () => {
+    // 体全体 0.8°（÷4 = 0.2）と上体 1.8°（÷6 = 0.3）なら上体
+    expect(nextItem(runOf(GOOD.body.min - 0.8, GOOD.trunk.min - 1.8, 30, 35))).toMatchObject({ kind: 'good', item: 'trunkBack', group: 'trunk', to: GOOD.trunk.min, gap: expect.closeTo(1.8, 5) })
+    // 体全体 1.4°（0.35）なら体全体。線（5.5°）の内側
+    expect(nextItem(runOf(GOOD.body.min - 1.4, GOOD.trunk.min - 1.8, 30, 35))).toMatchObject({ kind: 'good', item: 'bodyBack', to: GOOD.body.min })
+    expect(nextItem(runOf(GOOD.body.max + 1, GOOD.trunk.mid, 30, 35))).toMatchObject({ kind: 'good', item: 'body', to: GOOD.body.max })
+    // どれも near より小さい差なら、選ばない
+    expect(nextItem(runOf(GOOD.body.min - 0.3, GOOD.trunk.min - 0.5, GOOD.head.neck.max + 5, GOOD.head.headLean.max + 2))).toBeUndefined()
+    // 線の外の項目は、よい例との差より先
+    expect(nextItem(runOf(GOOD.body.min - 1.4, FORM.trunk.max + 1, 30, 35))).toMatchObject({ kind: 'line', item: 'trunk', to: FORM.trunk.max })
+  })
+
+  it('頭は、首の角度と頭の位置の小さいほうの差で選ぶ。スマホが前側から撮っていたように見えた走りでは選ばない', () => {
+    const n = nextItem(runOf(GOOD.body.mid, GOOD.trunk.mid, GOOD.head.neck.max + 6, GOOD.head.headLean.max + 4))
+    expect(n).toMatchObject({ kind: 'good', item: 'head', gap: expect.closeTo(4, 5) })
+    expect(n!.from - n!.to).toBeCloseTo(4, 5) // 走り姿の「次の一歩」は、頭を差の分だけ戻した形
+    const front = SETUP.frontMax + 0.02
+    expect(nextItem(runOf(GOOD.body.mid, GOOD.trunk.mid, GOOD.head.neck.max + 6, GOOD.head.headLean.max + 4, front))).toBeUndefined()
+    expect(nextItem(runOf(GOOD.body.min - 1, GOOD.trunk.mid, GOOD.head.neck.max + 6, GOOD.head.headLean.max + 4, front))?.item).toBe('bodyBack')
+  })
+
+  it('結果の頭には、走っていた秒の前側・後ろ側の値の平均を残す', () => {
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 120, { ...good, yaw: SETUP.frontMax + 0.03 })
+    const form = coach.finish().form!
+    const head = form.find((r) => r.group === 'head')!
+    expect(head.yaw).toBeCloseTo(SETUP.frontMax + 0.03, 5)
+    expect(head.judged).toBe(true) // 線と比べるのをやめる yawMax よりは小さい
+    expect(formRows(form)[2].note).toBe(HEAD_NOTE)
+    expect(form.find((r) => r.group === 'body')!.yaw).toBeUndefined()
+  })
+})
+
+describe('今日の意識（ホームと、走り出す前の声は同じ1つ）', () => {
+  it('前回の走りで、よい例から一番離れていた項目を、ホームにも声にも出す', () => {
+    const f = todayFocus([runOf(GOOD.body.min - 0.8, GOOD.trunk.mid, 30, 35)], startProgress('beginner'))
+    expect(f).toMatchObject({ item: 'bodyBack', title: NEXT_TEXT.bodyBack.title, say: PHRASES.focusBodyBack })
+    expect(f.reason).toContain('よい例より 0.8° 起きていました')
+    expect(f.next).toMatchObject({ kind: 'good', item: 'bodyBack' }) // ホームの走り姿も、この1つだけを変えて見せる
+  })
+
+  it('前回、声をかける線の外の項目があれば、それを（レベルの段階より先に）', () => {
+    const f = todayFocus([runOf(GOOD.body.mid, FORM.trunk.max + 2, 30, 35)], startProgress('beginner'))
+    expect(f).toMatchObject({ item: 'trunk', title: NEXT_TEXT.trunk.title, say: PHRASES.focusUpright })
+    expect(f.reason).toContain('声をかける線')
+    for (const [body, trunk] of [[GOOD.body.max + 2, GOOD.trunk.mid], [GOOD.body.mid, GOOD.trunk.min - 2]]) {
+      const g = todayFocus([runOf(body, trunk, 30, 35)], startProgress('advanced'))
+      expect(g.say).toBe(FOCUS[g.item!])
+    }
+  })
+
+  it('よい例とほぼ同じなら、レベルの段階のこと（すべて見る段階なら、すべての項目を見ます）。声も同じ', () => {
+    const s = runOf(GOOD.body.min - 0.2, GOOD.trunk.mid, 30, 35)
+    const p = startProgress('beginner')
+    const f = todayFocus([s], p)
+    expect(f).toMatchObject({ title: STEPS[0].title, say: startPhrase(p) })
+    expect(f.item).toBeUndefined()
+    expect(todayFocus([s], startProgress('advanced'))).toMatchObject({ title: 'すべての項目を見ます', say: PHRASES.focusAll })
+    expect(todayFocus([], p)).toMatchObject({ title: STEPS[0].title, say: PHRASES.focusUpright }) // まだ走っていない
+  })
+
+  it('段階が上がった次の走りは、新しく見る段階のことを伝える（前回の差より先に、1回だけ）', () => {
+    const s = runOf(GOOD.body.min - 0.8, GOOD.trunk.mid, 30, 35)
+    const up = { ...startProgress('beginner'), step: 1, justUp: true }
+    expect(todayFocus([s], up)).toMatchObject({ title: STEPS[1].title, reason: PHRASES.stepHip, say: PHRASES.stepHip })
+    expect(todayFocus([s], { ...up, justUp: false }).item).toBe('bodyBack')
+  })
+
+  it('項目ごとの言葉はどれも PHRASES にあり、音声がある', () => {
+    const voices = Object.keys(import.meta.glob('../../../public/voices/female/*.m4a'))
+    for (const text of Object.values(FOCUS)) {
+      const id = phraseId(text)
+      expect(id).toBeDefined()
+      expect(voices).toContain(`../../../public/voices/female/${id}.m4a`)
+    }
   })
 })
 
