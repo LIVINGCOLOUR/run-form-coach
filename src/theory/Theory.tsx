@@ -28,6 +28,31 @@ interface Ref {
   url: string
 }
 const REFS: Record<string, Ref> = {
+  tanaka: {
+    key: '田中 2017',
+    text: '田中秀一, 井上裕生, 田邊章乃. ハーフマラソンレース中におけるランナーの接地パターン. 福井大学教育・人文社会系部門紀要（芸術・体育学 体育編）2 (2017).',
+    url: 'http://hdl.handle.net/10098/10325',
+  },
+  yamauchi: {
+    key: '山内 2015',
+    text: '山内武, 長谷川裕. 大学男子長距離ランナーにおけるステップ頻度、ステップ長と走速度の関係. ランニング学研究 26:31–40 (2015).',
+    url: 'https://www.jstage.jst.go.jp/article/running/26/2/26_31/_article/-char/ja',
+  },
+  tanji: {
+    key: '丹治 2017',
+    text: '丹治史弥, 榎本靖士, 鍋倉賢治. 中長距離ランナーにおける高強度走行中のステップ変数と走の経済性. 体育学研究 62(2):523–534 (2017).',
+    url: 'https://doi.org/10.5432/jjpehss.17013',
+  },
+  kashiwagi: {
+    key: '柏木 2015',
+    text: '柏木悠, 平野智也, 山岸道央, 袴田智子, 金子憲一, 船渡和男. 矢状面カーブ形状の走路を有する自走式トレッドミル上でのランニング動作時の地面反力および下肢運動学の特徴. 体力科学 64(3):333–344 (2015).',
+    url: 'https://doi.org/10.7600/jspfsm.64.333',
+  },
+  enomoto: {
+    key: '榎本 2015',
+    text: '榎本靖士. 東アフリカランナーの走動作のバイオメカニクス的特徴. ランニング学研究 26:81–91 (2015).',
+    url: 'https://www.jstage.jst.go.jp/article/running/26/2/26_81/_article/-char/ja',
+  },
   fukuchi: {
     key: 'Fukuchi 2017',
     text: 'Fukuchi RK, Fukuchi CA, Duarte M. A public data set of running biomechanics and the effects of running speed on lower extremity kinematics and kinetics. PeerJ 5:e3298 (2017). データ：figshare（CC BY 4.0）',
@@ -72,6 +97,11 @@ const REFS: Record<string, Ref> = {
     key: 'Novacheck 1998',
     text: 'Novacheck TF. The biomechanics of running. Gait & Posture 7(1):77–95 (1998).',
     url: 'https://doi.org/10.1016/S0966-6362(97)00038-6',
+  },
+  mediapipe: {
+    key: 'MediaPipe',
+    text: 'Google. MediaPipe Pose Landmarker（骨格の推定）.',
+    url: 'https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker',
   },
 }
 
@@ -199,6 +229,49 @@ export function Theory() {
         </p>
       </header>
 
+      <section className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <H2>判定の根拠</H2>
+        <p style={P}>判定の基本は、日本の研究です。</p>
+        <ul style={UL}>
+          <li>
+            <b>着地</b>：日本の市民ランナーの約96%がかかとから着地しているという調査（福井大学、ハーフマラソン1,254人）
+            <Cite id="tanaka" />
+            をふまえ、かかと着地そのものではなく「足が体よりどれだけ前に着いたか」を見ています。
+          </li>
+          <li>
+            <b>ピッチ</b>：日本人ランナーの測定（筑波大学、大阪学院大学・龍谷大学、日本体育大学 ほか）
+            <Cite id="yamauchi" />
+            <Cite id="tanji" />
+            <Cite id="kashiwagi" />
+            を参考にしています。ジョグで1分間に約170歩、トレッドミルでは地面より高めに出ます。
+          </li>
+          <li>
+            <b>上体の前傾</b>：日本の一流選手の測定（筑波大学、日本陸上競技連盟の協力。前傾 約8.6°）
+            <Cite id="enomoto" />
+            と照らし合わせています。
+          </li>
+        </ul>
+        <p style={P}>ほかに、海外の研究も参考にしています。</p>
+        <ul style={UL}>
+          <li>
+            ピッチを少し上げると着地の負担が減る（ウィスコンシン大学マディソン校、2011年）
+            <Cite id="heiderscheit" />
+          </li>
+          <li>
+            体の前傾・大また・走りの効率の関係（ラフバラー大学、2017年 ほか）
+            <Cite id="folland" />
+          </li>
+          <li>
+            見本の走り姿：公開された走りの計測データ（ブラジル・ABC連邦大学、2017年）
+            <Cite id="fukuchi" />
+          </li>
+          <li>
+            骨格の認識：Google の MediaPipe
+            <Cite id="mediapipe" />
+          </li>
+        </ul>
+      </section>
+
       <section style={SECTION}>
         <H2>見本のフォーム</H2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, alignItems: 'start' }}>
@@ -274,6 +347,7 @@ export function Theory() {
 }
 
 const P = { margin: 0, fontSize: 15, lineHeight: 1.85, color: '#C9CFD5' } as const
+const UL = { ...P, margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6 } as const
 const SECTION = { display: 'flex', flexDirection: 'column', gap: 14 } as const
 
 function H2({ children }: { children: ReactNode }) {
