@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { expectedHeel, LandingDrift, LandingMeter, LandingWatch, landingOf, refOf, type Peak } from './landing'
-import { Coach } from './coach'
+import { Coach, judged } from './coach'
 import { FormStage } from './form'
 import { FORM, GOOD, LANDING, LIMITS } from './params'
 import { L } from './landmarks'
 import { formRows, nextItem, noNextNote, LANDING_NOTE, todayFocus } from './nextStep'
 import { FOCUS, PHRASES } from '../../core/phrases'
-import { activeItems, startProgress } from '../../core/level'
+import { activeItems, ALL, startProgress } from '../../core/level'
 import type { FormResult, Frame, Session } from '../../core/types'
 import type { Measure } from './types'
 
@@ -327,5 +327,60 @@ describe('コーチ：着地', () => {
     for (let t = 0; t < 40; t++) st.second(t, t, true, { trunk: 7, body: 9, neck: 2, headLean: 12 }, 0, () => 1e9, { peaks: peaks().map((p) => ({ ...p, t })), sv: [2.5, 2.5, 2.5] })
     expect(st.landing!).toBeGreaterThan(FORM.landing.max)
     expect(st.busy(40)).toBe(false)
+  })
+})
+
+describe('コーチ：速さを変えたときの姿勢', () => {
+  // 速さの目安 +25%（時速8km なら +2km/h ほど）。ピッチも約 +9%
+  const FASTER: StrideOpts = { reach: 0.4, back: 0.4, period: 0.64 }
+  // from 秒から ramp 秒かけて、体全体を lean° 倒していく（速さを上げると体全体は時速 +1km で約 +0.8° 倒れる。ここではわざと大きくする）
+  const leaning = (base: number, from: number, lean: number, ramp = 20) => (t: number): Measure => ({ ...good, body: base + lean * Math.min(1, Math.max(0, (t - from) / ramp)) })
+  function run(coach: Coach, from: number, sec: number, o: StrideOpts, m: (t: number) => Measure) {
+    for (let i = 0; i < sec * 30; i++) {
+      const t = from + i / 30
+      coach.update({ t, present: true, moving: true, m: m(t), frame: strideFrame(t, o) })
+    }
+  }
+  const driftCues = (c: Coach, item: string, after: number) => c.cues.filter((x) => x.item === item && !x.lead && x.t >= after)
+
+  it('同じ速さのまま体が前に倒れていけば、今日の基準からの崩れで「倒れすぎ」と言う（姿勢は止めない）', () => {
+    const c = new Coach({ pause: false, items: activeItems(ALL) })
+    run(c, 0, 260, NORMAL, () => ({ ...good, body: 6 }))
+    expect(c.leanRef!.body).toBeCloseTo(6, 1)
+    run(c, 260, 60, NORMAL, leaning(6, 260, 4.5))
+    expect(driftCues(c, 'body', 250).length).toBeGreaterThan(0)
+    expect(c.samples.some((s) => s.paused)).toBe(false)
+  })
+
+  it('速さを上げて体が倒れたときは、速さが変わっている間は姿勢を比べず（声も減点もない）、新しい速さで基準を作り直してから比べる', () => {
+    const c = new Coach({ pause: false, items: activeItems(ALL) })
+    run(c, 0, 260, NORMAL, () => ({ ...good, body: 6 }))
+    const a = analyzer(c)
+    run(c, 260, 140, FASTER, leaning(6, 260, 4.5))
+    // 速さの見張りは着地と同じもの：速さが変わったとみて、着地も姿勢も作り直す
+    expect(a.drift.guard.changes).toBe(1)
+    expect(driftCues(c, 'body', 250)).toEqual([])
+    expect(c.cues.filter((x) => x.t >= 250 && x.item !== 'praise' && x.item !== 'recover')).toEqual([])
+    // 比べなかった秒は、基準からの崩れで減点しない（点数は正しいフォームの線だけ。体全体 10.5° は線の内側）
+    const paused = c.samples.filter((s) => s.paused)
+    expect(paused.length).toBeGreaterThanOrEqual(LANDING.speedHold - LANDING.postureAfter + LANDING.rebuild - 2)
+    for (const s of paused) expect(judged(s, 'body')).toBeLessThanOrEqual(LIMITS.body.full)
+    // 作り直した姿勢の基準は新しい速さの形（スマホの向き・顎の基準はそのまま）
+    expect(c.samples[c.samples.length - 1].paused).toBeUndefined()
+    expect(c.leanRef!.body).toBeCloseTo(10.5, 0)
+    // そのあと同じ速さで倒れていけば、新しい基準と比べて言う
+    run(c, 400, 60, FASTER, leaning(10.5, 400, 4))
+    expect(driftCues(c, 'body', 400).length).toBeGreaterThan(0)
+  })
+
+  it('速さが短く外れただけ（窓の揺れ）なら、その秒だけ比べず、同じ基準で比べ続ける', () => {
+    const c = new Coach({ pause: false, items: activeItems(ALL) })
+    run(c, 0, 260, NORMAL, () => ({ ...good, body: 6 }))
+    const ref = c.leanRef!.body
+    run(c, 260, 10, FASTER, () => ({ ...good, body: 6 }))
+    run(c, 270, 60, NORMAL, () => ({ ...good, body: 6 }))
+    expect(analyzer(c).drift.guard.changes).toBe(0)
+    expect(c.leanRef!.body).toBe(ref)
+    expect(c.samples[c.samples.length - 1].paused).toBeUndefined()
   })
 })

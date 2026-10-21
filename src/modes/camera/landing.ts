@@ -13,7 +13,8 @@
 //     あわせて、接地している（画面で低いほうの）足首が後ろへ動く速さから、速さの目安（脚の長さ／秒）を出す。
 //     トレッドミルでは、ベルトの速さ ÷ 脚の長さに比例する（仮想実験で相関 0.94）
 //   LandingWatch：歩数で走っていた秒の山だけを残し、窓（LANDING.window 秒）でまとめる
-//   LandingDrift：今日の基準（整えたあとの形）からの増え。速さの目安が基準から大きく変わったら比べずに、基準を作り直す
+//   SpeedGuard：速さの見張り。速さの目安（とピッチ）が今日の基準から外れた秒を見つけ、続いたら「速さが変わった」とする。着地と姿勢が同じものを使う
+//   LandingDrift：今日の基準（整えたあとの形）からの増え。速さの見張りが外れとみた秒は比べず、速さが変わったら基準を作り直す
 //   左右の名前ごとに山を取る見方（mode 'label'）は、仮想実験で比べるためだけのもの（アプリは 'lead'）
 import type { Frame } from '../../core/types'
 import { L } from './landmarks'
@@ -418,27 +419,55 @@ export function refOf(peaks: Peak[], sv: number[]): LandingRef | null {
   return { heel: median(heels), speed, near, n: heels.length, cadence: cadenceOf(peaks.filter((p) => p.side === near).sort((a, b) => a.t - b.t)) }
 }
 
+// 速さの見張り：比べる速さ（今日の基準の速さの目安とピッチ）から、いまの窓の値が外れていないかを1秒ごとに見る。
+// 着地（LandingDrift）と姿勢（coach.ts の CameraAnalyzer）が同じ見張りを使い、「速さが変わった」を同じに決める。
+// 速さの目安が LANDING.speedGuard を越えて変わった秒（一度越えたら LANDING.speedBack の内側に戻るまで）と、ピッチが LANDING.cadenceUp を越えて
+// 上がった秒は外れ（比べない）。それが LANDING.speedHold 秒続いたら、速さが変わったとみて、そのときの速さを新しい比べる速さにする
+export type SpeedCheck = 'same' | 'away' | 'changed'
+export class SpeedGuard {
+  base: { speed: number; cadence: number } | null = null // 比べる速さ（ピッチがなければ NaN で、ピッチは見ない）
+  off = 0 // 外れて、比べずにいる秒（続けて外れた秒の数）
+  changes = 0 // 速さが変わったとみた回数
+
+  set(speed: number | null, cadence = NaN) {
+    this.base = speed === null ? null : { speed, cadence }
+    this.off = 0
+  }
+
+  // 1秒ごと（窓の値があり、歩数で走っていた秒だけ）。比べる速さがまだなければ、この窓の速さにする
+  check(w: LandingWindow): SpeedCheck {
+    if (!this.base) {
+      this.set(w.speed)
+      return 'same'
+    }
+    // ピッチが上がったのに足が前に出たなら、速さを上げた（トレッドミルの同じ速さで大またにすると、ピッチは下がる）
+    const faster = w.cadence > this.base.cadence * (1 + LANDING.cadenceUp)
+    const r = Math.abs(w.speed / this.base.speed - 1)
+    if (!faster && !(this.off > 0 ? r > LANDING.speedBack : r > LANDING.speedGuard)) {
+      this.off = 0
+      return 'same'
+    }
+    if (++this.off < LANDING.speedHold) return 'away'
+    this.changes++
+    this.set(w.speed)
+    return 'changed'
+  }
+}
+
 // 今日の基準と比べる。基準は、整えたあとの形をためたもの（coach.ts の CameraAnalyzer が set で渡す）。
-// 速さの目安が基準から LANDING.speedGuard を越えて変わった秒は比べない。それが LANDING.speedHold 秒続いたら、速さが変わったとみて
-// 基準を捨て、新しい速さで LANDING.rebuild 秒ためて作り直す（ためている間に速さの目安がまた同じように変わったら、ため直す）。
-// 基準がうまく作れなかったときも、同じようにためて作る
+// 速さの見張り（SpeedGuard）が外れとみた秒は比べない。速さが変わったとみたら、基準を捨て、新しい速さで LANDING.rebuild 秒ためて作り直す
+// （ためている間に速さがまた変わったら、ため直す）。基準がうまく作れなかったときも、同じようにためて作る
 export class LandingDrift {
   ref: LandingRef | null = null
   rebuilds = 0 // 速さが変わって作り直した回数
-  private off = 0 // 速さの目安が基準から外れて、比べずにいる秒（外れたら、LANDING.speedBack の内側に戻るまで続ける）
-  private pool: { peaks: Peak[]; sv: number[]; secs: number; speed: number | null; off: number } | null = null
+  readonly guard = new SpeedGuard()
+  private pool: { peaks: Peak[]; sv: number[]; secs: number } | null = null
 
-  // 基準を渡す（作れなければ、ためて作る）
+  // 基準を渡す（作れなければ、ためて作る。比べる速さは、ためはじめの窓の速さ）
   set(ref: LandingRef | null) {
     this.ref = ref
-    this.off = 0
-    this.pool = ref ? null : { peaks: [], sv: [], secs: 0, speed: null, off: 0 }
-  }
-
-  // 速さの目安が、比べる速さから外れているか：外れていなければ LANDING.speedGuard を越えたら外れ、外れていれば LANDING.speedBack の内側に戻るまで外れのまま
-  private static away(speed: number, base: number, off: number) {
-    const r = Math.abs(speed / base - 1)
-    return off > 0 ? r > LANDING.speedBack : r > LANDING.speedGuard
+    this.guard.set(ref ? ref.speed : null, ref ? ref.cadence : NaN)
+    this.pool = ref ? null : { peaks: [], sv: [], secs: 0 }
   }
 
   get building() {
@@ -448,30 +477,25 @@ export class LandingDrift {
   // 1秒ごと。w：いまの窓の値（基準の手前の脚で出したもの）、sec：この秒に振り分けた山と速さの目安、stepping：歩数で走っていた秒か。
   // 戻り値は、基準からのかかとの前の増え（比べなかった秒は undefined）
   judge(w: LandingWindow | null, sec: StepSec, stepping: boolean): number | undefined {
+    if (!stepping) return undefined
+    const c = w ? this.guard.check(w) : 'same'
     if (this.ref) {
-      if (!w || !stepping) return undefined
-      // ピッチが上がったのに足が前に出たなら、速さを上げた（トレッドミルの同じ速さで大またにすると、ピッチは下がる）
-      const faster = w.cadence > this.ref.cadence * (1 + LANDING.cadenceUp)
-      if (faster || LandingDrift.away(w.speed, this.ref.speed, this.off)) {
-        if (++this.off >= LANDING.speedHold) {
-          this.rebuilds++
-          this.set(null)
-        }
+      if (!w || c === 'away') return undefined
+      if (c === 'changed') {
+        this.rebuilds++
+        this.ref = null
+        this.pool = { peaks: [], sv: [], secs: 0 }
         return undefined
       }
-      this.off = 0
       return w.heel - this.ref.heel
     }
-    if (!this.pool || !stepping) return undefined
-    const p = this.pool
-    // ためている間に速さの目安が同じように変わったら（速さを段階的に上げているときなど）、新しい速さでため直す
-    if (w) {
-      if (p.speed === null) p.speed = w.speed
-      else if (LandingDrift.away(w.speed, p.speed, p.off)) {
-        if (++p.off >= LANDING.speedHold) this.pool = { peaks: [], sv: [], secs: 0, speed: w.speed, off: 0 }
-        return undefined
-      } else p.off = 0
+    if (!this.pool || c === 'away') return undefined
+    // ためている間に速さが変わったら（速さを段階的に上げているときなど）、新しい速さでため直す
+    if (c === 'changed') {
+      this.pool = { peaks: [], sv: [], secs: 0 }
+      return undefined
     }
+    const p = this.pool
     p.peaks.push(...sec.peaks)
     p.sv.push(...sec.sv)
     p.secs++
@@ -479,7 +503,7 @@ export class LandingDrift {
       const ref = refOf(p.peaks, p.sv)
       if (ref) this.set(ref)
       // 山がなかなかたまらない（足が映りにくい）ときは、古い分を捨ててため直す（ずっと前の形を基準にしないため）
-      else if (p.secs >= 3 * LANDING.rebuild) this.pool = { peaks: [], sv: [], secs: 0, speed: p.speed, off: 0 }
+      else if (p.secs >= 3 * LANDING.rebuild) this.pool = { peaks: [], sv: [], secs: 0 }
     }
     return undefined
   }

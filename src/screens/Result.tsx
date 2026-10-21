@@ -250,7 +250,8 @@ function Timeline({ s }: { s: Session }) {
   const y = (v: number) => H - (v / 100) * (H - 8)
   const perMin: { t: number; v: number }[] = []
   for (let m = 0; m * 60 < s.durationSec; m++) {
-    const xs = s.samples.filter((p) => p.t >= m * 60 && p.t < (m + 1) * 60)
+    // 姿勢を比べなかった秒（速さを変えている途中など）は、点数の推移に入れない
+    const xs = s.samples.filter((p) => p.t >= m * 60 && p.t < (m + 1) * 60 && !p.paused)
     if (xs.length) perMin.push({ t: m * 60 + 30, v: xs.reduce((a, b) => a + b.score, 0) / xs.length })
   }
   const bands: { a: number; b: number }[] = []

@@ -45,6 +45,9 @@ export interface Sample {
   // 着地（camera/landing.ts）：その秒の窓（ふつう16秒、間引いて見ている間は30秒）の、手前の脚のかかとの前（heel）・速さの目安（speed）・
   // 速さで補正したかかとの前（res）・山の数（n）と、今日の基準からの増え（drift。比べた秒だけ）。窓の山が足りない秒は無い
   land?: { heel: number; speed: number; res: number; n: number; drift?: number }
+  // 姿勢を今日の基準と比べなかった秒（カメラ版：速さを変えている途中と、そのあと新しい速さで基準をためなおしている間）。
+  // その秒の judge・back・head・hipDrop は前の基準との差で、判定にも点数にも使っていない
+  paused?: boolean
 }
 
 // 正しいフォームとの比べ（カメラ版、src/modes/camera/form.ts）。結果の画面と次の一歩に使う。
