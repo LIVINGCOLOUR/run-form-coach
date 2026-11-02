@@ -101,9 +101,21 @@ export interface Session {
   taps?: number[] // そばの人が「今悪い」を押した時刻（秒）
   provisionalBaseline?: boolean // 動画で試したときの仮の基準
   logId?: string // 調整用の記録
-  standing?: { head: number; trunk: number; issue: 'head' | 'back' | null } // 走る前の立ち姿勢（猫背のチェック）
+  // 走る前の立ち姿勢（猫背のチェック）。hip は立った姿勢の腰の高さ（低いほうの足首から腰までの高さ ÷ 脚の長さ。走りの数字の腰の高さを割る）
+  standing?: { head: number; trunk: number; issue: 'head' | 'back' | null; hip?: number }
   focus?: { level: 'beginner' | 'intermediate' | 'advanced'; step: number } // この走りのレベルと、注意した項目の段階（level.ts）
   form?: FormResult[] // 正しいフォームとの比べ（カメラ版）
+  gait?: GaitResult // 走りの数字（カメラ版）。声はかけず、結果の画面に出すだけ
+}
+
+// 走りの数字（カメラ版、src/modes/camera/gait.ts）：走っていた間の1歩ずつの値の中央値。測れなかった項目は無い
+export interface GaitResult {
+  steps: number // 測れた歩数
+  cadence?: number // ピッチ（歩／分）
+  vo?: number // 上下動：1歩の間の腰の一番高い位置と低い位置の差 ÷ 脚の長さ
+  hip?: number // 腰の高さ：低いほうの足首から腰までの高さ ÷ 脚の長さ（1歩の平均）。立った姿勢で割る前
+  arm?: number // 腕振り：手前の腕の、肩→肘の線の前後の振れ幅（度）
+  elbow?: number // 肘の角度（度。まっすぐで180）
 }
 
 // 調整用の記録（カメラ版は src/modes/camera/log.ts の LogRecorder で作る）

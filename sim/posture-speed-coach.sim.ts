@@ -2,7 +2,9 @@
 //   LongRun でつなぎ（前の走り 300秒 → あとの走り 300秒）、実機の記録のコマの間隔で仮想のスマホに映して、アプリのコーチ（src/modes/camera/coach.ts）に
 //   アプリと同じ間引きで通す。速さを上げると体全体・上体は時速 +1km で約 +0.8° 増える（docs/research/posture-vs-speed.md）ので、
 //   あとの走りで出る姿勢の崩れの声と、崩れで下がった点数は、速さのせい（誤り）。比べとして、楽なペースだけを 600秒走ったものも通す。
-//   仮想のランナーは声を聞いても直さない
+//   仮想のランナーは声を聞いても直さない。
+//   あわせて、今日の基準をためている間（走り出して EARLY 秒）に速さを上げた走りも通し、基準ができたあとに比べられた秒と崩れの声を数える
+//   （ためはじめはゆっくりで、あとからベルトの速さを上げる人がいる。自分の 2026-11-02 の記録で、ためている間に速さを上げていた）
 // 動かし方：RIGLET_DIR=… npx vitest run --config sim/vitest.config.ts sim/posture-speed-coach.sim.ts（結果は sim/result-posture-speed-coach.md）
 import { describe, it as itAll } from 'vitest'
 import { existsSync, readdirSync, writeFileSync } from 'node:fs'
@@ -20,6 +22,7 @@ const RIGLET = process.env.RIGLET_DIR
 const OUT = process.env.SIM_OUT ?? 'sim/result-posture-speed-coach.md'
 const SWITCH = 300 // つなぐ秒
 const END = 600
+const EARLY = 120 // 基準をためている間に速さを上げる走りの、つなぐ秒
 const POSTURE: ItemKey[] = ['head', 'trunk', 'trunkBack', 'body', 'bodyBack', 'hip']
 
 interface Run {
@@ -29,6 +32,8 @@ interface Run {
   after: Sample[] // つないだあとの記録
   goodShare: number // 結果の「良い」の割合
   changes: number // 速さが変わったとみた回数
+  all: Sample[] // すべての記録（走り出してからの秒は runFrom + t）
+  runFrom: number
 }
 
 // 1秒の記録が、今日の基準からの崩れで減点されたか（比べなかった秒は数えない）
@@ -62,6 +67,8 @@ function coachRun(frames: { t: number; f: Frame }[]): Run {
     after: s.samples.filter((x) => runFrom + x.t >= SWITCH),
     goodShare: s.share.good,
     changes: a.drift.guard?.changes ?? a.drift.rebuilds,
+    all: s.samples,
+    runFrom,
   }
 }
 
@@ -123,6 +130,35 @@ describe.skipIf(!RIGLET)('速さを途中で変えたときの姿勢の声', () 
       p(
         `| ${kind} | ${n} | ${f2(per10(rs.map((r) => r.drift)))} | ${rs.filter((r) => r.drift.some((t) => t >= SWITCH)).length} / ${n} | ${pc(secs.filter(driftDeducted).length / secs.length)} | ${pc(secs.filter((s) => s.paused).length / secs.length)} | ${f2(per10(rs.map((r) => r.form)))} | ${pc(rs.reduce((a, r) => a + r.goodShare, 0) / n)} | ${f2(rs.reduce((a, r) => a + r.changes, 0) / n)} |`,
       )
+    }
+    p()
+    // 今日の基準をためている間に速さを上げた走り：基準ができたあと（終わりまで）に、比べた秒・崩れの声・減点した秒
+    const early: Run[] = []
+    for (const x of pairs) {
+      const run = new LongRun()
+      try {
+        run.append(x.easy, EARLY, 7171 + k)
+        run.append(x.fast, END - EARLY, 8181 + k)
+      } catch {
+        continue
+      }
+      const frames = filmFrames((u) => run.at(u), 0, END, { timing: 'log', seed: 929 + k++ })
+      early.push(coachRun(frames))
+    }
+    p()
+    p(`## 今日の基準をためている間に速さを上げた走り（楽 ${EARLY}秒 → 速い ${END - EARLY}秒）`)
+    p()
+    p('基準ができた時刻から走り終わりまでの記録で数えた（基準ができなかった走りは「基準なし」）。')
+    p()
+    p('| 本数 | 基準ができた（走り出してからの秒、中央値） | 基準なし | 基準のあとで比べなかった秒 | 基準のあとの崩れの声（10分あたり） | 崩れの声が出た人 | 基準のあとで崩れで減点した秒 |')
+    p('|---|---|---|---|---|---|---|')
+    {
+      const rs = early.filter((r) => r.refAt !== null)
+      const refs = rs.map((r) => r.refAt!).sort((a, b) => a - b)
+      const secs = rs.flatMap((r) => r.all.filter((x) => r.runFrom + x.t >= r.refAt!))
+      const span = rs.reduce((a, r) => a + (END - r.refAt!), 0)
+      const cues = rs.reduce((a, r) => a + r.drift.filter((t) => t >= r.refAt!).length, 0)
+      p(`| ${early.length} | ${refs.length ? Math.round(refs[Math.floor(refs.length / 2)]) : '—'} | ${early.length - rs.length} | ${pc(secs.filter((x) => x.paused).length / secs.length)} | ${f2((cues / span) * 600)} | ${rs.filter((r) => r.drift.some((t) => t >= r.refAt!)).length} / ${rs.length} | ${pc(secs.filter(driftDeducted).length / secs.length)} |`)
     }
     p()
     p('「崩れで減点した秒」は、今日の基準からの崩れ（上体・体全体・起きすぎ・頭・腰）のどれかが満点の線を越えた秒（比べなかった秒は数えない）。速さの目安は16秒（間引いている間は30秒）の窓の中央値なので、速さを変えてから外れたと分かるまでに数秒〜十数秒かかる。')

@@ -5,9 +5,9 @@ import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
-import { formRows, nextItem, nextNote, noNextNote, NEXT_TEXT, type FormRow, type Next } from '../modes/camera/nextStep'
+import { formRows, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
 import { GOOD } from '../modes/camera/params'
-import type { FormResult } from '../core/types'
+import type { FormResult, GaitResult } from '../core/types'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
 
@@ -106,6 +106,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
       </div>
 
       {s.form && s.form.length > 0 && <FormCard form={s.form} next={nextItem(s)} />}
+      {s.gait && <GaitCard gait={s.gait} standingHip={s.standing?.hip} />}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="row">
@@ -224,6 +225,40 @@ function FormCard({ form, next }: { form: FormResult[]; next: Next | undefined }
           <div style={{ fontSize: 12 }} className="muted">{noNextNote(rows)}</div>
         )}
       </div>
+    </div>
+  )
+}
+
+// 走りの数字：ピッチ・上下動・腰の高さ・腕振り。声はかけず、測った値を出すだけ（言葉は nextStep.ts の gaitRows）。
+// 比べる範囲は研究データのふつうの走り（よい例ではない）なので、範囲の外でも警告の色にはしない
+function GaitCard({ gait, standingHip }: { gait: GaitResult; standingHip?: number }) {
+  const rows = gaitRows(gait, standingHip)
+  if (!rows.length) return null
+  const color = (r: GaitRow) => (r.state === undefined || r.state === 'in' ? 'var(--text)' : 'var(--mid)')
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>走りの数字</div>
+        <div style={{ fontSize: 12 }} className="muted">走っていた間の1歩ずつの値の真ん中です。測るだけで、声はかけません</div>
+      </div>
+      {rows.map((r) => (
+        <div key={r.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 13 }} className="muted">{r.label}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 10px', color: color(r) }}>
+            {r.parts.map((p) => (
+              <span key={p.label}>
+                {p.label && <span style={{ fontSize: 13 }}>{p.label} </span>}
+                <span className="num" style={{ fontSize: 30, fontWeight: 600 }}>{p.value}</span>
+                <span style={{ fontSize: 13 }}>{p.unit}</span>
+              </span>
+            ))}
+            {r.word && <span style={{ fontSize: 13, fontWeight: 700 }}>{r.word}</span>}
+          </div>
+          {r.range && <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--faint)' }}>{r.range}</div>}
+          <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--faint)' }}>{r.note}</div>
+        </div>
+      ))}
+      <div style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--faint)' }}>{GAIT_NO_CONTACT}</div>
     </div>
   )
 }

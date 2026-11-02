@@ -255,6 +255,25 @@ describe('コーチ：着地', () => {
     expect(feed(c3, 260, 60, AHEAD)).not.toContain(PHRASES.cueLanding)
   })
 
+  it('今日の基準をためている間に速さを上げたら、ためた秒を捨てて新しい速さでため直す（2つの速さを混ぜた基準を作らない）', () => {
+    const coach = new Coach({ pause: false })
+    feed(coach, 0, 100, NORMAL)
+    feed(coach, 100, 200, FAST)
+    expect(coach.leanRef).not.toBeNull()
+    const a = analyzer(coach)
+    // 着地の基準の速さは、上げたあとの速さ（混ぜると、その間の値になる）
+    expect(a.drift.ref!.speed / speedOf(FAST)).toBeGreaterThan(0.95)
+    expect(a.drift.ref!.speed / speedOf(FAST)).toBeLessThan(1.05)
+    // 基準のあとは速さが外れたとみず、姿勢を比べ続ける
+    expect(a.drift.guard.changes).toBe(0)
+    expect(coach.samples.slice(-30).some((s) => s.paused)).toBe(false)
+    // ため直したときは、新しい速さで LANDING.rebuild 秒たまるまで基準を作らない（速さを上げたのは走り出して約100秒）
+    const c2 = new Coach({ pause: false })
+    feed(c2, 0, 100, NORMAL)
+    feed(c2, 100, 90, FAST)
+    expect(c2.leanRef).toBeNull()
+  })
+
   it('結果の画面：着地の位置の行（よい例との差、試しの線、試しの測り方と添える）', () => {
     const coach = new Coach({ pause: false })
     feed(coach, 0, 200, FAR)

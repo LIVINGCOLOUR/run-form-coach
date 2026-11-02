@@ -1,8 +1,8 @@
-import type { FormGroup, FormResult, ItemKey, Session } from '../../core/types'
+import type { FormGroup, FormResult, GaitResult, ItemKey, Session } from '../../core/types'
 import { ALL, STEPS, startPhrase, type Progress } from '../../core/level'
 import { LEVEL } from '../../core/params'
 import { FOCUS } from '../../core/phrases'
-import { FORM, GOOD, SETUP } from './params'
+import { FORM, GAIT, GOOD, SETUP } from './params'
 import { formOver } from './form'
 
 // 今日の意識・次の一歩：1つだけ選ぶ。
@@ -273,4 +273,68 @@ export function todayFocus(sessions: Session[], p: Progress): Focus {
     return { item: n.item, next: n, title: NEXT_TEXT[n.item].title, reason, say: FOCUS[n.item] }
   }
   return stage()
+}
+
+// 結果の画面の「走りの数字」の1行（Result.tsx の GaitCard が出す。声はかけず、測った値を出すだけ。数字と根拠は params.ts の GAIT）
+//   上下動と腰の高さは、研究データのふつうの走り（GAIT.typical。よい例ではない）と並べる。腰の高さは、走る前に立って測った値で割る
+//   （立った姿勢がない走りでは出さない）。ピッチと腕振りは、比べる範囲を決めていないので値だけ
+export interface GaitRow {
+  key: 'cadence' | 'vo' | 'hip' | 'arm'
+  label: string
+  parts: { label: string; value: string; unit: string }[] // 値（画面で数字だけ大きく出す）
+  range?: string // 比べる範囲
+  state?: 'in' | 'low' | 'high' // 範囲の内側か、下か上か
+  word?: string // 範囲の外のときの言い方
+  note: string
+}
+
+const pct1 = (x: number) => `${Math.round(x * 1000) / 10}`
+
+export const GAIT_NO_CONTACT = '接地時間は、カメラ（毎秒13コマ前後）では測れないので出していません。'
+
+export function gaitRows(g: GaitResult, standingHip?: number): GaitRow[] {
+  const rows: GaitRow[] = []
+  const T = GAIT.typical
+  const stateOf = (x: number, r: { min: number; max: number }) => (x < r.min ? 'low' : x > r.max ? 'high' : 'in')
+  const typical = `研究データのふつうの走り（時速${T.kmh.min}〜${T.kmh.max}km、${T.runs}本の下から1割〜上から1割）`
+  if (g.cadence !== undefined) {
+    rows.push({ key: 'cadence', label: 'ピッチ', parts: [{ label: '', value: `${Math.round(g.cadence)}`, unit: '歩／分' }], note: 'トレッドミルの速さで変わります。同じ速さの走りどうしで比べてください' })
+  }
+  if (g.vo !== undefined) {
+    const state = stateOf(g.vo, T.vo)
+    rows.push({
+      key: 'vo',
+      label: '上下動（脚の長さに対して）',
+      parts: [{ label: '', value: pct1(g.vo), unit: '%' }],
+      range: `${typical} ${pct1(T.vo.min)}〜${pct1(T.vo.max)}%`,
+      state,
+      ...(state === 'in' ? {} : { word: state === 'low' ? '範囲より小さめです' : '範囲より大きめです' }),
+      note: '毎秒12〜13コマでは山と谷のコマを取り逃がすので、本当の上下動より小さく出ます。範囲も同じ測り方で出しています',
+    })
+  }
+  if (g.hip !== undefined && standingHip) {
+    const h = g.hip / standingHip
+    const state = stateOf(h, T.hip)
+    rows.push({
+      key: 'hip',
+      label: '腰の高さ（立った姿勢に対して）',
+      parts: [{ label: '', value: pct1(h), unit: '%' }],
+      range: `${typical} ${pct1(T.hip.min)}〜${pct1(T.hip.max)}%`,
+      state,
+      ...(state === 'in' ? {} : { word: state === 'low' ? '範囲より低めです' : '範囲より高めです' }),
+      note: '人どうしの比べは誤差が大きく（±2%ほど）、ふつうの範囲の幅と同じくらいあるので、目安です。走っている間に腰が落ちたときは、声でお知らせしています',
+    })
+  }
+  if (g.arm !== undefined && g.elbow !== undefined) {
+    rows.push({
+      key: 'arm',
+      label: '腕振り（手前の腕）',
+      parts: [
+        { label: '振れ幅', value: `${Math.round(g.arm)}`, unit: '°' },
+        { label: '肘の角度', value: `${Math.round(g.elbow)}`, unit: '°' },
+      ],
+      note: '振れ幅は、肩から肘の線が前後に振れた角度。肘はまっすぐで180°。比べるよい例の範囲は、まだ確かめていません',
+    })
+  }
+  return rows
 }

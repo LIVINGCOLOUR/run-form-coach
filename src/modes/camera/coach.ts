@@ -7,7 +7,8 @@ import { HIP_REF } from '../../core/params'
 import { FORM, LANDING, REL_LIMITS, STRIDE } from './params'
 import { RunningGate } from './motion'
 import { clampInside, formOver, formScale, FormStage, FORM_ORDER, voiced, type FormValues } from './form'
-import { LandingDrift, LandingWatch, refOf, type Peak } from './landing'
+import { LandingDrift, LandingWatch, refOf, SpeedGuard, type Peak } from './landing'
+import { GaitWatch } from './gait'
 import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from '../../core/engine'
 
 // カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体（前に倒れすぎ・起きすぎ）・腰・着地の位置を見る。顎は測って記録するだけ。
@@ -92,9 +93,14 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   // 着地（landing.ts）：骨格を取ったコマごとに山を取り、歩数で走っていた秒の山だけを残す。今日の基準からの増えは drift
   land = new LandingWatch()
   drift = new LandingDrift()
+  // 走りの数字（gait.ts）：着地と同じ山で1歩ずつ区切って、ピッチ・上下動・腰の高さ・腕振りを測る。声はかけない
+  gait = new GaitWatch()
   // 速さが変わったとみて（drift.guard）、姿勢の基準を新しい速さでためなおしている間のため場所（なければ null）
   private repool: Pool | null = null
   private seenChanges = 0
+  // 今日の基準をためている間の速さの見張り（ためはじめの速さと比べる）。速さが変わってため直したら poolMoved
+  private poolGuard = new SpeedGuard()
+  private poolMoved = false
 
   // 今日の基準は、歩数で走っていると見た秒だけで作る。running は Coach が決めた「走っている」（RunningGate）。
   // runFrom は、いまの走りの始まり（しくみの秒）。基準ができる前に止まったら null にして、整え直す
@@ -114,6 +120,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     this.land.tick(inp.t)
     if (!inp.frame || !inp.m) return
     this.land.frame(inp.frame, inp.t)
+    this.gait.frame(inp.frame, inp.t)
     // 骨格を取っていない間があいたら、つながらないので捨てる
     const last = this.ring[this.ring.length - 1]
     if (last && inp.t - last.t > 0.3) this.ring = []
@@ -126,6 +133,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (this.leanRef !== null) return
     this.runFrom = null
     this.pool = emptyPool()
+    this.poolGuard = new SpeedGuard()
+    this.poolMoved = false
     this.form = this.form.restart()
   }
 
@@ -145,6 +154,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const stepping = this.running && (on + off === 0 || on >= off)
     // 着地：1つ前の秒の山を、その秒に走っていたかで振り分ける（骨格を取らなかった秒も、時間は進める）
     const steps = this.land.second(stepping && b.length >= 3)
+    this.gait.second(steps.peaks)
     if (b.length < 3) return null
     const now = Object.fromEntries(REF_KEYS.map((k) => [k, mean(b.map((m) => m[k]))])) as Ref
     const { neck, headLean, trunk, body, yaw } = now
@@ -171,11 +181,22 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     // 今日の基準にためる：整え終わってから（走り出して HIP_REF.from 秒より後）の、歩数で走っていた秒。項目ごとに、
     // 直近 FORM.hold 秒の平均が線の内側で、知らせて直るのを待っていない秒だけ（直したあとの形。直す前の形を混ぜない）
     let ready = false
-    if (this.leanRef === null && rt !== null && stepping && rt >= HIP_REF.from && this.form.doneAt !== null) addSecond(this.pool, this.form, t, v, hipRatio, yaw, now.chin, steps)
+    if (this.leanRef === null && rt !== null && stepping && rt >= HIP_REF.from && this.form.doneAt !== null) {
+      // ためている間も速さを見張る（走り出しはゆっくりで、あとからベルトの速さを上げる人がいるため）。外れている秒はためず、
+      // 速さが変わったとみたら、それまでにためた秒を捨てて、新しい速さでため直す
+      const pw = this.land.window()
+      const c = pw ? this.poolGuard.check(pw) : 'same'
+      if (c === 'changed') {
+        this.pool = emptyPool()
+        this.poolMoved = true
+      } else if (c === 'same') addSecond(this.pool, this.form, t, v, hipRatio, yaw, now.chin, steps)
+    }
     // 走り出して長くたっても整え終わらない（値が足りない）ときは、打ち切る
     if (this.leanRef === null && rt !== null && rt > HIP_REF.to + FORM.later) this.form.finish(t)
-    // 基準を作る：走り出して HIP_REF.to 秒たち、整え終わってから FORM.refAfter 秒たったら
-    if (this.leanRef === null && rt !== null && rt >= HIP_REF.to && this.form.doneAt !== null && t - this.form.doneAt >= FORM.refAfter) {
+    // 基準を作る：走り出して HIP_REF.to 秒たち、整え終わってから FORM.refAfter 秒たったら。ためている間に速さが変わってため直したときは、
+    // 新しい速さで LANDING.rebuild 秒たまるまで待つ（速さが変わったあとに作り直すときと同じ長さ）
+    const waitPool = this.poolMoved && this.pool.all.length < LANDING.rebuild
+    if (this.leanRef === null && rt !== null && rt >= HIP_REF.to && this.form.doneAt !== null && t - this.form.doneAt >= FORM.refAfter && !waitPool) {
       const p = this.pool
       if (!p.all.length) this.runFrom = t - HIP_REF.from // 走っていた秒が1つもなければ、すぐ次の秒からためる
       else {
@@ -344,7 +365,7 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   }
 
   finish(speedKmh?: number): Session {
-    return { ...this.summary(), speedKmh, samples: this.samples, strides: this.camera.strides(), form: this.camera.form.results() }
+    return { ...this.summary(), speedKmh, samples: this.samples, strides: this.camera.strides(), form: this.camera.form.results(), gait: this.camera.gait.result() }
   }
 }
 

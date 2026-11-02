@@ -80,8 +80,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let baseNecks: number[] = []
     let baseMovingSince: number | null = null
     let baseStands: Standing[] = []
+    let baseHips: number[] = [] // 立った姿勢の腰の高さ（走りの数字の腰の高さを割る）
     let baseTries = 0 // 立ち姿勢を直してもらった回数
-    let standing: { head: number; trunk: number; issue: StandingIssue | null } | undefined
+    let standing: { head: number; trunk: number; issue: StandingIssue | null; hip?: number } | undefined
     let provisional: number[] = []
     let lastHud = 0
     let caption = ''
@@ -403,12 +404,14 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           stillSince = null
           baseNecks = []
           baseStands = []
+          baseHips = []
         } else {
           stillSince ??= t
           const el = t - stillSince
           if (el > BASELINE.settle) {
             baseNecks.push(m.neck)
             baseStands.push({ head: m.neck + m.trunk, trunk: m.trunk })
+            baseHips.push(m.hipRatio)
           }
           const left = Math.max(1, Math.ceil(BASELINE.settle + BASELINE.collect - el))
           setHud((hh) => (hh.countdown === left ? hh : { ...hh, countdown: left }))
@@ -423,12 +426,13 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
               stillSince = null
               baseNecks = []
               baseStands = []
+              baseHips = []
             } else {
               const today = median(baseNecks)
               const createdAt = Date.now()
               baseline = { neck: capBaseline(today, loadBaselines()), createdAt, ...st }
               saveBaseline({ neck: today, createdAt, ...st })
-              standing = { ...st, issue }
+              standing = { ...st, issue, hip: median(baseHips) }
               say(!issue ? PHRASES.baseGood : issue === 'head' ? PHRASES.baseHeadLeft : PHRASES.baseBackLeft, t)
               say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
               lastNextSay = t
