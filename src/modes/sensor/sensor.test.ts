@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseBattery, parsePacket, type Vec3 } from './parse'
 import { HunchDetector } from './hunch'
+import { batteryPercent } from './battery'
 import { decodeBlock, SensorRecorder } from './log'
 import { HUNCH, SENSOR_LOG } from './params'
 import type { RunLog } from '../../core/types'
@@ -218,5 +219,16 @@ describe('センサーの記録', () => {
     const old = JSON.parse('{"id":"log-1","startedAt":1,"width":0,"height":0,"columns":[],"points":[],"phases":[],"rows":[],"events":[]}') as RunLog
     expect(old.sensors).toBeUndefined()
     expect(old.sensors?.blocks ?? []).toEqual([])
+  })
+})
+
+describe('電池の残り', () => {
+  it('電圧を % の目安にする（満タン 100、空 0、間は表を直線でつなぐ）', () => {
+    expect(batteryPercent(4.25)).toBe(100)
+    expect(batteryPercent(4.2)).toBe(100)
+    expect(batteryPercent(3.96)).toBe(75)
+    expect(batteryPercent(3.74)).toBe(20)
+    expect(batteryPercent(3.71)).toBe(15)
+    expect(batteryPercent(3.2)).toBe(0)
   })
 })

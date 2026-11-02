@@ -2,12 +2,12 @@
 // しくみの数字（CUE・QUIET・SCORE など）は src/core/params.ts のものをそのまま使い、ここでは決めない
 
 // 付ける場所と、そこに付けているセンサー（name が null の枠は使わない）。付け替えたら、ここだけ直す
-// （hardware/sensor の viewer/viewer.html の SLOTS、tools/coach.py の SLOTS も同じ並び）。5番はモーターが回らず外したので、左手首は空き
+// （hardware/sensor の viewer/viewer.html の SLOTS、tools/coach.py の SLOTS も同じ並び）。5番はモーターが回らず外した。手首は1個だけで、カメラから見える左手首に付ける（右手首は空き）
 export const SLOTS: readonly { place: string; name: string | null }[] = [
   { place: '頭', name: 'RFC-IMU-1' },
   { place: '胸', name: 'RFC-IMU-2' },
-  { place: '左手首', name: null },
-  { place: '右手首', name: 'RFC-IMU-4' },
+  { place: '左手首', name: 'RFC-IMU-4' },
+  { place: '右手首', name: null },
   { place: '左足首', name: 'RFC-IMU-3' },
   { place: '右足首', name: 'RFC-IMU-6' },
 ]
@@ -40,3 +40,10 @@ export const SENSOR_LOG = {
   block: 1, // まとめる長さ（秒）
   maxChars: 10_000_000, // base64 の文字数の上限（約35分ぶん）
 }
+
+// 電池（リポ 1セル、OCTelect 401030 110mAh）の電圧 → 残りの目安（%）。リポのふつうの放電曲線の表を、間を直線でつなぐ。
+// XIAO の読み（分圧と ADC）には数十 mV のずれがあり、USB につないでいる間は充電の電圧が出るので、あくまで目安
+export const BATTERY_CURVE: [number, number][] = [
+  [4.2, 100], [4.1, 90], [4.0, 80], [3.92, 70], [3.87, 60], [3.82, 50], [3.79, 40], [3.77, 30], [3.74, 20], [3.68, 10], [3.45, 5], [3.3, 0],
+]
+export const BATTERY_LOW = 20 // これ以下（%）なら、充電を促す

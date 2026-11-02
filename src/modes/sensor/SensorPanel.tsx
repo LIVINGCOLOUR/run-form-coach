@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { sensors, type NodeView } from './ble'
-import { CHEST, HUNCH } from './params'
+import { batteryPercent } from './battery'
+import { BATTERY_LOW, CHEST, HUNCH } from './params'
 
 // 走る前に、自作のセンサーをつなぐ小さな枠（ホームの「はじめる」の下）。つながなくてもカメラ版はいつもどおり使える。
 // 胸のセンサーがつながっていれば、走っている間に猫背になったとき胸が震える（hunch.ts）
@@ -8,6 +9,8 @@ export function SensorPanel() {
   const [open, setOpen] = useState(false)
   const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
   const on = nodes.filter((n) => n.status === 'connected').length
+  // 電池が少ない（BATTERY_LOW % 以下）センサー。閉じていても見えるように、ボタンにも出す
+  const low = nodes.filter((n) => n.status === 'connected' && n.battery !== null && batteryPercent(n.battery) <= BATTERY_LOW)
 
   // 前に選んだことのあるセンサーに、選ぶ画面なしでつなぎにいく（getDevices があるブラウザだけ。なければ何もしない）
   useEffect(() => {
@@ -19,6 +22,7 @@ export function SensorPanel() {
     return (
       <button onClick={() => setOpen(true)} style={link}>
         センサー{on ? `（${on} / ${sensors.slots} つながっています）` : 'をつなぐ'}
+        {low.length > 0 && <span style={{ color: 'var(--warn)', fontWeight: 700 }}>・電池が少ない：{low.map((n) => `${n.place} ${batteryPercent(n.battery!)}%`).join('、')}</span>}
       </button>
     )
   }
@@ -39,6 +43,11 @@ export function SensorPanel() {
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
             スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。胸がつながっていれば、走っている間に猫背が {HUNCH.hold} 秒続いたとき、胸が震えます。
           </div>
+          {low.length > 0 && (
+            <div style={{ color: 'var(--warn)', fontSize: 13, fontWeight: 700, lineHeight: 1.6 }}>
+              電池が {BATTERY_LOW}% 以下のセンサーがあります（{low.map((n) => n.place).join('、')}）。走っている途中で切れるかもしれないので、充電してください。
+            </div>
+          )}
           {nodes.map((n, i) => (
             <Row key={n.place} n={n} onConnect={() => void sensors.connect(i)} onTest={n.place === CHEST ? () => void sensors.buzz(CHEST, 1, 300) : undefined} />
           ))}
@@ -52,6 +61,8 @@ function Row({ n, onConnect, onTest }: { n: NodeView; onConnect: () => void; onT
   const ok = n.status === 'connected'
   const busy = n.status === 'connecting'
   const low = ok && (n.rate < 80 || n.lost > 0)
+  const pct = n.battery !== null ? batteryPercent(n.battery) : null
+  const empty = ok && pct !== null && pct <= BATTERY_LOW
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, opacity: n.name ? 1 : 0.5 }}>
       <div style={{ width: 52, fontSize: 13, fontWeight: 700 }}>{n.place}</div>
@@ -60,7 +71,8 @@ function Row({ n, onConnect, onTest }: { n: NodeView; onConnect: () => void; onT
         <div style={{ color: ok ? 'var(--accent)' : n.status === 'error' || n.status === 'lost' ? 'var(--warn)' : 'var(--muted)' }}>{n.message}</div>
         {ok && (
           <div className="muted" style={{ color: low ? 'var(--warn)' : undefined }}>
-            {n.rate} 件/秒・抜け {n.lost}{n.battery !== null ? `・電池 ${n.battery.toFixed(2)}V` : ''}
+            {n.rate} 件/秒・抜け {n.lost}
+            {pct !== null && <span style={{ color: empty ? 'var(--warn)' : undefined, fontWeight: empty ? 700 : undefined }}>・電池 {pct}%{empty ? '（充電してください）' : ''}</span>}
             {!n.canBuzz ? '・振動なし' : ''}
           </div>
         )}

@@ -28,7 +28,7 @@ from bleak import BleakClient, BleakScanner
 SLOTS = [
     ("頭", "RFC-IMU-1"),
     ("胸", "RFC-IMU-2"),
-    ("右手首", "RFC-IMU-4"),
+    ("左手首", "RFC-IMU-4"),
     ("左足首", "RFC-IMU-3"),
     ("右足首", "RFC-IMU-6"),
 ]
