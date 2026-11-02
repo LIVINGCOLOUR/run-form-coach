@@ -15,6 +15,7 @@
     "preview": "vite preview",
     "voices": "node scripts/gen-voices.mjs",
     "compare": "node scripts/compare-runs.mjs",
+    "compare:sensor": "node scripts/compare-sensor-camera.mjs",
     "logs": "node scripts/fetch-logs.mjs",
     "drill": "node scripts/treadmill-drill.mjs",
     "drill:short": "node scripts/treadmill-drill.mjs --walk 120 --upright 90 --first 240 --steps heel --sec 60 --gap 30 --speeds 9,10 --speed-sec 150 --jog 870 --moved 0 --cool 120 --hr 0",
