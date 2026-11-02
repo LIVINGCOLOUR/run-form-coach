@@ -8,12 +8,14 @@ import { SLOTS } from './params'
 // つないだものは画面をまたいで残す（ホームでつないで、カメラで走るため）ので、このファイルの sensors を1つだけ使う
 //   サービス 0xFFE0：値の通知 0xFFE1、電池 0xFFE2（uint16 mV）、振動 0xFFE3（回数 uint8、長さ uint8 × 10ms）
 //   機器の情報 0x180A：ファームの版 0x2A26
-const SERVICE = 0xffe0
-const DATA = 0xffe1
-const BATTERY = 0xffe2
-const BUZZ = 0xffe3
-const DEVICE_INFO = 0x180a
-const FIRMWARE_REV = 0x2a26
+// 番号は 128 ビットの文字で渡す（数字の UUID を受け付けないブラウザがあるため。Bluefy で「つなぐ」がエラーになった 2026-11-02）
+const uuid = (n: number) => `0000${n.toString(16).padStart(4, '0')}-0000-1000-8000-00805f9b34fb`
+const SERVICE = uuid(0xffe0)
+const DATA = uuid(0xffe1)
+const BATTERY = uuid(0xffe2)
+const BUZZ = uuid(0xffe3)
+const DEVICE_INFO = uuid(0x180a)
+const FIRMWARE_REV = uuid(0x2a26)
 const RETRIES = 3 // 走っている途中で切れたとき、押さずにつなぎ直す回数（2秒おき）
 
 // TypeScript の DOM には Web Bluetooth の型がないので、使う分だけ書く
@@ -25,21 +27,32 @@ interface BtChar extends EventTarget {
   writeValueWithoutResponse?(d: BufferSource): Promise<void>
 }
 interface BtService {
-  getCharacteristic(u: number): Promise<BtChar>
+  getCharacteristic(u: string): Promise<BtChar>
 }
 interface BtServer {
   connected: boolean
   connect(): Promise<BtServer>
   disconnect(): void
-  getPrimaryService(u: number): Promise<BtService>
+  getPrimaryService(u: string): Promise<BtService>
 }
 interface BtDevice extends EventTarget {
   name?: string
   gatt?: BtServer
 }
+type RequestOptions = { filters: ({ name: string } | { namePrefix: string } | { services: string[] })[]; optionalServices: string[] }
 interface Bluetooth {
-  requestDevice(o: { filters: { name: string }[]; optionalServices: number[] }): Promise<BtDevice>
+  requestDevice(o: RequestOptions): Promise<BtDevice>
   getDevices?(): Promise<BtDevice[]>
+}
+
+// エラーの中身を、何が起きたかわかる形で出す（Bluefy は数字だけのエラーを返すことがある）
+const describe = (e: unknown): string => {
+  if (e instanceof Error) return `${e.name}: ${e.message}`
+  try {
+    return typeof e === 'object' ? JSON.stringify(e) : String(e)
+  } catch {
+    return String(e)
+  }
 }
 
 const bluetooth = (): Bluetooth | undefined => (typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth)
@@ -138,12 +151,33 @@ class SensorHub {
     const bt = bluetooth()
     if (!node?.name || !bt) return
     if (!node.device) {
-      try {
-        const device = await bt.requestDevice({ filters: [{ name: node.name }], optionalServices: [SERVICE, DEVICE_INFO] })
-        this.attach(node, device)
-      } catch (e) {
-        const name = e instanceof Error ? e.name : ''
-        this.set(node, 'error', name === 'NotFoundError' ? '見つからないか、選ばずに閉じました（電源と、10分たって眠っていないかを確かめる）' : `エラー：${e instanceof Error ? e.message : String(e)}`)
+      // ブラウザによって通らない頼み方があるので、通るまで形を変えて頼む（選ばずに閉じたときは、そこでやめる）
+      const tries: RequestOptions[] = [
+        { filters: [{ name: node.name }], optionalServices: [SERVICE, DEVICE_INFO] },
+        { filters: [{ name: node.name }], optionalServices: [SERVICE] },
+        { filters: [{ namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE] },
+        { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE] },
+      ]
+      const errors: string[] = []
+      for (const opts of tries) {
+        try {
+          const device = await bt.requestDevice(opts)
+          if (device.name && device.name !== node.name) {
+            this.set(node, 'error', `${device.name} を選びました。${node.name} を選んでください`)
+            return
+          }
+          this.attach(node, device)
+          break
+        } catch (e) {
+          if (e instanceof Error && e.name === 'NotFoundError') {
+            this.set(node, 'error', '見つからないか、選ばずに閉じました（電源と、10分たって眠っていないかを確かめる）')
+            return
+          }
+          errors.push(describe(e))
+        }
+      }
+      if (!node.device) {
+        this.set(node, 'error', `エラー：${errors.join(' / ')}`)
         return
       }
     }
@@ -235,7 +269,7 @@ class SensorHub {
         setTimeout(() => void this.open(node, tries + 1), 2000)
         return
       }
-      this.set(node, 'error', `エラー：${e instanceof Error ? e.message : String(e)}`)
+      this.set(node, 'error', `エラー（つなぐところ）：${describe(e)}`)
     }
   }
 
