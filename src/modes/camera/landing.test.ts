@@ -81,7 +81,7 @@ const heelOf = (o: StrideOpts) => o.reach - 6 / LEG
 const speedOf = (o: StrideOpts) => (o.reach + o.back) / ((o.stance ?? 0.4) * (o.period ?? 0.7))
 
 const NORMAL: StrideOpts = { reach: 0.35, back: 0.35 } // 速さの目安 2.5、かかとの前 0.31 → 速さで補正 +0.044（線の内側）
-const FAR: StrideOpts = { reach: 0.45, back: 0.25 } // 同じ速さで足が前に着く → 速さで補正 +0.14（線の外）
+const FAR: StrideOpts = { reach: 0.52, back: 0.18 } // 同じ速さで足が前に着く → 速さで補正 +0.21（線の外）
 const AHEAD: StrideOpts = { reach: 0.41, back: 0.29 } // 同じ速さで、基準より +0.06 前（声をかける線 +0.05 と、大きな崩れ +0.07 の間）
 const FAST: StrideOpts = { reach: 0.4, back: 0.4, period: 0.62 } // 速さの目安 3.2（+29%）
 
@@ -224,15 +224,51 @@ function feed(coach: Coach, from: number, sec: number, o: StrideOpts, m: Measure
 const analyzer = (c: Coach) => (c as unknown as { analyzer: { drift: LandingDrift } }).analyzer
 
 describe('コーチ：着地', () => {
-  it('着地が試しの線を越えている間は、整ったと言わない（まだ声もかけない）。線の内側なら「姿勢は整っています」', () => {
+  it('FORM.landing.say が false なら、着地が線を越えている間は、整ったと言わない（声もかけない）。線の内側なら「姿勢は整っています」', () => {
+    const before = FORM.landing.say
+    FORM.landing.say = false
+    try {
+      const far = new Coach({ pause: false })
+      const s1 = feed(far, 0, 120, FAR)
+      expect(far.formDone).toBe(true) // 整え終わりは待たせない（しくみの声かけは始まる）
+      expect(s1).not.toContain(PHRASES.formGood)
+      expect(s1).not.toContain(PHRASES.formSet)
+      expect(s1).not.toContain(PHRASES.cueLanding)
+      const ok = new Coach({ pause: false })
+      expect(feed(ok, 0, 120, NORMAL)).toContain(PHRASES.formGood)
+    } finally {
+      FORM.landing.say = before
+    }
+  })
+
+  it('着地の線は声にする：走り出しから足が体より前に着いていたら、整える間に「足が体より前に着いています」（今日の基準がなくても）', () => {
+    expect(FORM.landing.say).toBe(true)
     const far = new Coach({ pause: false })
-    const s1 = feed(far, 0, 120, FAR)
-    expect(far.formDone).toBe(true) // 整え終わりは待たせない（しくみの声かけは始まる）
-    expect(s1).not.toContain(PHRASES.formGood)
-    expect(s1).not.toContain(PHRASES.formSet)
-    expect(s1).not.toContain(PHRASES.cueLanding)
+    expect(feed(far, 0, 60, FAR)).toContain(PHRASES.cueLanding)
+    expect(far.cues.find((c) => c.item === 'landing')!.lead).toBe(true)
     const ok = new Coach({ pause: false })
-    expect(feed(ok, 0, 120, NORMAL)).toContain(PHRASES.formGood)
+    expect(feed(ok, 0, 120, NORMAL)).not.toContain(PHRASES.cueLanding)
+  })
+
+  it('今日の基準ができる前でも、着地の仮の基準（走り出して速さの変わらない LANDING.earlyCollect 秒）より足が前に着いたら知らせる', () => {
+    const coach = new Coach({ pause: false, items: activeItems(2) })
+    feed(coach, 0, 70, NORMAL)
+    const a = coach as unknown as { analyzer: { early: LandingDrift } }
+    expect(a.analyzer.early.ref).not.toBeNull()
+    expect(coach.leanRef).toBeNull()
+    // 線の内側のまま、基準より +0.06 前（決まった線では言わない大きさ）
+    expect(feed(coach, 70, 40, AHEAD)).toContain(PHRASES.cueLanding)
+    expect(coach.cues.find((c) => c.item === 'landing')!.lead).toBeFalsy()
+    // 仮の基準を使わない設定では言わない
+    const before = LANDING.early
+    LANDING.early = false
+    try {
+      const c2 = new Coach({ pause: false, items: activeItems(2) })
+      feed(c2, 0, 70, NORMAL)
+      expect(feed(c2, 70, 40, AHEAD)).not.toContain(PHRASES.cueLanding)
+    } finally {
+      LANDING.early = before
+    }
   })
 
   it('今日の基準より足が前に着く状態が続いたら「足が体より前に着いています」。速さが大きく変わったときは言わず、基準を作り直す', () => {
@@ -274,7 +310,10 @@ describe('コーチ：着地', () => {
     expect(c2.leanRef).toBeNull()
   })
 
-  it('結果の画面：着地の位置の行（よい例との差、試しの線、試しの測り方と添える）', () => {
+  it('結果の画面：声にしない間の着地の位置の行（よい例との差、試しの線、試しの測り方と添える）', () => {
+    const before = FORM.landing.say
+    FORM.landing.say = false
+    try {
     const coach = new Coach({ pause: false })
     feed(coach, 0, 200, FAR)
     const form = coach.finish().form!
@@ -291,9 +330,15 @@ describe('コーチ：着地', () => {
     expect(row.line).toBe(`試しの線 +${Math.round(FORM.landing.max * 100)}%まで：外でした（足が体より前に着いていました）`)
     expect(row.lineOut).toBe(true)
     expect(row.note).toBe(LANDING_NOTE)
+    } finally {
+      FORM.landing.say = before
+    }
   })
 
-  it('次の一歩：試しの測り方のうちは、線を越えたときだけ着地を選ぶ（よい例の範囲を外れただけでは選ばない）。ホームと走り出しの声も同じ1つ', () => {
+  it('次の一歩：試しの測り方のうち（声にしない間）は、線を越えたときだけ着地を選ぶ（よい例の範囲を外れただけでは選ばない）。ホームと走り出しの声も同じ1つ', () => {
+    const before = FORM.landing.say
+    FORM.landing.say = false
+    try {
     const base: FormResult[] = [
       { group: 'body', key: 'body', value: GOOD.body.mid, over: -2, inside: 1, cues: 0, fixed: false, judged: true },
       { group: 'trunk', key: 'trunk', value: GOOD.trunk.mid, over: -2, inside: 1, cues: 0, fixed: false, judged: true },
@@ -317,6 +362,9 @@ describe('コーチ：着地', () => {
     // ほかの項目が線の外なら、そちら（離れ方は0点までの幅で割って比べる）
     const trunkOut = run([{ ...base[0] }, { group: 'trunk', key: 'trunk', value: FORM.trunk.max + 3, over: 3, inside: 0, cues: 3, fixed: false, judged: true }, land(FORM.landing.max + 0.01)])
     expect(nextItem(trunkOut)?.item).toBe('trunk')
+    } finally {
+      FORM.landing.say = before
+    }
   })
 
   it('FORM.landing.say を true にすると、整える間に着地も知らせ（体全体のあと、上体の前）、直ったら「その形です」', () => {
@@ -337,7 +385,9 @@ describe('コーチ：着地', () => {
     }
   })
 
-  it('声にしない間は、着地が線を越えていても、整える間を細かく見続けない（間引きを止めない）', () => {
+  it('声にしない間は、着地が線を越えていても、整える間を細かく見続けない（間引きを止めない）。声にするなら細かく見る', () => {
+    const before = FORM.landing.say
+    FORM.landing.say = false
     const st = new FormStage()
     const peaks = (): Peak[] => {
       const m = meterOn(FAR, 1.2)
@@ -346,7 +396,10 @@ describe('コーチ：着地', () => {
     for (let t = 0; t < 40; t++) st.second(t, t, true, { trunk: 7, body: 9, neck: 2, headLean: 12 }, 0, () => 1e9, { peaks: peaks().map((p) => ({ ...p, t })), sv: [2.5, 2.5, 2.5] })
     expect(st.landing!).toBeGreaterThan(FORM.landing.max)
     expect(st.busy(40)).toBe(false)
+    FORM.landing.say = before
+    expect(st.busy(40)).toBe(FORM.landing.say)
   })
+
 })
 
 describe('コーチ：速さを変えたときの姿勢', () => {

@@ -53,6 +53,13 @@ const addSteps = (p: Steps, s: { peaks: Peak[]; sv: number[] }) => {
   p.secs++
 }
 
+// 着地の仮の基準：基準を渡さずに始めると、速さの変わらない LANDING.earlyCollect 秒の山をためて作る（landing.ts の LandingDrift）
+const earlyDrift = () => {
+  const d = new LandingDrift(LANDING.earlyCollect)
+  d.set(null)
+  return d
+}
+
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 const meanOf = (xs: FormValues[]): FormValues => ({ trunk: mean(xs.map((x) => x.trunk)), body: mean(xs.map((x) => x.body)), neck: mean(xs.map((x) => x.neck)), headLean: mean(xs.map((x) => x.headLean)) })
 
@@ -93,6 +100,9 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   // 着地（landing.ts）：骨格を取ったコマごとに山を取り、歩数で走っていた秒の山だけを残す。今日の基準からの増えは drift
   land = new LandingWatch()
   drift = new LandingDrift()
+  // 着地の仮の基準（今日の基準ができるまで）：走り出して FORM.from 秒からの、速さの変わらない LANDING.earlyCollect 秒の山で作り、
+  // 今日の基準ができるまで、それからの増えで声をかける（走り出しの数分に足が前に出ても、基準がないので気づけなかったため）
+  early = earlyDrift()
   // 走りの数字（gait.ts）：着地と同じ山で1歩ずつ区切って、ピッチ・上下動・腰の高さ・腕振りを測る。声はかけない
   gait = new GaitWatch()
   // 速さが変わったとみて（drift.guard）、姿勢の基準を新しい速さでためなおしている間のため場所（なければ null）
@@ -135,6 +145,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     this.pool = emptyPool()
     this.poolGuard = new SpeedGuard()
     this.poolMoved = false
+    this.early = earlyDrift()
     this.form = this.form.restart()
   }
 
@@ -231,6 +242,12 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (!hadRef) {
       lw = this.land.window(undefined, this.drift.ref?.near)
       landing = ref ? this.drift.judge(lw, steps, stepping) : undefined
+    }
+    // 今日の基準ができるまでは、着地の仮の基準と比べる（LANDING.early）
+    if (!ref && LANDING.early && rt !== null && rt >= FORM.from) {
+      const ew = this.land.window(undefined, this.early.ref?.near)
+      landing = this.early.judge(ew, steps, stepping)
+      if (this.early.ref) lw = ew
     }
     const shown = lw ?? this.land.window()
     const judge = ref ? { trunk: toScale('trunk', trunk - ref.trunk), body: toScale('body', body - ref.body) } : undefined

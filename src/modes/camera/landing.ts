@@ -462,6 +462,12 @@ export class LandingDrift {
   rebuilds = 0 // 速さが変わって作り直した回数
   readonly guard = new SpeedGuard()
   private pool: { peaks: Peak[]; sv: number[]; secs: number } | null = null
+  private readonly collect: number
+
+  // collect：基準をためる長さ（歩数で走っていた秒）。ふつうは LANDING.rebuild、着地の仮の基準（coach.ts）は LANDING.earlyCollect
+  constructor(collect: number = LANDING.rebuild) {
+    this.collect = collect
+  }
 
   // 基準を渡す（作れなければ、ためて作る。比べる速さは、ためはじめの窓の速さ）
   set(ref: LandingRef | null) {
@@ -499,11 +505,11 @@ export class LandingDrift {
     p.peaks.push(...sec.peaks)
     p.sv.push(...sec.sv)
     p.secs++
-    if (p.secs >= LANDING.rebuild) {
+    if (p.secs >= this.collect) {
       const ref = refOf(p.peaks, p.sv)
       if (ref) this.set(ref)
       // 山がなかなかたまらない（足が映りにくい）ときは、古い分を捨ててため直す（ずっと前の形を基準にしないため）
-      else if (p.secs >= 3 * LANDING.rebuild) this.pool = { peaks: [], sv: [], secs: 0 }
+      else if (p.secs >= 3 * this.collect) this.pool = { peaks: [], sv: [], secs: 0 }
     }
     return undefined
   }
