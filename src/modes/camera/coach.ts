@@ -311,6 +311,11 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
 
   private readonly gate = new RunningGate()
 
+  // いま歩数で走っているとみているか（直近のコマの割合で決めたもの。センサーの猫背の見分けが、走っている間だけ見るのに使う）
+  get stepping() {
+    return this.gate.running
+  }
+
   // 今日の基準ができる前に止まったか、走り出したか（整え直すため）
   update(inp: CoachInput) {
     const was = this.gate.running

@@ -19,6 +19,9 @@ import { PHRASES } from '../../../core/phrases'
 import { capBaseline, median, standingIssue, type Standing, type StandingIssue } from '../standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
 import { fullFrames } from '../fullFrames'
+import { SensorSession } from '../../sensor/session'
+import { sensors } from '../../sensor/ble'
+import { HUNCH } from '../../sensor/params'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -107,6 +110,22 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     if (full || file) rec.log.full = true
     let nowT = 0
     let tickMoving = false
+    // 自作のセンサー（つないであるとき）：値を記録し、胸で猫背を見て震わせる。区切りはカメラの直立の基準と「走っている」を使う
+    const sensorRun = !file && sensors.supported ? new SensorSession((t, text) => rec.event(t, text)) : null
+    const sensorTimer = sensorRun
+      ? setInterval(() => {
+          const coach = coachRef.current
+          sensorRun.tick(performance.now() / 1000, phase === 'run' && !!coach && coach.state === 'running' && coach.stepping)
+        }, HUNCH.tick * 1000)
+      : null
+    let sensorsClosed = false
+    const closeSensors = () => {
+      if (sensorsClosed) return
+      sensorsClosed = true
+      if (sensorTimer) clearInterval(sensorTimer)
+      const log = sensorRun?.finish()
+      if (log) rec.log.sensors = log
+    }
     const setPhase = (p: Phase) => {
       rec.event(nowT, `phase:${p}`)
       phase = p
@@ -127,6 +146,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     const finish = async () => {
       if (finished) return
       finished = true
+      closeSensors()
       const coach = coachRef.current
       if (coach && coach.samples.length >= 30) {
         const s = coach.finish()
@@ -412,6 +432,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
               say(!issue ? PHRASES.baseGood : issue === 'head' ? PHRASES.baseHeadLeft : PHRASES.baseBackLeft, t)
               say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
               lastNextSay = t
+              sensorRun?.stand(t, BASELINE.collect) // 胸のセンサーの、立った姿勢の向き（基準に使った3秒）
               setPhase('run')
             }
           }
@@ -494,6 +515,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       // 終わりの言葉（おつかれさまでした）は最後まで言わせる
       if (!finished) {
         stopVoice()
+        closeSensors()
         saveLog(rec.log).catch(() => {})
       }
     }

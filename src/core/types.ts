@@ -125,4 +125,20 @@ export interface RunLog {
   // 走っている間も間引かず、毎コマ骨格を取った記録（カメラ版の「全コマ記録」?full=1 と、動画で試したとき）。
   // ないときは、安定して走っている間は間引いている（取らなかったコマは rows にない）
   full?: boolean
+  // 自作のセンサー（Bluefy などでつないだとき）。つながなかった走りと、古い記録にはない
+  sensors?: SensorLog
+}
+
+// センサーの記録（src/modes/sensor/log.ts の SensorRecorder で作り、decodeBlock で戻す）。時刻 t は rows と同じ時計の秒
+export interface SensorLog {
+  version: 1
+  nodes: { place: string; name: string; fw?: string; lost?: number; battery?: number }[] // lost：抜けた件数、battery：終わりの電圧（V）
+  stride: number // 100Hz のうち、通し番号がこの数で割り切れる件だけ残した
+  // [ブロックの先頭の件が届いた t, nodes の何番目か, base64]。中身は 先頭の通し番号 uint16・先頭の時刻 uint32 ms・加速度の範囲 uint8 g、
+  // 続けて1件14バイト（前の件からの通し番号の差 uint8、時刻の差 uint8 ms、ジャイロ xyz int16、加速度 xyz int16。すべてリトルエンディアン。先頭の件の差は 0）
+  blocks: [number, number, string][]
+  cappedAt?: number // 上限（SENSOR_LOG.maxChars）に達して、値を残すのをやめた t
+  stand?: { t: number; base: [number, number, number] } // 立った姿勢を覚えた t と、胸の重力の向き
+  runLean?: { t: number; deg: number } // 走る前傾を覚えた t と角度（度）
+  cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]
 }

@@ -1,0 +1,80 @@
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { sensors, type NodeView } from './ble'
+import { CHEST, HUNCH } from './params'
+
+// 走る前に、自作のセンサーをつなぐ小さな枠（ホームの「はじめる」の下）。つながなくてもカメラ版はいつもどおり使える。
+// 胸のセンサーがつながっていれば、走っている間に猫背になったとき胸が震える（hunch.ts）
+export function SensorPanel() {
+  const [open, setOpen] = useState(false)
+  const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
+  const on = nodes.filter((n) => n.status === 'connected').length
+
+  // 前に選んだことのあるセンサーに、選ぶ画面なしでつなぎにいく（getDevices があるブラウザだけ。なければ何もしない）
+  useEffect(() => {
+    void sensors.restore()
+  }, [])
+
+  const link = { background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 } as const
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={link}>
+        センサー{on ? `（${on} / ${sensors.slots} つながっています）` : 'をつなぐ'}
+      </button>
+    )
+  }
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>センサー</div>
+        <button onClick={() => setOpen(false)} style={link}>
+          閉じる
+        </button>
+      </div>
+      {!sensors.supported ? (
+        <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+          このブラウザはセンサーにつなげません（iPhone の Safari は Bluetooth に対応していません）。iPhone では Bluefy というブラウザでこのページを開くと、つなげます。センサーなしでも、カメラだけでいつもどおり走れます。
+        </div>
+      ) : (
+        <>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。胸がつながっていれば、走っている間に猫背が {HUNCH.hold} 秒続いたとき、胸が震えます。
+          </div>
+          {nodes.map((n, i) => (
+            <Row key={n.place} n={n} onConnect={() => void sensors.connect(i)} onTest={n.place === CHEST ? () => void sensors.buzz(CHEST, 1, 300) : undefined} />
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+function Row({ n, onConnect, onTest }: { n: NodeView; onConnect: () => void; onTest?: () => void }) {
+  const ok = n.status === 'connected'
+  const busy = n.status === 'connecting'
+  const low = ok && (n.rate < 80 || n.lost > 0)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, opacity: n.name ? 1 : 0.5 }}>
+      <div style={{ width: 52, fontSize: 13, fontWeight: 700 }}>{n.place}</div>
+      <div style={{ flexGrow: 1, minWidth: 0, fontSize: 11, lineHeight: 1.5 }}>
+        <div className="muted">{n.name ?? '使わない'}{n.fw ? `（${n.fw}）` : ''}</div>
+        <div style={{ color: ok ? 'var(--accent)' : n.status === 'error' || n.status === 'lost' ? 'var(--warn)' : 'var(--muted)' }}>{n.message}</div>
+        {ok && (
+          <div className="muted" style={{ color: low ? 'var(--warn)' : undefined }}>
+            {n.rate} 件/秒・抜け {n.lost}{n.battery !== null ? `・電池 ${n.battery.toFixed(2)}V` : ''}
+            {!n.canBuzz ? '・振動なし' : ''}
+          </div>
+        )}
+      </div>
+      {ok && onTest && n.canBuzz && (
+        <button onClick={onTest} style={{ height: 32, padding: '0 10px', borderRadius: 16, border: '1px solid var(--line)', background: 'transparent', color: 'var(--text)', fontSize: 12 }}>
+          震わす
+        </button>
+      )}
+      {n.name && !ok && (
+        <button disabled={busy} onClick={onConnect} style={{ height: 32, padding: '0 12px', borderRadius: 16, border: '1px solid var(--text)', background: 'transparent', color: 'var(--text)', fontSize: 12, fontWeight: 700 }}>
+          {n.status === 'idle' ? 'つなぐ' : 'つなぎ直す'}
+        </button>
+      )}
+    </div>
+  )
+}

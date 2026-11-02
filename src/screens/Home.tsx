@@ -22,6 +22,7 @@ import { requestLocation, requestMotionPermission, requestWakeLock } from '../mo
 import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/storage'
 import { flushUploads } from '../core/upload/uploads'
 import { UploadKeyButton, UploadPanel } from '../ui/Upload'
+import { SensorPanel } from '../modes/sensor/SensorPanel'
 
 const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり', landing: '着地の位置' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
@@ -308,6 +309,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         {fullFrames() && (
           <div style={{ fontSize: 12, color: 'var(--accent)' }}>全コマ記録（検証用）：走っている間も間引かず、毎コマ骨格を取って残します</div>
         )}
+        <SensorPanel />
         <div style={{ fontSize: 12 }} className="muted">
           走る前に、まっすぐ立って基準を取ります
           {' · '}
