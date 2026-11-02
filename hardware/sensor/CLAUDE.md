@@ -4,7 +4,7 @@
 
 - 構成：Seeed XIAO nRF52840（無印、技適 211-220207）＋ 秋月 AE-LSM6DSV16X（I2C。基板の下のふちの印字「6A」と「I2C」をふさぐ。I2C は接点3つで、すき間2つとも。基板に J1 などの番号の印字はない）。小さくするときは白猫屋の LSM6DSV 基板（ピンの並びと I2C 対応をショップに確かめてから）
 - 無線：BLE でスマホ（今は Mac の Chrome）に送る。XIAO の技適の範囲で使う。SlimeVR の Smol Slime の独自無線（ESB）は技適の面でグレーなので使わない
-- 送る形：100Hz（`SAMPLE_HZ` で 50 にもできる）で測ってリングバッファにため、1回の通知にまとめる。先頭に通し番号 uint16、時刻 uint32 ms、加速度の範囲 uint8（g、8 か 16）、続けて1件13バイト（時刻の差 uint8 ms、ジャイロ xyz int16 0.07 dps、加速度 xyz int16 0.000061×範囲/2 g）を N 件。サービス 0xFFE0、キャラクタリスティック 0xFFE1。電池の電圧は 0xFFE2（uint16 mV、読み取り＋通知、10秒ごと）。振動は 0xFFE3 に書く（回数 uint8、長さ uint8 ×10ms）。`firmware/03_ble_imu`。受ける側のパーサの確認は `node viewer/test_parse.mjs`
+- 送る形：100Hz（`SAMPLE_HZ` で 50 にもできる）で測ってリングバッファにため、1回の通知にまとめる。先頭に通し番号 uint16、時刻 uint32 ms、加速度の範囲 uint8（g、8 か 16）、続けて1件13バイト（時刻の差 uint8 ms、ジャイロ xyz int16 0.07 dps、加速度 xyz int16 0.000061×範囲/2 g）を N 件。サービス 0xFFE0、キャラクタリスティック 0xFFE1。電池の電圧は 0xFFE2（uint16 mV、読み取り＋通知、10秒ごと）。振動は 0xFFE3 に書く（回数 uint8、長さ uint8 ×10ms）。つながらず動かない（ジャイロ約20 dps 未満）まま10分で眠り、加速度のウェイクアップ（0.5 g）を INT1 → D1 に出して、動いたら起きる。`firmware/03_ble_imu`。受ける側のパーサの確認は `node viewer/test_parse.mjs`
 - 受け方は2つ。手で見るのは `tools/viewer.sh`（Chrome、6か所の枠で「つなぐ」を押す）。テストは `tools/coach.sh`（Mac の Python・bleak で自動でつなぎ、声で区切りを言い、猫背で胸を震わせ、`records/日時/` に imu.csv と summary.txt）。BLE は1台にしかつながらないので、両方を同時に開かない
 - 書き換えは USB なら `tools/flash.sh 03_ble_imu <番号>`、無線なら `tools/ota.sh <番号>`（約1分半。Adafruit ブートローダーの古い形の DFU を bleak で送る。版は Device Information の Firmware Revision 0x2A26 で読める）。無線は、無線対応の 03_ble_imu（2026-11-02 版から）が入っている個体だけ
 - 加速度の範囲は全部の個体で ±16g（足首の着地は 10g を超えうる）。ジャイロは ±2000dps

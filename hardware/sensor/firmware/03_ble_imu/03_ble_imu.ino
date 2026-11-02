@@ -44,7 +44,10 @@ const char* DEVICE_NAME = "RFC-IMU-" STR(IMU_ID);
 constexpr uint32_t SAMPLE_HZ = 100;    // 1秒に測る回数。50 か 100
 constexpr uint32_t MAX_WAIT_MS = 30;   // いちばん古いサンプルがこれだけ待ったら、満杯でなくても送る
 constexpr uint32_t BATTERY_EVERY_MS = 10000; // 電池の電圧を測る間隔
-constexpr uint32_t AUTO_OFF_MIN = 10;  // だれともつながらないまま、これだけたったら眠る（0 なら眠らない）
+constexpr uint32_t AUTO_OFF_MIN = 10;  // だれともつながらず、しかも動かないまま、これだけたったら眠る（0 なら眠らない）
+constexpr int32_t MOTION_GYRO = 286;   // これより速く回ったら「動いた」（ジャイロの1軸、1 = 0.07 dps なので約20 dps）
+constexpr uint8_t INT1_PIN = 1;        // D1 ← センサーの INT1。眠っている間に動いたら、これで起きる
+constexpr uint8_t WAKE_THS = 2;        // 起きる動きの強さ（1 = 0.25 g。2 で 0.5 g：手に取る・付けて歩き出すくらい）
 constexpr uint8_t MOTOR_PIN = 7;       // D7（振動モーターのトランジスタ）
 constexpr uint32_t BUZZ_GAP_MS = 150;  // 何回か鳴らすときの間
 
@@ -58,6 +61,13 @@ constexpr uint8_t REG_CTRL2 = 0x11;
 constexpr uint8_t REG_CTRL6 = 0x15;
 constexpr uint8_t REG_CTRL8 = 0x17;
 constexpr uint8_t REG_OUTX_L_G = 0x22;
+constexpr uint8_t REG_WAKE_UP_SRC = 0x45;
+constexpr uint8_t REG_FUNCTIONS_ENABLE = 0x50;
+constexpr uint8_t REG_INACTIVITY_DUR = 0x54;
+constexpr uint8_t REG_TAP_CFG0 = 0x56;
+constexpr uint8_t REG_WAKE_UP_THS = 0x5B;
+constexpr uint8_t REG_WAKE_UP_DUR = 0x5C;
+constexpr uint8_t REG_MD1_CFG = 0x5E;
 
 constexpr uint16_t HEADER_LEN = 7;
 constexpr uint16_t SAMPLE_LEN = 13;
@@ -65,7 +75,7 @@ constexpr uint16_t MAX_PAYLOAD = 244; // MTU 247 - 3
 
 BLEDfu bledfu; // 無線での書き換え（次からは USB につながずに、Mac やスマホから書き込めるように）
 BLEDis bledis; // 機器の情報（0x180A）。受ける側が、どの版のファームかを読めるように
-const char* FW_VERSION = "2026-11-02"; // 振動（0xFFE3）と無線での書き換えを足した版
+const char* FW_VERSION = "2026-11-02.2"; // 振動（0xFFE3）・無線での書き換え・動いたら起きる
 BLEService imuService(0xFFE0);
 BLECharacteristic imuChar(0xFFE1);
 BLECharacteristic batChar(0xFFE2);
@@ -82,6 +92,7 @@ constexpr uint32_t RING_SIZE = 256; // 100Hz で約2.5秒ぶん
 Sample ring[RING_SIZE];
 volatile uint32_t ringHead = 0; // 次に入れる位置（測る係だけが進める）
 volatile uint32_t ringTail = 0; // 次に出す位置（送る係だけが進める）
+volatile uint32_t lastMotion = 0; // 最後に動いた時刻（測る係が書く）
 
 void writeReg(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(lsm6_addr);
@@ -115,7 +126,13 @@ bool lsm6_init() {
   writeReg(REG_CTRL6, 0b00000100); // ジャイロの範囲：±2000 dps
   // 加速度の範囲：下の2ビットが 10 なら ±8 g、11 なら ±16 g（上の 100 はフィルターの設定で、前と同じ）
   writeReg(REG_CTRL8, ACCEL_RANGE_G == 16 ? 0b10000011 : 0b10000010);
+  // 眠る前に入れた「動いたら INT1」を外す（動いて起きたあとも、チップには設定が残っている）
+  writeReg(REG_MD1_CFG, 0);
+  writeReg(REG_FUNCTIONS_ENABLE, 0);
+  writeReg(REG_TAP_CFG0, 0);
   delay(10);
+  uint8_t src;
+  readRegs(REG_WAKE_UP_SRC, &src, 1); // たまっている知らせを消して、INT1 を LOW に戻す
   return true;
 }
 
@@ -140,6 +157,10 @@ void sampleTask(void*) {
     s.seq = seq++;
     s.t = millis();
     readRegs(REG_OUTX_L_G, s.raw, 12);
+    for (int i = 0; i < 3; i++) {
+      int16_t g = (int16_t)(s.raw[i * 2] | (s.raw[i * 2 + 1] << 8));
+      if (g > MOTION_GYRO || g < -MOTION_GYRO) lastMotion = s.t;
+    }
 
     uint32_t head = ringHead;
     if (head - ringTail < RING_SIZE) {
@@ -176,13 +197,25 @@ void batteryUpdate() {
   if (Bluefruit.connected() && batChar.notifyEnabled()) batChar.notify16(mv);
 }
 
-// 眠る：センサーを止めてから、nRF52840 を System OFF にする。
-// 起きるのは、リセットボタンを1回押したとき、または USB をつないだとき（起きると最初から動く）
+// 眠る：ジャイロを止め、加速度だけゆっくり測らせて「動いたら INT1」を入れてから、nRF52840 を System OFF にする。
+// 起きるのは、動いたとき（INT1 → D1）、リセットボタンを押したとき、USB をつないだとき（起きると最初から動く）
+// 設定は 04_haptic_check のウェイクアップと同じ（データシート DS13510 の 9.53〜9.65）
 void sleepNow() {
   vTaskSuspend(sampleTaskHandle); // I2C を使う係を止めてから、センサーに書く
-  writeReg(REG_CTRL1, 0);         // 加速度を止める
-  writeReg(REG_CTRL2, 0);         // ジャイロを止める
+  writeReg(REG_CTRL2, 0);          // ジャイロを止める
+  writeReg(REG_CTRL1, 0b00000011); // 加速度：15Hz（動いたかを見るだけなので、ゆっくり）
+  writeReg(REG_INACTIVITY_DUR, 0b01010100); // しきい値の 1 = 250 mg
+  writeReg(REG_WAKE_UP_THS, WAKE_THS);
+  writeReg(REG_WAKE_UP_DUR, 0x00);
+  writeReg(REG_TAP_CFG0, 0b00010001);         // 変化で見る、INT1 を読むまで HIGH のまま
+  writeReg(REG_FUNCTIONS_ENABLE, 0b10000000); // 割り込みを使う
+  delay(100);                                 // 15Hz で落ち着くのを待つ
+  uint8_t src;
+  readRegs(REG_WAKE_UP_SRC, &src, 1);         // ここまでの知らせを消す
+  writeReg(REG_MD1_CFG, 0b00100000);          // ウェイクアップを INT1 へ
+  pinMode(INT1_PIN, INPUT_PULLDOWN_SENSE);    // INT1 が HIGH になったら起きる
   digitalWrite(LED_BUILTIN, HIGH); // LED を消す（この LED は HIGH で消える）
+  digitalWrite(MOTOR_PIN, LOW);
   Serial.println("sleep");
   delay(100);
   sd_power_system_off();
@@ -313,7 +346,7 @@ void loop() {
   }
   if (Bluefruit.connected()) lastConnected = now;
   else if (motorOn || buzzLeft) { buzzLeft = 0; buzzRestart = true; } // 切れたら止める
-  else if (AUTO_OFF_MIN > 0 && now - lastConnected >= AUTO_OFF_MIN * 60000UL) sleepNow();
+  else if (AUTO_OFF_MIN > 0 && now - lastConnected >= AUTO_OFF_MIN * 60000UL && now - lastMotion >= AUTO_OFF_MIN * 60000UL) sleepNow();
 
   bool subscribed = Bluefruit.connected() && imuChar.notifyEnabled();
   if (!subscribed) {
