@@ -145,6 +145,15 @@ describe('胸のセンサーで猫背を見る', () => {
     expect(play(d, 70, 90, () => 30, () => false).some((o) => o.cue)).toBe(false) // 止まって前かがみ（ベルトを止めたあと）
   })
 
+  it('胸の値が途切れている間は、止まった値で覚えたり知らせたりしない', () => {
+    const d = setup()
+    play(d, 5, 8, () => 30, () => true) // 走り出してすぐ、猫背の向きのまま切れる
+    const out: { cue: boolean; learned?: number; tilt: number | null }[] = []
+    for (let t = 8 + HUNCH.stale + 0.1; t < 60; t += 0.1) out.push(d.update(t, true)) // 値が来ないまま判定だけ進む（切れて stale 秒あとから）
+    expect(out.every((o) => o.tilt === null && !o.cue && o.learned === undefined)).toBe(true)
+    expect(d.runLean).toBeNull()
+  })
+
   it('一瞬（1.5秒未満）だけ超えたのは知らせない', () => {
     const d = setup()
     play(d, 5, 50, () => 14, () => true)

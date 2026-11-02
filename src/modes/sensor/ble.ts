@@ -16,7 +16,8 @@ const BATTERY = uuid(0xffe2)
 const BUZZ = uuid(0xffe3)
 const DEVICE_INFO = uuid(0x180a)
 const FIRMWARE_REV = uuid(0x2a26)
-const RETRIES = 3 // 走っている途中で切れたとき、押さずにつなぎ直す回数（2秒おき）
+const RETRIES = 3 // 「つなぐ」を押してつなげなかったとき、押さずにやり直す回数（2秒おき）
+const REJOIN_SEC = 3 // 使っている途中で切れたときは、つながるまでこの間隔で押さずにつなぎ直す（走っている途中は押せないため）
 
 // TypeScript の DOM には Web Bluetooth の型がないので、使う分だけ書く
 interface BtChar extends EventTarget {
@@ -229,7 +230,7 @@ class SensorHub {
     device.addEventListener('gattserverdisconnected', () => this.dropped(node))
   }
 
-  private async open(node: Node, tries = 0) {
+  private async open(node: Node, tries = 0, rejoin = false) {
     const gatt = node.device?.gatt
     if (!gatt) return
     node.wanted = true
@@ -271,6 +272,11 @@ class SensorHub {
       this.set(node, 'connected')
       this.tick()
     } catch (e) {
+      if (rejoin && node.wanted) {
+        this.set(node, 'lost', `切れました。つなぎ直しています（${tries + 1}回目）`)
+        setTimeout(() => void this.open(node, tries + 1, true), REJOIN_SEC * 1000)
+        return
+      }
       if (tries + 1 < RETRIES && node.wanted) {
         setTimeout(() => void this.open(node, tries + 1), 2000)
         return
@@ -282,8 +288,9 @@ class SensorHub {
   private dropped(node: Node) {
     if (node.status !== 'connected') return
     this.set(node, 'lost')
-    // 走っている途中は押せないので、何回かは押さずにつなぎ直す（選んだあとの connect は、押さなくても呼べる）
-    if (node.wanted) setTimeout(() => void this.open(node, 0), 2000)
+    // 走っている途中は押せないので、つながるまで押さずにつなぎ直す（選んだあとの connect は、押さなくても呼べる）
+    // 2026-11-02 の走りで、胸が途中で切れて3回のやり直しで戻らず、そのあと猫背を見られなかった
+    if (node.wanted) setTimeout(() => void this.open(node, 0, true), REJOIN_SEC * 1000)
   }
 
   private packet(node: Node, v: DataView | undefined) {

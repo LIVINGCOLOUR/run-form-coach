@@ -11,6 +11,8 @@ export class SensorSession {
   private rec: SensorRecorder | null = null
   private hunch = new HunchDetector()
   private off: () => void
+  private offStatus: () => void
+  private connected: boolean[]
   private chest = SLOTS.findIndex((s) => s.place === CHEST)
   private onEvent: (t: number, text: string) => void
 
@@ -21,6 +23,16 @@ export class SensorSession {
       this.rec ??= new SensorRecorder(SLOTS.map((s) => ({ place: s.place, name: s.name ?? '' })))
       this.rec.add(node, t, p.range, p.samples)
       if (node === this.chest) for (const s of p.samples) this.hunch.sample(t, s.a)
+    })
+    // 切れた・戻ったも events に残す（あとで記録を読むとき、値が途切れた理由がわかるように）
+    this.connected = sensors.snapshot().map((v) => v.status === 'connected')
+    this.offStatus = sensors.subscribe(() => {
+      const t = performance.now() / 1000
+      sensors.snapshot().forEach((v, i) => {
+        const now = v.status === 'connected'
+        if (now !== this.connected[i]) this.onEvent(t, `sensor:${now ? 'back' : 'lost'} ${v.place}`)
+        this.connected[i] = now
+      })
     })
   }
 
@@ -50,6 +62,7 @@ export class SensorSession {
   // 走り終わり：記録をまとめて返す（値が1つも届かなかったら undefined）
   finish(): SensorLog | undefined {
     this.off()
+    this.offStatus()
     if (!this.rec) return undefined
     this.rec.finish()
     const views = sensors.snapshot()

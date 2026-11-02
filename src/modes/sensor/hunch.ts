@@ -27,6 +27,7 @@ export class HunchDetector {
   private runSec = 0 // 走った時間（秒）
   private tilts: number[] = []
   private lastT: number | null = null
+  private lastSample = -Infinity // 最後に胸の値が届いた t
   private overSince: number | null = null
   private lastCue = -Infinity
   private readonly p: typeof HUNCH
@@ -39,6 +40,7 @@ export class HunchDetector {
 
   sample(t: number, a: Vec3) {
     const k = this.p.ema
+    this.lastSample = t
     this.lp = this.lp === null ? [...a] : [this.lp[0] * (1 - k) + a[0] * k, this.lp[1] * (1 - k) + a[1] * k, this.lp[2] * (1 - k) + a[2] * k]
     this.recent.push({ t, a })
     while (this.recent.length && t - this.recent[0].t > this.keep) this.recent.shift()
@@ -72,7 +74,7 @@ export class HunchDetector {
   update(t: number, running: boolean): HunchStep {
     const dt = this.lastT === null ? 0 : Math.max(0, Math.min(1, t - this.lastT))
     this.lastT = t
-    const tilt = this.tilt()
+    const tilt = t - this.lastSample > this.p.stale ? null : this.tilt()
     const out: HunchStep = { tilt, cue: false }
     if (!running || tilt === null) {
       this.overSince = null
