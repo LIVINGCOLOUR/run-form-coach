@@ -77,8 +77,11 @@ export class SensorRecorder {
     for (let i = 0; i < this.open.length && this.log.cappedAt === undefined; i++) this.flush(i)
   }
 
-  cue(t: number, tilt: number, buzzed: boolean) {
-    this.log.cues.push([Math.round(t * 100) / 100, Math.round(tilt * 10) / 10, buzzed ? 1 : 0])
+  // 知らせた記録。part：胸（猫背）か頭（前に出る）
+  cue(t: number, tilt: number, buzzed: boolean, part: 'chest' | 'head' = 'chest') {
+    const c: [number, number, number] = [Math.round(t * 100) / 100, Math.round(tilt * 10) / 10, buzzed ? 1 : 0]
+    if (part === 'head') (this.log.head ??= { cues: [] }).cues.push(c)
+    else this.log.cues.push(c)
   }
 }
 

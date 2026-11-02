@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { parseBattery, parsePacket, type Vec3 } from './parse'
-import { HunchDetector } from './hunch'
+import { LeanDetector } from './lean'
 import { batteryPercent } from './battery'
 import { decodeBlock, SensorRecorder } from './log'
-import { HUNCH, SENSOR_LOG } from './params'
+import { HEAD, HUNCH, SENSOR_LOG } from './params'
 import type { RunLog } from '../../core/types'
 
 // 自作のセンサー：通知のパーサ（hardware/sensor/viewer/test_parse.mjs と同じ例）、猫背の見分け、記録の詰め方
@@ -85,15 +85,18 @@ describe('センサーの通知を読む', () => {
   })
 })
 
-// 胸の向き：立った姿勢（重力が z）から、前へ deg 度傾けた加速度（g）
-const lean = (deg: number): Vec3 => [Math.sin((deg * Math.PI) / 180), 0, Math.cos((deg * Math.PI) / 180)]
+// 胸の向き：立った姿勢（重力が z）から、前（x）へ deg 度、横（y）へ side 度傾けた加速度（g）
+const lean = (deg: number, side = 0): Vec3 => {
+  const r = Math.PI / 180
+  return [Math.sin(deg * r) * Math.cos(side * r), Math.sin(side * r), Math.cos(deg * r) * Math.cos(side * r)]
+}
 
 // 100Hz で胸の値を流し、0.1秒ごとに判定する。tiltAt(秒) → 傾き、runAt(秒) → 走っているか
-function play(d: HunchDetector, from: number, to: number, tiltAt: (t: number) => number, runAt: (t: number) => boolean) {
-  const out: { t: number; cue: boolean; learned?: number; tilt: number | null }[] = []
+function play(d: LeanDetector, from: number, to: number, tiltAt: (t: number) => number, runAt: (t: number) => boolean, sideAt: (t: number) => number = () => 0) {
+  const out: { t: number; cue: boolean; learned?: number; tilt: number | null; ref?: number | null }[] = []
   for (let i = Math.round(from * 100); i < Math.round(to * 100); i++) {
     const t = i / 100
-    d.sample(t, lean(tiltAt(t)))
+    d.sample(t, lean(tiltAt(t), sideAt(t)))
     if (i % 10 === 0) out.push({ t, ...d.update(t, runAt(t)) })
   }
   return out
@@ -101,15 +104,15 @@ function play(d: HunchDetector, from: number, to: number, tiltAt: (t: number) =>
 
 describe('胸のセンサーで猫背を見る', () => {
   // 立つ（0〜5秒）→ 基準 → 走る（ふつう 14°）。走る前傾を覚えたあと、猫背 27° にする
-  const setup = () => {
-    const d = new HunchDetector()
+  const setup = (p = HUNCH) => {
+    const d = new LeanDetector(p)
     play(d, 0, 5, () => 0, () => false)
     expect(d.stand(5, 3)).toBe(true)
     return d
   }
 
   it('立った姿勢を覚える前と、値が足りないときは知らせない', () => {
-    const d = new HunchDetector()
+    const d = new LeanDetector(HUNCH)
     const out = play(d, 0, 60, () => 30, () => true)
     expect(out.every((o) => !o.cue && o.tilt === null)).toBe(true)
     expect(d.stand(60, 0.5)).toBe(false) // 0.5秒（50件）では足りない
@@ -160,6 +163,72 @@ describe('胸のセンサーで猫背を見る', () => {
     play(d, 5, 50, () => 14, () => true)
     const out = play(d, 50, 70, (t) => (Math.floor(t) % 3 === 0 ? 40 : 14), () => true)
     expect(out.some((o) => o.cue)).toBe(false)
+  })
+  // ベルトの上でセンサーが少しずつずれる（2026-11-02 の走り：3分半で約15°）。基準をゆっくり寄せて、鳴らさない
+  it('ゆっくりのずれ（3分半で +21°）では知らせない。寄せないと鳴り続ける', () => {
+    const drift = (t: number) => (t < 50 ? 14 : 14 + (t - 50) * 0.1)
+    const d = setup()
+    play(d, 5, 50, () => 14, () => true)
+    const out = play(d, 50, 260, drift, () => true)
+    expect(out.some((o) => o.cue)).toBe(false)
+    expect(out[out.length - 1].ref!).toBeGreaterThan(28) // 基準がずれについていった
+    const fixed = setup({ ...HUNCH, follow: 0 })
+    play(fixed, 5, 50, () => 14, () => true)
+    expect(play(fixed, 50, 260, drift, () => true).filter((o) => o.cue).length).toBeGreaterThan(10)
+  })
+
+  it('ずれたあとでも、数秒で 12° 前に傾けば知らせる', () => {
+    const d = setup()
+    play(d, 5, 50, () => 14, () => true)
+    play(d, 50, 260, (t) => 14 + (t - 50) * 0.1, () => true) // 35° までずれる
+    const out = play(d, 260, 290, (t) => 35 + Math.min(12, (t - 260) * 4), () => true) // 3秒で +12°
+    const cues = out.filter((o) => o.cue)
+    expect(cues.length).toBeGreaterThanOrEqual(5) // 超えている間は基準を動かさないので、知らせ続ける
+    expect(cues[0].t).toBeLessThan(266)
+  })
+
+  // 寄せることの代わり：ゆっくり進む猫背（疲れて少しずつ丸まる）は吸ってしまう。follow 60秒・margin 8° で、+12° なら約50秒より速く進めば知らせる
+  it('+12° の猫背：30秒で進めば知らせ、3分かけて進めば知らせない', () => {
+    for (const [sec, want] of [[30, true], [180, false]] as const) {
+      const d = setup()
+      play(d, 5, 50, () => 14, () => true)
+      const out = play(d, 50, 50 + sec + 20, (t) => 14 + Math.min(12, ((t - 50) * 12) / sec), () => true)
+      expect(out.some((o) => o.cue)).toBe(want)
+    }
+  })
+
+  it('横に傾いただけ（前への傾きは同じ）では知らせない', () => {
+    const d = setup()
+    play(d, 5, 50, () => 14, () => true)
+    expect(d.fwd).not.toBeNull()
+    const out = play(d, 50, 70, () => 14, () => true, () => 20)
+    expect(out.some((o) => o.cue)).toBe(false)
+    expect(out[out.length - 1].tilt!).toBeCloseTo(14, 0)
+  })
+})
+
+describe('頭のセンサーで、頭が前に出たのを見る', () => {
+  const setup = () => {
+    const d = new LeanDetector(HEAD)
+    play(d, 0, 5, () => 0, () => false)
+    expect(d.stand(5, 3)).toBe(true)
+    play(d, 5, 50, () => 6, () => true) // 走る前傾 6°（頭はほとんど前に傾かない）
+    expect(d.runLean!).toBeCloseTo(6, 0)
+    return d
+  }
+
+  it('頭が前に出る（+20°）と知らせ、戻れば止まる。線のすぐ下（+13°）では知らせない', () => {
+    const d = setup()
+    const out = play(d, 50, 80, (t) => (t < 65 ? 26 : 6), () => true)
+    const cues = out.filter((o) => o.cue).map((o) => o.t)
+    expect(cues.length).toBe(4) // 約51.5秒から 4秒ごと、65秒まで
+    expect(cues[cues.length - 1]).toBeLessThan(66)
+    expect(play(d, 80, 110, () => 6 + HEAD.margin - 1, () => true).some((o) => o.cue)).toBe(false)
+  })
+
+  it('うしろへ傾いた（上を向いた）のは知らせない', () => {
+    const d = setup()
+    expect(play(d, 50, 70, () => -20, () => true).some((o) => o.cue)).toBe(false)
   })
 })
 
@@ -213,6 +282,20 @@ describe('センサーの記録', () => {
   it('30分・5個の大きさが上限に収まる', () => {
     const perSec = 5 * (100 / SENSOR_LOG.stride) * 14 + 5 * 7 // 1秒ぶんのバイト（ブロックの頭を足す）
     expect(Math.ceil((perSec * 1800 * 4) / 3)).toBeLessThan(SENSOR_LOG.maxChars)
+  })
+
+  it('頭で知らせた記録は head に、胸は前と同じ cues に入る', () => {
+    const r = new SensorRecorder([{ place: '頭', name: 'RFC-IMU-1' }])
+    r.cue(30, 27.34, true)
+    r.cue(31, 22.06, false, 'head')
+    expect(r.log.cues).toEqual([[30, 27.3, 1]])
+    expect(r.log.head?.cues).toEqual([[31, 22.1, 0]])
+  })
+
+  it('頭を見る前の記録（head がない）も、そのまま読める', () => {
+    const old = JSON.parse('{"version":1,"nodes":[],"stride":2,"blocks":[],"cues":[[1,30,1]],"runLean":{"t":1,"deg":20}}') as NonNullable<RunLog['sensors']>
+    expect(old.head?.cues ?? []).toEqual([])
+    expect(old.cues.length).toBe(1)
   })
 
   it('センサーのない古い記録も、そのまま読める', () => {

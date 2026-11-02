@@ -3,8 +3,9 @@
 //   ファイル名だけなら RFC_RUNS_DIR（既定 ~/Developer/research-data/runs/）から読む
 //   --win：まとめる窓の長さ（既定 5秒）。--json：決めた線と一致率を JSON に書く（リポジトリの中には書かない）
 // 出すもの（走っていた間＝カメラの段階が run で、歩数で走っていたコマだけ）：
-//   1. センサーごとの取れ方（最初と最後の時刻、2秒より長い切れ目、sensor: のできごと、遅れ）
-//   2. 頭：頭のセンサーの、立った姿勢（カメラが直立の基準を取った phase:baseline → phase:run）からの傾き と、カメラの首の角度・頭の位置・顎・スマホの傾き
+//   1. センサーごとの取れ方（最初と最後の時刻、2秒より長い切れ目、sensor: のできごと、アプリが知らせた回数、遅れ）
+//   知らせ方そのもの（基準の寄せ方・線・続ける長さ）をアプリと同じ計算で確かめるのは npm run replay:sensor
+//   2. 頭：頭のセンサーの、立った姿勢（アプリが覚えた stand の直前3秒）からの傾き と、カメラの首の角度・頭の位置・顎・スマホの傾き
 //   3. 胸：胸のセンサーの傾き と、カメラの上体（腰→肩）
 //   4. ピッチ：足首のセンサーの自己相関（tools/coach.py と同じ）と、カメラのピッチ
 //   5. 着地：足首の衝撃の山（左右）と、カメラの着地の山（landing.ts の LandingMeter に記録の点を通す）
@@ -46,12 +47,13 @@ writeFileSync(
     `export { decodeBlock } from '${join(root, 'src/modes/sensor/log.ts')}'`,
     `export { LandingMeter } from '${join(root, 'src/modes/camera/landing.ts')}'`,
     `export { FORM } from '${join(root, 'src/modes/camera/params.ts')}'`,
-    `export { HUNCH } from '${join(root, 'src/modes/sensor/params.ts')}'`,
+    `export { HUNCH, HEAD } from '${join(root, 'src/modes/sensor/params.ts')}'`,
+    `export { BASELINE } from '${join(root, 'src/modes/camera/params.ts')}'`,
   ].join('\n'),
 )
 const bundle = join(tmp, 'sensor-camera.mjs')
 await build({ input: entry, platform: 'node', logLevel: 'warn', output: { file: bundle, format: 'esm' } })
-const { decodeBlock, LandingMeter, FORM, HUNCH } = await import(pathToFileURL(bundle).href)
+const { decodeBlock, LandingMeter, FORM, HUNCH, HEAD, BASELINE } = await import(pathToFileURL(bundle).href)
 
 const { log } = JSON.parse(readFileSync(path, 'utf8'))
 if (!log?.sensors) {
@@ -94,6 +96,9 @@ for (const n of nodes) {
   out.nodes.push({ place: n.place, name: n.name, n: c.n, first: c.first, last: c.last, runShare: share, gaps: c.gaps, lag: n.lag, lost: n.lost, saturated: sat })
 }
 say(`sensor: のできごと：${sensorEvents.map((e) => `${f1(e[0])} ${e[1]}`).join('、') || 'なし'}`)
+const cueCount = (cs) => `${cs?.length ?? 0} 回${cs?.some((c) => !c[2]) ? `（震わせられなかった ${cs.filter((c) => !c[2]).length}）` : ''}`
+say(`アプリが知らせた回数：胸（猫背）${cueCount(log.sensors.cues)}・頭（前に出る）${log.sensors.head ? cueCount(log.sensors.head.cues) : '-（頭を見る前の記録）'}`)
+out.appCues = { chest: log.sensors.cues?.length ?? 0, head: log.sensors.head?.cues.length ?? null }
 if (log.sensors.cappedAt !== undefined) say(`※ ${f1(log.sensors.cappedAt)} 秒で上限に達し、そのあとの値は残っていない`)
 
 const node = (place) => nodes.find((n) => n.place === place && n.name && n.samples.length)
@@ -113,12 +118,14 @@ const wins = S.windows(spans, WIN)
 const winSecs = (w) => secs.filter((k) => k >= w[0] && k + 1 <= w[1] + 1e-9)
 
 // ---- 頭・胸の傾き ----
-// 立った姿勢：カメラが直立の基準を取った間（phase:baseline → phase:run）の加速度の平均の向き。胸は記録の stand もある
-// 走る前傾：走り出して HUNCH.skip 秒たってから HUNCH.learn 秒の傾きの中央値（hunch.ts と同じ）。margin はそこからの増え
+// 立った姿勢：アプリが覚えたとき（記録の stand。頭は head.stand）の直前 BASELINE.collect 秒の加速度の平均の向き（アプリと同じ）。
+// stand がない古い記録は、カメラが直立の基準を取った間（phase:baseline → phase:run）全部を使う（直立の前に体を動かしていると、ずれる）
+// 走る前傾：走り出して HUNCH.skip 秒たってから HUNCH.learn 秒の傾きの中央値（lean.ts と同じ。ただし lean.ts は前の向きに沿った傾きで、基準をゆっくり寄せる。それは npm run replay:sensor で見る）。margin はそこからの増え
 function tiltPart(place) {
   const n = node(place)
   if (!n) return null
-  const ref = S.gravityDir(n.samples, baseT0 ?? -Infinity, baseT1 ?? -Infinity)
+  const st = (place === '頭' ? log.sensors.head?.stand : undefined) ?? log.sensors.stand
+  const ref = st ? S.gravityDir(n.samples, st.t - BASELINE.collect, st.t) : S.gravityDir(n.samples, baseT0 ?? -Infinity, baseT1 ?? -Infinity)
   if (!ref.dir) return { place, missing: '直立の基準の間に値がない' }
   const grav = S.perSecondGravity(n.samples)
   const runK = [...runSecs].filter((k) => grav.has(k))
@@ -164,7 +171,7 @@ function compareTilt(part, camCols, label, labelName) {
 
 function printTilt(res, camCols) {
   if (!res) return
-  say(`立った姿勢の件数 ${res.standN}・センサーの値がある走った秒 ${res.sensorSecs}・走る前傾（hunch.ts の覚え方）${f1(res.runLean)}°`)
+  say(`立った姿勢の件数 ${res.standN}・センサーの値がある走った秒 ${res.sensorSecs}・走る前傾（lean.ts の覚え方）${f1(res.runLean)}°`)
   say(`秒ごとの相関 r（傾き / 前後の傾き）：` + camCols.map((c) => `${c} ${f2(res.perSecond.tilt[c].r)} / ${f2(res.perSecond.pitch[c].r)}（${res.perSecond.tilt[c].n}秒）`).join('、'))
   say(`${WIN}秒の窓の相関 r（傾き）：` + camCols.map((c) => `${c} ${f2(res.perWindow[c].r)}（${res.perWindow[c].n}窓）`).join('、'))
   const t = res.windows.map((v) => v.tilt)
@@ -220,7 +227,7 @@ else {
   if (log.sensors.runLean) {
     say(`アプリが覚えた走る前傾 ${f1(log.sensors.runLean.deg)}°（${f1(log.sensors.runLean.t)} 秒）`)
     const last = chest.n.samples[chest.n.samples.length - 1].tt
-    // hunch.ts は胸の値が HUNCH.stale 秒より古いと覚えない。覚えた時刻に記録の値がないなら、届いた値が記録に入っていない
+    // lean.ts は胸の値が HUNCH.stale 秒より古いと覚えない。覚えた時刻に記録の値がないなら、届いた値が記録に入っていない
     if (log.sensors.runLean.t > last + 60) say(`※ 記録の胸の値は ${f1(last)} 秒で終わっているのに、アプリはそのあとで走る前傾を覚えている（届いた値が記録に残っていないか、つなぎ直したあとの値）`)
   }
   chestRes = compareTilt(chest, ['trunk', 'body'], (v) => (S.finite(v.trunk) ? v.trunk > T.max : null), `上体 > ${T.max}°（FORM.trunk.max）`)
@@ -346,7 +353,7 @@ const snip = []
 if (headRes?.fit.tilt.pos && headRes.fit.tilt.neg) {
   const f = headRes.fit.tilt
   snip.push(`  // 頭：${out.file} の ${f.n}窓（${WIN}秒）、カメラの答え ${headRes.labelName} の窓 ${f.pos}。見つけた ${pc(f.sens)}・外れなかった ${pc(f.spec)}・一致 ${pc(f.agree)}・AUC ${f2(f.auc)}`)
-  snip.push(`  head: { margin: ${f1(f.threshold - headRes.runLean)} }, // 走る前傾 ${f1(headRes.runLean)}° から。立った姿勢から ${f1(f.threshold)}°`)
+  snip.push(`  head: { margin: ${f1(f.threshold - headRes.runLean)} }, // 走る前傾 ${f1(headRes.runLean)}° から。立った姿勢から ${f1(f.threshold)}°。いまの HEAD.margin は ${HEAD.margin}`)
 }
 if (chestRes?.fit.tilt.pos && chestRes.fit.tilt.neg) {
   const f = chestRes.fit.tilt

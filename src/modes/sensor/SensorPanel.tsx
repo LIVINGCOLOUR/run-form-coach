@@ -1,10 +1,13 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { sensors, type NodeView } from './ble'
 import { batteryPercent } from './battery'
-import { BATTERY_LOW, CHEST, HUNCH } from './params'
+import { BATTERY_LOW, HEAD, HUNCH } from './params'
 
 // 走る前に、自作のセンサーをつなぐ小さな枠（ホームの「はじめる」の下）。つながなくてもカメラ版はいつもどおり使える。
-// 胸のセンサーがつながっていれば、走っている間に猫背になったとき胸が震える（hunch.ts）
+// 胸のセンサーがつながっていれば、走っている間に猫背になったとき胸が、頭のセンサーなら頭が前に出たとき頭が震える（lean.ts）
+// 「震わす」で試せる場所（走っている間に震える場所）
+const TEST_BUZZ = [HUNCH.place, HEAD.place]
+
 export function SensorPanel() {
   const [open, setOpen] = useState(false)
   const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
@@ -41,7 +44,7 @@ export function SensorPanel() {
       ) : (
         <>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。胸がつながっていれば、走っている間に猫背が {HUNCH.hold} 秒続いたとき、胸が震えます。
+            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。走っている間に、猫背が {HUNCH.hold} 秒続くと胸が、頭が前に出たのが {HEAD.hold} 秒続くと頭が震えます（その場所がつながっているとき）。
           </div>
           {low.length > 0 && (
             <div style={{ color: 'var(--warn)', fontSize: 13, fontWeight: 700, lineHeight: 1.6 }}>
@@ -49,7 +52,7 @@ export function SensorPanel() {
             </div>
           )}
           {nodes.map((n, i) => (
-            <Row key={n.place} n={n} onConnect={() => void sensors.connect(i)} onTest={n.place === CHEST ? () => void sensors.buzz(CHEST, 1, 300) : undefined} />
+            <Row key={n.place} n={n} onConnect={() => void sensors.connect(i)} onTest={TEST_BUZZ.includes(n.place) ? () => void sensors.buzz(n.place, 1, 300) : undefined} />
           ))}
         </>
       )}

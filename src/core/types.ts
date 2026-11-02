@@ -153,4 +153,10 @@ export interface SensorLog {
   stand?: { t: number; base: [number, number, number] } // 立った姿勢を覚えた t と、胸の重力の向き
   runLean?: { t: number; deg: number } // 走る前傾を覚えた t と角度（度）
   cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]
+  // 頭が前に出たのを頭のセンサーで見た記録（胸と同じ形）。頭を見る前の記録にはない
+  head?: {
+    stand?: { t: number; base: [number, number, number] }
+    runLean?: { t: number; deg: number }
+    cues: [number, number, number][] // [t, 頭の前への傾き（度）, 震わせられたか 1/0]
+  }
 }

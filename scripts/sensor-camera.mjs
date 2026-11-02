@@ -124,7 +124,7 @@ export function perSecondGravity(samples, min = 20) {
   return out
 }
 
-// 立った姿勢 base からの傾き。tilt：向きによらない角度（hunch.ts と同じ）。
+// 立った姿勢 base からの傾き。tilt：向きによらない角度。
 // pitch：走っている間にいちばん傾いた向き（fwd）に沿った角度（走った秒の平均が正になる側）。side：それと直角の向き
 export function tiltSeries(grav, base, runSecs) {
   const raw = new Map()
