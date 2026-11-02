@@ -18,6 +18,8 @@
 //   通知の中のサンプルは通し番号が1ずつ続いている（k 件目の番号 = 先頭の番号 + k）
 //
 // 電池の電圧は別のキャラクタリスティック 0xFFE2（読み取り＋通知、uint16、ミリボルト）で、10秒ごとに更新する
+// 振動は 0xFFE3 に書く（2バイト：回数 uint8、1回の長さ uint8 × 10ミリ秒）。例：{2, 20} = 0.2秒を2回。回数 0 で止める
+//   モーターの配線は docs/manual-haptic.pdf（D7 → 1kΩ → 2SC1815）。強さは変えられないので、長さと回数で表す
 //
 // センサーの設定と配線は 02_check_lsm6dsv と同じ
 
@@ -43,6 +45,8 @@ constexpr uint32_t SAMPLE_HZ = 100;    // 1秒に測る回数。50 か 100
 constexpr uint32_t MAX_WAIT_MS = 30;   // いちばん古いサンプルがこれだけ待ったら、満杯でなくても送る
 constexpr uint32_t BATTERY_EVERY_MS = 10000; // 電池の電圧を測る間隔
 constexpr uint32_t AUTO_OFF_MIN = 10;  // だれともつながらないまま、これだけたったら眠る（0 なら眠らない）
+constexpr uint8_t MOTOR_PIN = 7;       // D7（振動モーターのトランジスタ）
+constexpr uint32_t BUZZ_GAP_MS = 150;  // 何回か鳴らすときの間
 
 constexpr uint8_t LSM6_ADDR_GND = 0x6A;
 constexpr uint8_t LSM6_ADDR_VCC = 0x6B;
@@ -59,9 +63,13 @@ constexpr uint16_t HEADER_LEN = 7;
 constexpr uint16_t SAMPLE_LEN = 13;
 constexpr uint16_t MAX_PAYLOAD = 244; // MTU 247 - 3
 
+BLEDfu bledfu; // 無線での書き換え（次からは USB につながずに、Mac やスマホから書き込めるように）
+BLEDis bledis; // 機器の情報（0x180A）。受ける側が、どの版のファームかを読めるように
+const char* FW_VERSION = "2026-11-02"; // 振動（0xFFE3）と無線での書き換えを足した版
 BLEService imuService(0xFFE0);
 BLECharacteristic imuChar(0xFFE1);
 BLECharacteristic batChar(0xFFE2);
+BLECharacteristic buzzChar(0xFFE3);
 TaskHandle_t sampleTaskHandle = NULL;
 
 // ---- リングバッファ（測る係が入れ、送る係が出す。係は1人ずつなので鍵は要らない）----
@@ -180,6 +188,40 @@ void sleepNow() {
   sd_power_system_off();
 }
 
+// ---- 振動（loop() で少しずつ進める。止まって待たないので、送る係のじゃまをしない）----
+volatile uint8_t buzzLeft = 0;      // あと何回鳴らすか
+volatile uint32_t buzzOnMs = 0;     // 1回の長さ
+volatile bool buzzRestart = false;  // 新しい頼みが来た
+bool motorOn = false;
+uint32_t buzzNextAt = 0;
+
+void onBuzzWrite(uint16_t conn_hdl, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+  if (len < 2) return;
+  buzzLeft = data[0];
+  buzzOnMs = (uint32_t)data[1] * 10;
+  buzzRestart = true;
+}
+
+void buzzUpdate(uint32_t now) {
+  if (buzzRestart) {
+    buzzRestart = false;
+    motorOn = false;
+    digitalWrite(MOTOR_PIN, LOW);
+    buzzNextAt = now;
+  }
+  if ((int32_t)(now - buzzNextAt) < 0) return;
+  if (motorOn) {
+    motorOn = false;
+    digitalWrite(MOTOR_PIN, LOW);
+    buzzNextAt = now + BUZZ_GAP_MS;
+  } else if (buzzLeft > 0 && buzzOnMs > 0) {
+    buzzLeft--;
+    motorOn = true;
+    digitalWrite(MOTOR_PIN, HIGH);
+    buzzNextAt = now + buzzOnMs;
+  }
+}
+
 void onConnect(uint16_t conn_hdl) {
   BLEConnection* conn = Bluefruit.Connection(conn_hdl);
   if (!conn) return;
@@ -204,6 +246,8 @@ void startAdvertising() {
 void setup() {
   batteryInit(); // P0.14 を LOW にする（上の説明）。ほかのことより先に
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(MOTOR_PIN, OUTPUT);
+  digitalWrite(MOTOR_PIN, LOW);
   Serial.begin(115200); // Mac につないでいなくても動く（シリアルを待たない）
   Wire.begin();
   delay(100);
@@ -220,6 +264,11 @@ void setup() {
   Bluefruit.Periph.setConnInterval(12, 24); // 希望：15〜30ミリ秒（単位 1.25ミリ秒）
   Bluefruit.Periph.setConnectCallback(onConnect);
 
+  bledfu.begin();
+  bledis.setManufacturer("run-form-coach");
+  bledis.setModel("RFC-IMU");
+  bledis.setFirmwareRev(FW_VERSION);
+  bledis.begin();
   imuService.begin();
   imuChar.setProperties(CHR_PROPS_NOTIFY);
   imuChar.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
@@ -231,6 +280,12 @@ void setup() {
   batChar.setFixedLen(2);
   batChar.begin();
   batteryUpdate();
+
+  buzzChar.setProperties(CHR_PROPS_WRITE | CHR_PROPS_WRITE_WO_RESP);
+  buzzChar.setPermission(SECMODE_NO_ACCESS, SECMODE_OPEN);
+  buzzChar.setFixedLen(2);
+  buzzChar.setWriteCallback(onBuzzWrite);
+  buzzChar.begin();
 
   startAdvertising();
   Serial.print("BLE advertising as ");
@@ -251,11 +306,13 @@ void loop() {
   static uint32_t lastBattery = 0;
   static uint32_t lastConnected = 0;
   uint32_t now = millis();
+  buzzUpdate(now);
   if (now - lastBattery >= BATTERY_EVERY_MS) {
     lastBattery = now;
     batteryUpdate();
   }
   if (Bluefruit.connected()) lastConnected = now;
+  else if (motorOn || buzzLeft) { buzzLeft = 0; buzzRestart = true; } // 切れたら止める
   else if (AUTO_OFF_MIN > 0 && now - lastConnected >= AUTO_OFF_MIN * 60000UL) sleepNow();
 
   bool subscribed = Bluefruit.connected() && imuChar.notifyEnabled();

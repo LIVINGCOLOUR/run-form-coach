@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>センサーに振動を足す</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm 18mm 15mm; }
+  :root { --accent: #1f5f8b; --warn: #b3261e; --ok: #1e7b34; --line: #c9d3dc; --soft: #f2f6f9; }
+  body { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; font-size: 10.5pt; line-height: 1.7; color: #1d1d1f; }
+  h1 { font-size: 21pt; margin: 0 0 4px; color: var(--accent); }
+  h2 { font-size: 14.5pt; color: #fff; background: var(--accent); padding: 5px 10px; margin: 24px 0 10px; border-radius: 3px; break-after: avoid; }
+  h3 { font-size: 11.5pt; color: var(--accent); border-bottom: 1.5px solid var(--line); padding-bottom: 2px; margin: 16px 0 6px; break-after: avoid; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 4px 0 8px; padding-left: 22px; }
+  li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 10px; font-size: 9.8pt; break-inside: avoid; }
+  th, td { border: 1px solid var(--line); padding: 4px 7px; vertical-align: top; text-align: left; }
+  th { background: var(--soft); }
+  code, pre { font-family: "SF Mono", Menlo, monospace; font-size: 9pt; }
+  code { background: #eef1f4; padding: 0 3px; border-radius: 2px; }
+  pre { background: #f6f8fa; border: 1px solid var(--line); padding: 8px 10px; white-space: pre-wrap; word-break: break-all; line-height: 1.45; break-inside: avoid; margin: 6px 0 10px; }
+  pre.code { font-size: 7.6pt; break-inside: auto; }
+  .box { border-left: 4px solid var(--accent); background: var(--soft); padding: 6px 12px; margin: 10px 0; break-inside: avoid; }
+  .warn { border-left-color: var(--warn); background: #fdf1f0; }
+  .warn b.t { color: var(--warn); }
+  .ok { border-left-color: var(--ok); background: #eff8f1; }
+  .ok b.t { color: var(--ok); }
+  .plan { border-left-color: #8a6d00; background: #fbf6e6; }
+  .plan b.t { color: #8a6d00; }
+  .sub { color: #555; font-size: 10pt; }
+  .cover { border-bottom: 3px solid var(--accent); padding-bottom: 10px; margin-bottom: 12px; }
+  .meta { color: #555; font-size: 9.5pt; }
+  .flow { display: flex; gap: 4px; flex-wrap: nowrap; margin: 8px 0; }
+  .flow div { flex: 1 1 0; min-width: 0; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 6px; font-size: 9pt; text-align: center; }
+  .flow b { display: block; color: var(--accent); font-size: 10pt; }
+  .page-break { break-before: page; }
+  svg text { font-family: "Hiragino Sans", sans-serif; }
+  .small { font-size: 9pt; }
+  .fig { break-inside: avoid; margin: 8px 0 10px; }
+  .fig svg { display: block; margin: 0 auto; }
+  .cap { font-size: 9pt; text-align: center; color: #333; margin-top: 2px; }
+  .tbc { color: var(--warn); font-weight: bold; }
+  table.chk td, table.chk th { text-align: center; }
+  table.chk td:first-child, table.chk th:first-child { text-align: left; }
+  table.chk td { font-size: 13pt; padding: 2px 4px; }
+  table.chk td:first-child { font-size: 9.8pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>センサーに振動を足す（6個まとめて）</h1>
+  <div class="sub">今のノード（XIAO をセンサー基板の上に重ねた形）の肌側に、振動モーターと電池スイッチを載せた子基板を重ね、センサーの INT1 を XIAO につなぐ</div>
+  <div class="meta">2026年10月23日版　／　ファイル一式：<code>~/Developer/run-form-coach/hardware/sensor/</code></div>
+</div>
+
+<div class="box"><b>前提</b>：写真の形のノードが6個（1〜6番）ある（前の手順書 <code>docs/manual.pdf</code> の「2個目からの作り方」）。XIAO がセンサー基板の上に重なり、青・黄が D4・D5 から SDA・SCL へ、赤・黒が XIAO の 3V3・GND からセンサーの 3V3・GND へつながっている。</div>
+
+<div class="flow">
+  <div><b>工程1</b>モーター6個に線<br>3V3 で感じる</div>
+  <div><b>工程2</b>子基板を<br>6枚組む</div>
+  <div><b>工程3</b>ノードに<br>INT1 と線</div>
+  <div><b>工程4</b>04 で3回<br>・トンで鳴る</div>
+  <div><b>工程5</b>03_ble_imu<br>を書き直す</div>
+  <div><b>工程6</b>電池と<br>スイッチ</div>
+  <div><b>工程7</b>重ねて<br>体に付ける</div>
+</div>
+<p class="small">工程1〜3は6個まとめて、工程4〜7は1個ずつ。済んだら最後のチェック表に印を付けます。</p>
+
+<h2>1. 決めたこと</h2>
+<table>
+  <tr><th style="width:22%">項目</th><th>決めたこと（理由）</th></tr>
+  <tr><td>子基板</td><td>Fタイプ基板を<b>切らずに縦長</b>（横6×縦8穴、18×23.5 mm）で使う。ノード（17×24.5 mm）とほぼ同じ大きさなので、ノードの肌側にそのまま重ねられる。穴は左から A〜F、上から 1〜8 と呼ぶ</td></tr>
+  <tr><td>表（部品の面）</td><td>ユーザーが並べた形のまま：左のふちにスライドスイッチ（横に寝かせ、つまみを左の外へ）、上の段に 10µF、その下に 2SC1815、中ほどに 1kΩ</td></tr>
+  <tr><td>裏（はんだの面）</td><td><b>モーターを貼る</b>（下の部分）。肌側をモーターだけにし、部品とスイッチを外（ノードの側）に向けるため。モーターの下になる穴には何も挿さず、近くの足は短く切って、平らに貼る</td></tr>
+  <tr><td>スイッチ</td><td>SS12D01G4 を表の左のふちに横向きに寝かせ、足を直角に曲げて B2・B3・B4 に挿す。つまみは基板とノードの外形より外に出し、<b>横から指でつまんで動かす</b>。裏に付けると、つまみが肌の側を向いてしまう</td></tr>
+  <tr><td>モーターを鳴らすピン</td><td><b>XIAO D7</b>（3V3・GND と同じ列の奥の角。隣の D8 は使っていない）</td></tr>
+  <tr><td>3V3・GND の取り口</td><td><b>センサー基板の 3V3・GND の穴の裏（部品の面）</b>。子基板のすぐ上に来る面なので線が短い。XIAO の角の接点にはもう赤・黒が付いている</td></tr>
+  <tr><td>INT1</td><td>センサーの INT1 の穴（XIAO の下）→ <b>XIAO D1</b>。センサーの部品の面から付けて、ふちを回す</td></tr>
+  <tr><td>電池</td><td>電池の赤 → スイッチの真ん中の足（B3）→ 端の足（B2）→ XIAO の BAT+。黒はそのまま BAT−。電池はノードの横（USB の側）に置く</td></tr>
+  <tr><td>重ね方</td><td>肌の側から <b>モーター → 子基板 → ノード（センサー → XIAO）</b>。XIAO の部品の面が外</td></tr>
+</table>
+
+<h2>2. 回路図</h2>
+<div class="fig">
+<svg viewBox="0 0 680 330" width="100%" style="max-width:660px">
+  <rect x="40" y="30" width="150" height="240" rx="8" fill="#e9f0f6" stroke="#1f5f8b" stroke-width="2"/>
+  <text x="115" y="150" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f5f8b">ノード</text>
+  <text x="115" y="166" font-size="9.5" text-anchor="middle" fill="#1f5f8b">XIAO ＋ センサー</text>
+  <g font-size="9.5" font-weight="bold">
+    <text x="184" y="54" text-anchor="end">センサー 3V3 の穴</text>
+    <text x="184" y="114" text-anchor="end">センサー GND の穴</text>
+    <text x="184" y="174" text-anchor="end">XIAO D7</text>
+    <text x="184" y="234" text-anchor="end">XIAO BAT+（裏）</text>
+    <text x="184" y="262" text-anchor="end">XIAO BAT−（裏）</text>
+  </g>
+  <rect x="200" y="14" width="330" height="236" rx="6" fill="none" stroke="#888" stroke-dasharray="6,4"/>
+  <text x="525" y="30" font-size="10" text-anchor="end" fill="#555">子基板（点線の中）</text>
+  <line x1="190" y1="50" x2="460" y2="50" stroke="#000" stroke-width="3"/>
+  <text x="212" y="44" font-size="10">3V3（F1）</text>
+  <circle cx="330" cy="50" r="3.5" fill="#000"/>
+  <line x1="330" y1="50" x2="330" y2="77" stroke="#000" stroke-width="2"/>
+  <circle cx="330" cy="95" r="18" fill="#fff" stroke="#000" stroke-width="2"/>
+  <text x="330" y="100" font-size="14" font-weight="bold" text-anchor="middle">M</text>
+  <text x="342" y="74" font-size="10" font-weight="bold">＋（赤）F8</text>
+  <text x="342" y="126" font-size="10" font-weight="bold">−（黒）F6</text>
+  <text x="356" y="98" font-size="9">モーター（裏）</text>
+  <line x1="330" y1="113" x2="330" y2="150" stroke="#000" stroke-width="2"/>
+  <circle cx="322" cy="170" r="20" fill="#fff" stroke="#000" stroke-width="1.5"/>
+  <line x1="314" y1="157" x2="314" y2="183" stroke="#000" stroke-width="3"/>
+  <line x1="314" y1="164" x2="330" y2="150" stroke="#000" stroke-width="2"/>
+  <line x1="314" y1="176" x2="330" y2="190" stroke="#000" stroke-width="2"/>
+  <polygon points="330,190 320,188 326,181" fill="#000"/>
+  <text x="338" y="152" font-size="10">C（D3）</text>
+  <text x="338" y="202" font-size="10">E（C3）</text>
+  <text x="300" y="162" font-size="10" text-anchor="end">B（E3）</text>
+  <text x="352" y="176" font-size="10" font-weight="bold">2SC1815-GR</text>
+  <line x1="330" y1="190" x2="330" y2="215" stroke="#000" stroke-width="2"/>
+  <line x1="190" y1="110" x2="210" y2="110" stroke="#000" stroke-width="2"/>
+  <line x1="210" y1="110" x2="210" y2="215" stroke="#000" stroke-width="2"/>
+  <line x1="210" y1="215" x2="460" y2="215" stroke="#000" stroke-width="2"/>
+  <text x="372" y="230" font-size="10">GND（C1・B1）</text>
+  <line x1="190" y1="170" x2="228" y2="170" stroke="#000" stroke-width="2"/>
+  <polyline points="228,170 233,162 241,178 249,162 257,178 265,162 270,170" fill="none" stroke="#000" stroke-width="2"/>
+  <line x1="270" y1="170" x2="302" y2="170" stroke="#000" stroke-width="2"/>
+  <text x="250" y="196" font-size="10" text-anchor="middle" font-weight="bold">1kΩ（B5–E5）</text>
+  <circle cx="460" cy="50" r="3.5" fill="#000"/>
+  <line x1="460" y1="50" x2="460" y2="124" stroke="#000" stroke-width="2"/>
+  <line x1="444" y1="124" x2="476" y2="124" stroke="#000" stroke-width="3"/>
+  <line x1="444" y1="132" x2="476" y2="132" stroke="#000" stroke-width="3"/>
+  <line x1="460" y1="132" x2="460" y2="215" stroke="#000" stroke-width="2"/>
+  <circle cx="330" cy="215" r="3.5" fill="#000"/>
+  <circle cx="210" cy="215" r="3.5" fill="#000"/>
+  <text x="482" y="126" font-size="10" font-weight="bold">10µF</text>
+  <text x="482" y="140" font-size="9">（E1 と C1）</text>
+  <!-- switch -->
+  <line x1="190" y1="230" x2="250" y2="230" stroke="#c62828" stroke-width="3"/>
+  <circle cx="254" cy="230" r="4" fill="#fff" stroke="#000" stroke-width="2"/>
+  <line x1="290" y1="242" x2="257" y2="232" stroke="#000" stroke-width="2.5"/>
+  <circle cx="292" cy="242" r="4" fill="#000"/>
+  <circle cx="254" cy="254" r="4" fill="#fff" stroke="#000" stroke-width="2"/>
+  <text x="246" y="226" font-size="9" text-anchor="end">B2</text><text x="300" y="246" font-size="9">B3</text><text x="246" y="266" font-size="9" text-anchor="end">B4</text>
+  <line x1="296" y1="242" x2="600" y2="242" stroke="#c62828" stroke-width="3" stroke-dasharray="10,3,2,3,2,3"/>
+  <text x="300" y="286" font-size="9.5" font-weight="bold">スイッチ SS12D01G4（B3 が真ん中の足）</text>
+  <rect x="600" y="228" width="60" height="60" rx="5" fill="#ddd" stroke="#000" stroke-width="2"/>
+  <text x="630" y="262" font-size="10" text-anchor="middle" font-weight="bold">電池</text>
+  <text x="590" y="238" font-size="11" font-weight="bold">＋</text>
+  <path d="M630,288 L630,305 L180,305 L180,262 L190,262" fill="none" stroke="#000" stroke-width="3" stroke-dasharray="7,4"/>
+  <text x="400" y="320" font-size="9.5">電池の黒 → XIAO BAT−（スイッチを通らない）</text>
+</svg>
+<div class="cap">図1：回路図。（ ）の中は子基板の穴の名前（図2）。D7 が HIGH の間だけモーターが回る。ダイオードは要らない（モーターの中の駆動IC FD216 がコイルを駆動する）。10 µF は、モーターが回り始めるときに 3V3 が下がらないように。INT1 は子基板を通らない。</div>
+</div>
+
+<h2>3. 子基板（切らずに縦長で使う）</h2>
+<div class="fig">
+<svg viewBox="0 0 720 380" width="100%" style="max-width:700px">
+  <text x="148" y="20" font-size="11" font-weight="bold" text-anchor="middle">表（部品の面、ノードの側）</text>
+  <rect x="40" y="40" width="216" height="282" fill="#f3e9c9" stroke="#555" stroke-width="2"/>
+  <g fill="#ddd" stroke="#888" stroke-width="1.5">
+    <circle cx="71.8" cy="74.3" r="10"/><circle cx="102.2" cy="74.3" r="10"/><circle cx="132.7" cy="74.3" r="10"/><circle cx="163.2" cy="74.3" r="10"/><circle cx="193.7" cy="74.3" r="10"/><circle cx="224.2" cy="74.3" r="10"/>
+    <circle cx="71.8" cy="104.8" r="10"/><circle cx="102.2" cy="104.8" r="10"/><circle cx="132.7" cy="104.8" r="10"/><circle cx="163.2" cy="104.8" r="10"/><circle cx="193.7" cy="104.8" r="10"/><circle cx="224.2" cy="104.8" r="10"/>
+    <circle cx="71.8" cy="135.2" r="10"/><circle cx="102.2" cy="135.2" r="10"/><circle cx="132.7" cy="135.2" r="10"/><circle cx="163.2" cy="135.2" r="10"/><circle cx="193.7" cy="135.2" r="10"/><circle cx="224.2" cy="135.2" r="10"/>
+    <circle cx="71.8" cy="165.7" r="10"/><circle cx="102.2" cy="165.7" r="10"/><circle cx="132.7" cy="165.7" r="10"/><circle cx="163.2" cy="165.7" r="10"/><circle cx="193.7" cy="165.7" r="10"/><circle cx="224.2" cy="165.7" r="10"/>
+    <circle cx="71.8" cy="196.2" r="10"/><circle cx="102.2" cy="196.2" r="10"/><circle cx="132.7" cy="196.2" r="10"/><circle cx="163.2" cy="196.2" r="10"/><circle cx="193.7" cy="196.2" r="10"/><circle cx="224.2" cy="196.2" r="10"/>
+    <circle cx="71.8" cy="226.6" r="10"/><circle cx="102.2" cy="226.6" r="10"/><circle cx="132.7" cy="226.6" r="10"/><circle cx="163.2" cy="226.6" r="10"/><circle cx="193.7" cy="226.6" r="10"/><circle cx="224.2" cy="226.6" r="10"/>
+    <circle cx="71.8" cy="257.1" r="10"/><circle cx="102.2" cy="257.1" r="10"/><circle cx="132.7" cy="257.1" r="10"/><circle cx="163.2" cy="257.1" r="10"/><circle cx="193.7" cy="257.1" r="10"/><circle cx="224.2" cy="257.1" r="10"/>
+    <circle cx="71.8" cy="287.6" r="10"/><circle cx="102.2" cy="287.6" r="10"/><circle cx="132.7" cy="287.6" r="10"/><circle cx="163.2" cy="287.6" r="10"/><circle cx="193.7" cy="287.6" r="10"/><circle cx="224.2" cy="287.6" r="10"/>
+  </g>
+  <!-- motor outline (on back) -->
+  <circle cx="132.7" cy="257.1" r="60" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="5,4"/>
+  <rect x="192" y="233" width="48" height="48" rx="4" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="5,4"/>
+  <text x="120" y="262" font-size="9" fill="#555" text-anchor="middle">モーター（裏）</text>
+  <!-- switch lying -->
+  <rect x="48" y="83" width="42" height="105" rx="3" fill="#888" stroke="#000" stroke-width="1.5"/>
+  <rect x="6" y="124" width="42" height="22" rx="2" fill="#222" stroke="#000"/>
+  <text x="69" y="139" font-size="8.5" fill="#fff" text-anchor="middle" transform="rotate(-90 69 136)">スイッチ</text>
+  <text x="26" y="118" font-size="8" text-anchor="middle">つまみ</text>
+  <g stroke="#000" stroke-width="2.5"><line x1="90" y1="104.8" x2="102.2" y2="104.8"/><line x1="90" y1="135.2" x2="102.2" y2="135.2"/><line x1="90" y1="165.7" x2="102.2" y2="165.7"/></g>
+  <!-- C1 -->
+  <rect x="130" y="55" width="67" height="38" rx="8" fill="#5b8fd6" stroke="#000" stroke-width="1.5"/>
+  <text x="163" y="79" font-size="10" text-anchor="middle" fill="#fff">10µF</text>
+  <!-- Q1 -->
+  <path d="M135.6,154 L190.8,154 L190.8,135 Q163,90 135.6,135 Z" fill="#444" stroke="#000" stroke-width="1.5"/>
+  <text x="163" y="148" font-size="8.5" fill="#fff" text-anchor="middle">印字面↓</text>
+  <!-- R1 -->
+  <rect x="110" y="184" width="76" height="24" rx="10" fill="#f6e3c0" stroke="#000" stroke-width="1.5"/>
+  <text x="148" y="200" font-size="9.5" text-anchor="middle">1kΩ</text>
+  <g font-size="10" font-weight="bold" text-anchor="middle">
+    <text x="71.8" y="338">A</text><text x="102.2" y="338">B</text><text x="132.7" y="338">C</text><text x="163.2" y="338">D</text><text x="193.7" y="338">E</text><text x="224.2" y="338">F</text>
+  </g>
+  <g font-size="10" font-weight="bold">
+    <text x="262" y="78">1</text><text x="262" y="109">2</text><text x="262" y="139">3</text><text x="262" y="170">4</text><text x="262" y="200">5</text><text x="262" y="231">6</text><text x="262" y="261">7</text><text x="262" y="292">8</text>
+  </g>
+  <g font-size="8.8">
+    <text x="20" y="356">スイッチ B2・B3・B4（足を直角に曲げる）／ 10µF C1・E1</text>
+    <text x="20" y="369">2SC1815 C3・D3・E3（E・C・B）／ 1kΩ B5・E5 ／ モーターの線 F6・F8</text>
+  </g>
+  <!-- BOTTOM -->
+  <text x="478" y="20" font-size="11" font-weight="bold" text-anchor="middle">裏（はんだの面、肌の側。左右が逆）</text>
+  <rect x="370" y="40" width="216" height="282" fill="#f3e9c9" stroke="#555" stroke-width="2"/>
+  <g fill="#ddd" stroke="#888" stroke-width="1.5">
+    <circle cx="554.2" cy="74.3" r="10"/><circle cx="523.7" cy="74.3" r="10"/><circle cx="493.2" cy="74.3" r="10"/><circle cx="462.7" cy="74.3" r="10"/><circle cx="432.2" cy="74.3" r="10"/><circle cx="401.8" cy="74.3" r="10"/>
+    <circle cx="554.2" cy="104.8" r="10"/><circle cx="523.7" cy="104.8" r="10"/><circle cx="493.2" cy="104.8" r="10"/><circle cx="462.7" cy="104.8" r="10"/><circle cx="432.2" cy="104.8" r="10"/><circle cx="401.8" cy="104.8" r="10"/>
+    <circle cx="554.2" cy="135.2" r="10"/><circle cx="523.7" cy="135.2" r="10"/><circle cx="493.2" cy="135.2" r="10"/><circle cx="462.7" cy="135.2" r="10"/><circle cx="432.2" cy="135.2" r="10"/><circle cx="401.8" cy="135.2" r="10"/>
+    <circle cx="554.2" cy="165.7" r="10"/><circle cx="523.7" cy="165.7" r="10"/><circle cx="493.2" cy="165.7" r="10"/><circle cx="462.7" cy="165.7" r="10"/><circle cx="432.2" cy="165.7" r="10"/><circle cx="401.8" cy="165.7" r="10"/>
+    <circle cx="554.2" cy="196.2" r="10"/><circle cx="523.7" cy="196.2" r="10"/><circle cx="493.2" cy="196.2" r="10"/><circle cx="462.7" cy="196.2" r="10"/><circle cx="432.2" cy="196.2" r="10"/><circle cx="401.8" cy="196.2" r="10"/>
+    <circle cx="554.2" cy="226.6" r="10"/><circle cx="523.7" cy="226.6" r="10"/><circle cx="493.2" cy="226.6" r="10"/><circle cx="462.7" cy="226.6" r="10"/><circle cx="432.2" cy="226.6" r="10"/><circle cx="401.8" cy="226.6" r="10"/>
+    <circle cx="554.2" cy="257.1" r="10"/><circle cx="523.7" cy="257.1" r="10"/><circle cx="493.2" cy="257.1" r="10"/><circle cx="462.7" cy="257.1" r="10"/><circle cx="432.2" cy="257.1" r="10"/><circle cx="401.8" cy="257.1" r="10"/>
+    <circle cx="554.2" cy="287.6" r="10"/><circle cx="523.7" cy="287.6" r="10"/><circle cx="493.2" cy="287.6" r="10"/><circle cx="462.7" cy="287.6" r="10"/><circle cx="432.2" cy="287.6" r="10"/><circle cx="401.8" cy="287.6" r="10"/>
+  </g>
+  <!-- motor on back -->
+  <circle cx="493.2" cy="257.1" r="60" fill="#bbb" fill-opacity="0.75" stroke="#000" stroke-width="2"/>
+  <rect x="386" y="233" width="48" height="48" rx="4" fill="#999" fill-opacity="0.85" stroke="#000" stroke-width="1.5"/>
+  <text x="500" y="262" font-size="11" font-weight="bold" text-anchor="middle">モーター</text>
+  <text x="500" y="276" font-size="8.5" text-anchor="middle">下の穴は空ける</text>
+  <text x="410" y="261" font-size="8" text-anchor="middle">端子</text>
+  <!-- lead stubs -->
+  <g fill="#222">
+    <circle cx="523.7" cy="104.8" r="4.5"/><circle cx="523.7" cy="135.2" r="4.5"/>
+    <circle cx="493.2" cy="74.3" r="4.5"/><circle cx="432.2" cy="74.3" r="4.5"/>
+    <circle cx="493.2" cy="135.2" r="4.5"/><circle cx="462.7" cy="135.2" r="4.5"/><circle cx="432.2" cy="135.2" r="4.5"/>
+    <circle cx="432.2" cy="196.2" r="4.5"/>
+    <circle cx="401.8" cy="226.6" r="4.5"/><circle cx="401.8" cy="287.6" r="4.5"/>
+  </g>
+  <g fill="#999"><circle cx="523.7" cy="165.7" r="3.5"/><circle cx="523.7" cy="196.2" r="3.5"/></g>
+  <!-- bends (bare) -->
+  <line x1="493.2" y1="135.2" x2="493.2" y2="74.3" stroke="#000" stroke-width="4"/>
+  <line x1="493.2" y1="74.3" x2="523.7" y2="74.3" stroke="#000" stroke-width="4"/>
+  <line x1="432.2" y1="74.3" x2="401.8" y2="74.3" stroke="#000" stroke-width="4"/>
+  <!-- B bend with tube -->
+  <line x1="432.2" y1="135.2" x2="432.2" y2="196.2" stroke="#aaa" stroke-width="8"/>
+  <line x1="432.2" y1="135.2" x2="432.2" y2="196.2" stroke="#000" stroke-width="1.8"/>
+  <!-- J1 3V3 -> M+ along edge -->
+  <path d="M401.8,74.3 L380,82 L380,280 L401.8,287.6" fill="none" stroke="#c62828" stroke-width="3"/>
+  <!-- J2 C -> M- -->
+  <path d="M462.7,135.2 L462.7,165.7 L401.8,165.7 L401.8,226.6" fill="none" stroke="#000" stroke-width="2.5" stroke-dasharray="7,4"/>
+  <!-- external wires -->
+  <path d="M523.7,74.3 L523.7,52 L700,52" fill="none" stroke="#000" stroke-width="2.5" stroke-dasharray="6,3"/>
+  <path d="M523.7,104.8 L700,104.8" fill="none" stroke="#c62828" stroke-width="3"/>
+  <path d="M523.7,135.2 L700,135.2" fill="none" stroke="#c62828" stroke-width="3" stroke-dasharray="10,3,2,3,2,3"/>
+  <path d="M401.8,74.3 L401.8,30 L360,30" fill="none" stroke="#c62828" stroke-width="3"/>
+  <g font-size="9" font-weight="bold">
+    <text x="598" y="47">GND → センサー</text>
+    <text x="598" y="99">BAT+ → XIAO 裏</text>
+    <text x="598" y="130">電池の赤</text>
+    <text x="596" y="200">D7 → XIAO D7</text>
+    <text x="596" y="212" font-weight="normal" font-size="8">（B5。表で付ける）</text>
+    <text x="300" y="26">3V3 → センサー</text>
+  </g>
+  <g font-size="8.5" fill="#333">
+    <text x="498" y="96">E の足</text>
+    <text x="438" y="185">B の足（チューブ）</text>
+    <text x="300" y="160" font-size="8.5" fill="#000">C → F6（線）</text>
+    <text x="300" y="300" font-size="8.5" fill="#c62828">3V3 → F8（線）</text>
+  </g>
+  <g font-size="10" font-weight="bold" text-anchor="middle">
+    <text x="554.2" y="338">A</text><text x="523.7" y="338">B</text><text x="493.2" y="338">C</text><text x="462.7" y="338">D</text><text x="432.2" y="338">E</text><text x="401.8" y="338">F</text>
+  </g>
+  <g font-size="8.8">
+    <text x="370" y="356">太線＝部品の足を折って付ける。赤・黒の線＝被覆のある線。</text>
+    <text x="370" y="369">● は足の根元。灰色の ● は根元で短く切る。</text>
+  </g>
+</svg>
+<div class="cap">図2：子基板の穴の配置。左が表、右が裏（裏から見ると A〜F が逆）。点線の丸は裏に貼るモーターの位置。モーターの下（A6〜E8 あたり）の穴は空ける。</div>
+</div>
+
+<h3>写真から変えた点</h3>
+<ul class="small">
+  <li><b>スイッチの足は B 列（B2・B3・B4）</b>：横に寝かせると足が右を向くので、直角に曲げて隣の B 列に挿す。本体は A 列の上に乗り、A2〜A4 の穴は使わない。</li>
+  <li><b>10µF は C1・E1</b>（写真とほぼ同じ）、<b>2SC1815 は C3・D3・E3</b>（<b>平らな印字面を 1kΩ の側（下）へ</b>。写真では 10µF の側を向いているが、それだと E と B が逆になる）、<b>1kΩ は B5〜E5</b>。モーターの縁から離れた穴を選んだ（B5 だけは縁から約 0.7 mm なので、裏の足は根元で切り、D7 の線は表で付ける）。</li>
+  <li><b>モーターは裏</b>。写真の位置（中心 C7、端子は右）のまま裏に貼る。端子の線は、端子のすぐ上と下の <b>F6・F8</b> に通す。</li>
+</ul>
+
+<h3>裏の配線（つなぎ方の要約）</h3>
+<table>
+  <tr><th>つなぐもの</th><th>やり方（裏）</th><th>行き先・外へ出す線</th></tr>
+  <tr><td>GND</td><td>E の足（C3）を C1 まで折る。10µF の C1 の足を B1 まで折る</td><td>B1 → センサーの GND の穴の裏（黒 6 cm）</td></tr>
+  <tr><td>3V3</td><td>10µF の E1 の足を F1 まで折る。F1 → F8 に赤い線（基板のふちの外側を通す）</td><td>F1 → センサーの 3V3 の穴の裏（赤 6 cm）。F8 にモーターの ＋</td></tr>
+  <tr><td>モーター −</td><td>C の足（D3）から F6 へ黒い線（D4 を通って右へ。B の足をまたぐ）</td><td>F6 にモーターの −</td></tr>
+  <tr><td>B（ベース）</td><td>B の足（E3）を E5 まで折る（チューブをかぶせる）</td><td>E5 は 1kΩ の右の足</td></tr>
+  <tr><td>D7</td><td>1kΩ の左の足（B5）。裏は根元で切る</td><td>B5 の表 → XIAO D7（白 6 cm）</td></tr>
+  <tr><td>BAT+</td><td>スイッチの端の足（B2）</td><td>B2 → XIAO の裏の BAT+（赤 6 cm）</td></tr>
+  <tr><td>電池の赤</td><td>スイッチの真ん中の足（B3）</td><td>電池の ＋（工程6）</td></tr>
+  <tr><td>（使わない）</td><td>スイッチの B4。A2〜A4、モーターの下の穴</td><td>—</td></tr>
+</table>
+<p class="small">外へ出す線は、<b>左のふち（B1 GND・B2 BAT+・B3 電池の赤・B5 D7）</b>と<b>右上の角（F1 3V3）</b>に集まる。<b>スイッチの足</b>：足の間 2.5 mm、穴 2.54 mm。3本で 0.08 mm ずれるだけなので、ふつうはそのまま入る。入らないときは端の足を少し曲げる。</p>
+
+<h2 class="page-break">4. ノードへのつなぎ方</h2>
+<div class="fig">
+<svg viewBox="0 0 680 285" width="100%" style="max-width:660px">
+  <text x="190" y="14" font-size="11" font-weight="bold" text-anchor="middle">上から（XIAO の側）。写真と同じ向き</text>
+  <rect x="60" y="40" width="245" height="170" rx="4" fill="#2e7d32" fill-opacity="0.25" stroke="#1e7b34" stroke-width="2"/>
+  <rect x="60" y="36" width="210" height="178" rx="8" fill="#2b2b2b" fill-opacity="0.85" stroke="#000" stroke-width="2"/>
+  <rect x="38" y="100" width="26" height="50" rx="4" fill="#bbb" stroke="#555"/>
+  <text x="51" y="166" font-size="9" text-anchor="middle">USB</text>
+  <text x="165" y="128" font-size="13" font-weight="bold" fill="#fff" text-anchor="middle">XIAO</text>
+  <g fill="#d4a017">
+    <rect x="84" y="36" width="10" height="9"/><rect x="110" y="36" width="10" height="9"/><rect x="135" y="36" width="10" height="9"/><rect x="161" y="36" width="10" height="9"/><rect x="186" y="36" width="10" height="9"/><rect x="211" y="36" width="10" height="9"/><rect x="237" y="36" width="10" height="9"/>
+    <rect x="84" y="205" width="10" height="9"/><rect x="110" y="205" width="10" height="9"/><rect x="135" y="205" width="10" height="9"/><rect x="161" y="205" width="10" height="9"/><rect x="186" y="205" width="10" height="9"/><rect x="211" y="205" width="10" height="9"/><rect x="237" y="205" width="10" height="9"/>
+  </g>
+  <g font-size="8.5" fill="#fff" text-anchor="middle">
+    <text x="89" y="57">5V</text><text x="115" y="57">GND</text><text x="140" y="57">3V3</text><text x="166" y="57">D10</text><text x="191" y="57">D9</text><text x="216" y="57">D8</text><text x="242" y="57" font-weight="bold">D7</text>
+    <text x="89" y="200">D0</text><text x="115" y="200" font-weight="bold">D1</text><text x="140" y="200">D2</text><text x="166" y="200">D3</text><text x="191" y="200">D4</text><text x="216" y="200">D5</text><text x="242" y="200">D6</text>
+  </g>
+  <g fill="#fff" stroke="#1e7b34" stroke-width="2"><circle cx="284" cy="62" r="6"/><circle cx="258.7" cy="62" r="6"/><circle cx="284" cy="188" r="6"/><circle cx="258.7" cy="188" r="6"/></g>
+  <circle cx="131.7" cy="62" r="7" fill="none" stroke="#9f9" stroke-width="2" stroke-dasharray="3,2"/>
+  <text x="131.7" y="80" font-size="8.5" fill="#9f9" text-anchor="middle">INT1（この下）</text>
+  <g font-size="8.5" fill="#1e7b34" font-weight="bold" text-anchor="middle"><text x="294" y="30">3V3</text><text x="262" y="30">GND</text></g>
+  <path d="M140,36 C150,10 270,10 284,56" fill="none" stroke="#999" stroke-width="2.5"/>
+  <path d="M115,36 C125,18 245,18 258.7,56" fill="none" stroke="#999" stroke-width="2.5"/>
+  <path d="M242,36 C250,26 300,26 330,40 L400,40" fill="none" stroke="#000" stroke-width="2.5" stroke-dasharray="2,3"/>
+  <text x="404" y="44" font-size="10" font-weight="bold">D7（点線）→ 子基板 B5</text>
+  <path d="M115,214 L115,236 L180,236" fill="none" stroke="#000" stroke-width="2.5" stroke-dasharray="8,3,2,3"/>
+  <text x="186" y="240" font-size="10" font-weight="bold">INT1 の線（下から回してくる）→ D1</text>
+  <g font-size="9.5">
+    <text x="404" y="74">灰色＝今ある赤・黒</text>
+    <text x="404" y="90">（XIAO 3V3・GND → センサー 3V3・GND）</text>
+    <text x="404" y="106">青・黄（D4・D5 → SDA・SCL）は省略</text>
+    <text x="404" y="132">D7 は奥の列、USB の反対の角。</text>
+    <text x="404" y="148">隣の D8 にはんだを渡さない</text>
+    <text x="404" y="172">D1 は手前の列、USB から2番目。</text>
+    <text x="404" y="188">隣の D0・D2 にはんだを渡さない</text>
+  </g>
+  <text x="60" y="270" font-size="9">位置は目安。XIAO とセンサーのずれは個体ごとに少し違う</text>
+</svg>
+<div class="cap">図4：上から。D7 と D1 は XIAO のふちの半円の接点に、青・黄と同じ付け方で付ける。</div>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 680 290" width="100%" style="max-width:660px">
+  <text x="190" y="14" font-size="11" font-weight="bold" text-anchor="middle">下から（センサーの部品の面。左右が逆）</text>
+  <rect x="60" y="40" width="245" height="170" rx="4" fill="#2e7d32" fill-opacity="0.25" stroke="#1e7b34" stroke-width="2"/>
+  <rect x="160" y="110" width="30" height="30" fill="#111"/>
+  <text x="175" y="156" font-size="8.5" text-anchor="middle">IC</text>
+  <g fill="#fff" stroke="#1e7b34" stroke-width="2">
+    <circle cx="80.9" cy="62" r="7"/><circle cx="106.3" cy="62" r="7"/><circle cx="131.7" cy="62" r="7"/>
+    <circle cx="233.3" cy="62" r="7"/><circle cx="258.7" cy="62" r="7"/><circle cx="284.1" cy="62" r="7"/>
+    <circle cx="80.9" cy="188" r="7"/><circle cx="106.3" cy="188" r="7"/><circle cx="131.7" cy="188" r="7"/>
+    <circle cx="233.3" cy="188" r="7"/><circle cx="258.7" cy="188" r="7"/><circle cx="284.1" cy="188" r="7"/>
+  </g>
+  <g font-size="8.5" font-weight="bold" fill="#1e7b34" text-anchor="middle">
+    <text x="80.9" y="84">3V3</text><text x="106.3" y="84">GND</text><text x="131.7" y="84">INT2</text>
+    <text x="233.3" y="84">INT1</text><text x="258.7" y="84">SCX</text><text x="284.1" y="84">SDX</text>
+    <text x="233.3" y="178">SCL</text><text x="258.7" y="178">SDA</text>
+  </g>
+  <rect x="330" y="200" width="60" height="70" rx="3" fill="#f3e9c9" stroke="#555" stroke-width="2"/>
+  <text x="360" y="232" font-size="10" font-weight="bold" text-anchor="middle">子基板</text>
+  <text x="360" y="246" font-size="8.5" text-anchor="middle">（ノードの下）</text>
+  <path d="M80.9,62 L80.9,24 L420,24 L420,215 L390,215" fill="none" stroke="#000" stroke-width="3"/>
+  <path d="M106.3,62 L106.3,32 L410,32 L410,228 L390,228" fill="none" stroke="#000" stroke-width="2.5" stroke-dasharray="6,3"/>
+  <path d="M233.3,62 L233.3,120 L250,120 L250,240" fill="none" stroke="#000" stroke-width="2.5" stroke-dasharray="8,3,2,3"/>
+  <text x="200" y="256" font-size="9.5" font-weight="bold" text-anchor="end">INT1 → 手前のふちを回して表の D1 へ</text>
+  <g font-size="9.5">
+    <text x="430" y="60" font-weight="bold">3V3（赤・太線）：</text>
+    <text x="430" y="75">センサーの 3V3 の穴の裏の</text>
+    <text x="430" y="90">ランドに付け、子基板 F1 へ</text>
+    <text x="430" y="114" font-weight="bold">GND（黒・破線）：</text>
+    <text x="430" y="129">GND の穴の裏 → 子基板 B1</text>
+    <text x="430" y="153" font-weight="bold">INT1（緑・一点鎖線）：</text>
+    <text x="430" y="168">INT1 の穴の裏に付け、</text>
+    <text x="430" y="183">部品の面に沿わせてテープで</text>
+    <text x="430" y="198">押さえ、手前のふちから表へ</text>
+  </g>
+  <text x="60" y="284" font-size="9">今の赤・黒は穴の表側で付いているので、裏の丸いランドに重ねて付けられる。INT1 の穴は XIAO の下なので裏からしか届かない</text>
+</svg>
+<div class="cap">図5：下から（センサーの部品の面）。3V3・GND・INT1 の3本は、センサーの穴の裏の丸いランドに付ける。</div>
+</div>
+<p class="small"><b>INT1 の穴の見分け方</b>：赤・黒が付いている3つ穴の組が「3V3・GND・INT2」。同じ列のもう一方の3つ穴の組（XIAO の下）が「INT1・SCX・SDX」で、<b>INT1 はその組の、基板の真ん中に近いほう</b>（INT2 から約 10 mm）。部品の面の印字「INT1」で必ず確かめる。</p>
+
+<h3>4-1. 電池とスイッチ</h3>
+<div class="fig">
+<svg viewBox="0 0 680 230" width="100%" style="max-width:640px">
+  <rect x="20" y="70" width="120" height="60" rx="6" fill="#ddd" stroke="#000" stroke-width="2"/>
+  <text x="80" y="104" font-size="12" font-weight="bold" text-anchor="middle">電池</text>
+  <text x="146" y="78" font-size="11" font-weight="bold">＋</text>
+  <text x="146" y="134" font-size="11" font-weight="bold">−</text>
+  <rect x="260" y="40" width="130" height="90" rx="6" fill="#f3e9c9" stroke="#555" stroke-width="2"/>
+  <text x="325" y="56" font-size="10" font-weight="bold" text-anchor="middle">子基板のスイッチ</text>
+  <text x="325" y="70" font-size="9" text-anchor="middle">（B3＝真ん中の足）</text>
+  <circle cx="290" cy="100" r="6" fill="#fff" stroke="#000" stroke-width="2"/>
+  <circle cx="325" cy="100" r="6" fill="#000"/>
+  <circle cx="360" cy="100" r="6" fill="#fff" stroke="#000" stroke-width="2"/>
+  <line x1="325" y1="100" x2="292" y2="82" stroke="#000" stroke-width="3"/>
+  <g font-size="9" text-anchor="middle"><text x="290" y="120">B2</text><text x="325" y="120">B3</text><text x="360" y="120">B4</text></g>
+  <path d="M140,80 L220,80 L220,150 L325,150 L325,106" fill="none" stroke="#c62828" stroke-width="3" stroke-dasharray="10,3,2,3,2,3"/>
+  <text x="228" y="166" font-size="10" font-weight="bold">電池の赤 → B3</text>
+  <path d="M290,94 L290,20 L560,20 L560,70" fill="none" stroke="#c62828" stroke-width="3"/>
+  <text x="400" y="14" font-size="10" font-weight="bold">B2 → BAT+（赤）</text>
+  <rect x="500" y="70" width="160" height="90" rx="8" fill="#2b2b2b" stroke="#000" stroke-width="2"/>
+  <text x="580" y="98" font-size="11" fill="#fff" text-anchor="middle">XIAO の裏</text>
+  <rect x="540" y="110" width="30" height="14" fill="#d4a017"/><text x="555" y="140" font-size="9" fill="#fff" text-anchor="middle">BAT+</text>
+  <rect x="590" y="110" width="30" height="14" fill="#d4a017"/><text x="605" y="140" font-size="9" fill="#fff" text-anchor="middle">BAT−</text>
+  <line x1="560" y1="70" x2="555" y2="110" stroke="#c62828" stroke-width="3"/>
+  <path d="M140,125 L180,125 L180,195 L605,195 L605,124" fill="none" stroke="#000" stroke-width="3" stroke-dasharray="7,4"/>
+  <text x="300" y="212" font-size="10" font-weight="bold">電池の黒 → BAT−（スイッチを通らない）</text>
+  <text x="20" y="40" font-size="9.5">電池がもう付いている個体は、</text>
+  <text x="20" y="54" font-size="9.5">電池の赤だけを途中で切って、2本に分ける</text>
+</svg>
+<div class="cap">図6：電池とスイッチのつなぎ方。スイッチを切ると、電池は XIAO から切り離される（USB をつないでも充電されない）。</div>
+</div>
+
+<h3>4-2. 重ね方</h3>
+<div class="fig">
+<svg viewBox="0 0 680 535" width="100%" style="max-width:660px">
+  <text x="20" y="20" font-size="11" font-weight="bold">端から見た図（短い辺の方向から）</text>
+  <text x="20" y="44" font-size="10" font-weight="bold">外側</text>
+  <rect x="150" y="40" width="210" height="16" fill="#2b2b2b" stroke="#000"/>
+  <text x="255" y="52" font-size="9" fill="#fff" text-anchor="middle">XIAO（部品の面が外）</text>
+  <rect x="150" y="56" width="210" height="6" fill="#ffe9a8" stroke="#999"/>
+  <rect x="140" y="62" width="245" height="14" fill="#2e7d32" stroke="#000"/>
+  <text x="262" y="73" font-size="9" fill="#fff" text-anchor="middle">センサー（部品の面が下）</text>
+  <rect x="150" y="76" width="220" height="10" fill="#ffe9a8" stroke="#999"/>
+  <text x="380" y="86" font-size="8.5">クッションの両面テープ</text>
+  <!-- child board parts -->
+  <rect x="190" y="86" width="40" height="34" fill="#444" stroke="#000"/>
+  <rect x="240" y="92" width="40" height="28" fill="#5b8fd6" stroke="#000"/>
+  <rect x="110" y="88" width="40" height="32" fill="#888" stroke="#000"/>
+  <rect x="70" y="96" width="40" height="16" fill="#222" stroke="#000"/>
+  <text x="90" y="84" font-size="9" font-weight="bold" text-anchor="middle">つまみ</text>
+  <rect x="120" y="120" width="216" height="14" fill="#f3e9c9" stroke="#000"/>
+  <text x="380" y="131" font-size="9">子基板（部品の面が上）</text>
+  <circle cx="230" cy="127" r="0"/>
+  <rect x="140" y="134" width="120" height="30" rx="4" fill="#bbb" stroke="#000"/>
+  <text x="200" y="154" font-size="10" text-anchor="middle" font-weight="bold">モーター</text>
+  <line x1="40" y1="168" x2="480" y2="168" stroke="#000" stroke-width="2" stroke-dasharray="10,4"/>
+  <text x="20" y="172" font-size="10" font-weight="bold">肌</text>
+  <line x1="120" y1="30" x2="120" y2="190" stroke="#b3261e" stroke-dasharray="3,3"/>
+  <line x1="140" y1="30" x2="140" y2="190" stroke="#1e7b34" stroke-dasharray="3,3"/>
+  <text x="60" y="200" font-size="8.5" fill="#b3261e">子基板の左のふち</text>
+  <text x="150" y="200" font-size="8.5" fill="#1e7b34">ノードの左のふち</text>
+  <text x="20" y="226" font-size="9">子基板をノードより約 2 mm スイッチの側にずらして重ね、つまみ（約 4 mm）をノードの外形より外に出す。</text>
+  <text x="20" y="240" font-size="9">厚みは約 20 mm（要確認）。電池はノードの横（USB の側）に置く。</text>
+  <!-- top view -->
+  <g transform="translate(0,40)"><text x="20" y="270" font-size="11" font-weight="bold">上（外側）から見た図</text>
+  <rect x="140" y="292" width="235" height="180" fill="#f3e9c9" stroke="#b3261e" stroke-width="2" stroke-dasharray="6,3"/>
+  <rect x="150" y="312" width="245" height="170" rx="4" fill="#2e7d32" fill-opacity="0.35" stroke="#1e7b34" stroke-width="2"/>
+  <rect x="170" y="316" width="200" height="162" rx="6" fill="#2b2b2b" fill-opacity="0.8" stroke="#000"/>
+  <text x="270" y="400" font-size="11" fill="#fff" text-anchor="middle">XIAO</text>
+  <rect x="198" y="256" width="18" height="36" fill="#222" stroke="#000"/>
+  <text x="222" y="270" font-size="9" font-weight="bold">つまみ（横から指でつまむ）</text>
+  <path d="M182,246 L232,246 M190,240 L182,246 L190,252 M224,240 L232,246 L224,252" fill="none" stroke="#000" stroke-width="1.5"/>
+  <text x="150" y="238" font-size="9">左右に動かす。</text>
+  <text x="236" y="238" font-size="9" fill="#b3261e" font-weight="bold">入・切の向きは要確認（工程6で印）</text>
+  <text x="380" y="300" font-size="8.5" fill="#b3261e">← 子基板のふち（ノードより約 2 mm 外）</text>
+  <rect x="420" y="400" width="230" height="40" rx="5" fill="#ddd" stroke="#000" stroke-width="2"/>
+  <text x="535" y="425" font-size="10" text-anchor="middle" font-weight="bold">電池 30×10×4 mm（横）</text>
+  <text x="420" y="460" font-size="9">赤い点線＝子基板、緑＝センサー、黒＝XIAO</text>
+</g>
+</svg>
+<div class="cap">図7：重ね方。肌の側から モーター → 子基板 → センサー → XIAO。スイッチのつまみはノードの外形より外に出て、横から指でつまめる。</div>
+</div>
+<p class="small">モーターの振動はセンサーにも入ります。<code>04_haptic_check</code> は鳴らしてから 0.3 秒は INT1 を受けません。<code>03_ble_imu</code> の記録を見るときは、鳴らした時刻を外します。</p>
+
+<h2 class="page-break">5. そろえるもの（6個分）</h2>
+<table>
+  <tr><th>部品</th><th>1個に</th><th>6個に（予備）</th><th>販売コード</th><th>メモ</th></tr>
+  <tr><td>振動モーター LBV10B-009</td><td>1</td><td>6（＋2）</td><td>106787</td><td>φ10×3.3 mm、3 V・50 mA。<b>線なし（ばね端子）・極性あり</b>。裏に両面テープ</td></tr>
+  <tr><td>ユニバーサル基板 Fタイプ</td><td>1枚（切らない）</td><td>6（＋2）</td><td>112731</td><td>23.5×18 mm、8×6 穴、独立ランド</td></tr>
+  <tr><td>トランジスタ 2SC1815L-GR</td><td>1</td><td>6（＋2）</td><td>106477</td><td>TO-92。足は E・C・B</td></tr>
+  <tr><td>抵抗 1 kΩ 1/4W（茶黒赤金）</td><td>1</td><td>6（＋2）</td><td>125102</td><td>100本入り</td></tr>
+  <tr><td>コンデンサ 10 µF 25V X7S</td><td>1</td><td>6（＋2）</td><td>116018</td><td>足の間 5 mm、極性なし</td></tr>
+  <tr><td>小型スライドスイッチ SS12D01G4</td><td>1</td><td>6（＋2）</td><td>112723</td><td>1回路2接点、8.8×3.9 mm、足3本・2.5 mm きざみ、50 VDC・0.3 A</td></tr>
+  <tr><td>細い線</td><td>7本</td><td>42本</td><td>—</td><td>外へ出す5本（6 cm：赤 3V3・黒 GND・白 D7・赤 BAT+・緑 INT1）、裏の2本（3 cm：赤 F1→F8、黒 D3→F6）。モーターの端子に短い線2本</td></tr>
+  <tr><td>熱収縮チューブ φ1.5、カプトンかビニールテープ、厚手の両面テープ</td><td></td><td>適量</td><td>—</td><td></td></tr>
+</table>
+
+<h2>6. 安全の注意</h2>
+<div class="box warn"><b class="t">はんだ付けや線を足す作業は、スイッチを切ってから</b>：スイッチを付ける前（工程3の途中まで）は、電池が付いている個体は USB を外し、10分つながずに置いて眠らせてから作業する。こて先で隣の接点とつながないように。電池の線は引っぱらない。</div>
+<div class="box warn"><b class="t">スイッチを切っていると、USB をつないでも充電されない</b>：充電はスイッチを入れてから（スイッチが電池と XIAO の間にあるため）。</div>
+<div class="box warn"><b class="t">電池の線は1本ずつ切る</b>：2本いっしょに挟むと刃の上でショートする。1本切ったら、その先をすぐテープで包む。</div>
+<div class="box warn"><b class="t">モーターの＋−を逆にしない</b>：中に駆動IC があり、極性があります（秋月の注意）。<b>＋を F8、−を F6</b>。</div>
+<div class="box warn"><b class="t">5V には何もつながない</b>：つなぐのは 3V3・GND・D7・D1・BAT+ だけ。</div>
+
+<h2>工程1. モーター6個に線を付け、感じるか確かめる</h2>
+<div class="fig">
+<svg viewBox="0 0 640 160" width="100%" style="max-width:560px">
+  <circle cx="110" cy="80" r="56" fill="#ccc" stroke="#000" stroke-width="2"/>
+  <circle cx="110" cy="80" r="10" fill="#fff" stroke="#000"/>
+  <rect x="164" y="55" width="44" height="50" fill="#eee" stroke="#000" stroke-width="2"/>
+  <rect x="172" y="61" width="30" height="14" rx="6" fill="#fff" stroke="#000"/>
+  <rect x="172" y="85" width="30" height="14" rx="6" fill="#fff" stroke="#000"/>
+  <text x="214" y="64" font-size="18" font-weight="bold">＋</text>
+  <text x="214" y="112" font-size="18" font-weight="bold">−</text>
+  <line x1="202" y1="68" x2="300" y2="44" stroke="#000" stroke-width="3"/>
+  <line x1="202" y1="92" x2="300" y2="116" stroke="#000" stroke-width="3" stroke-dasharray="7,4"/>
+  <text x="306" y="48" font-size="11" font-weight="bold">赤（＋）実線</text>
+  <text x="306" y="120" font-size="11" font-weight="bold">黒（−）破線</text>
+  <text x="110" y="152" font-size="9.5" text-anchor="middle">ばね端子を右にして見た図</text>
+  <text x="430" y="40" font-size="9.5">秋月の端子極性図：</text>
+  <text x="430" y="56" font-size="9.5">端子を右にして<tspan font-weight="bold">上が＋</tspan></text>
+  <text x="430" y="78" font-size="9.5" fill="#b3261e" font-weight="bold">要確認：どちらの面から</text>
+  <text x="430" y="94" font-size="9.5" fill="#b3261e" font-weight="bold">見た図か書いていない。</text>
+  <text x="430" y="110" font-size="9.5">実物の＋の印で合わせる</text>
+</svg>
+<div class="cap">図8：モーターの極性（秋月 LBV10B-009.png をもとに描いた）。</div>
+</div>
+<ol>
+  <li>6個とも、ばね端子の先に赤・黒の線（各 3 cm、先 2 mm むいて予備はんだ）を<b>短く（1〜2秒）</b>付ける。付け根を細いテープで押さえる。<span class="tbc">要確認</span>：ばねにはんだが乗るか。長く温めるとばねが弱るおそれ。</li>
+  <li>どれか1個のノードを USB で Mac につなぎ、赤を XIAO の<b>3V3</b>、黒を<b>GND</b>の接点に指で当てる（5V には当てない）。6個のモーターを順に当てる。</li>
+</ol>
+<div class="box ok"><b class="t">成功のしるし</b>：当てるとブーンと震える。手首（足首）に当てて、止まっているときに感じるかを見る。回らなければすぐ離し、極性を見直す。</div>
+
+<h2>工程2. 子基板を6枚組む</h2>
+<p>表の部品 → 裏の配線 → モーターの順。6枚まとめて同じ順で進める（図2）。</p>
+<ol>
+  <li><b>スイッチ</b>：つまみを左の外へ向けて横に寝かせ、3本の足をラジオペンチで<b>直角に曲げて</b> B2・B3・B4 に表から挿す（本体は A 列の上、つまみは基板のふちから外へ出る）。足が入りにくければ、端の足を少し曲げる。</li>
+  <li><b>10µF</b>：C1・E1 に表から挿す（足の間 5 mm のまま。向きは自由）。</li>
+  <li><b>2SC1815</b>：足を少し広げて 2.54 mm にし、<b>平らな印字面を 1kΩ の側（下、5行目の側）に向けて</b> C3・D3・E3 に挿す。基板の下のふちの側から印字面を見ると、左から E・C・B ＝ C3・D3・E3（図9）。<b>確かめ方：基板を表から見て、印字面が 1kΩ の側を向いていれば正しい。</b></li>
+  <li><b>1kΩ</b>：B5・E5 に寝かせて挿す。</li>
+  <li>裏ではんだ付けし、足を折って配線する（3章の表）：
+    <ul>
+      <li>E の足（C3）を C1 まで、10µF の C1 の足を B1 まで折って付ける（GND）。</li>
+      <li>10µF の E1 の足を F1 まで折って付ける（3V3）。</li>
+      <li>B の足（E3）にチューブをかぶせ、E5 まで折って 1kΩ の足に付ける。</li>
+      <li>赤い線（3 cm）を F1 から、<b>基板のふちの外側</b>を通して F8 へ。黒い線（3 cm）を C の足（D3）から D4 を通って右へ、F6 へ（B の足のチューブの上をまたぐ）。<b>この2本は F6・F8 の穴に通さず、裏のランドにのせて付ける</b>（穴はモーターの線に使う）。</li>
+      <li>B5 の足は裏で根元から切る（モーターの縁に近いため）。ほかの足も 1 mm 程度に短く切る。</li>
+    </ul></li>
+  <li><b>外へ出す線</b>を付ける：B1 に GND（黒 6 cm）、F1 に 3V3（赤 6 cm）、B2 に BAT+（赤 6 cm）、B5 の<b>表</b>の 1kΩ の足に D7（白 6 cm）。電池は工程6。</li>
+  <li><b>モーター</b>：裏の、モーターが乗る範囲（A5〜E8 のあたり）をカプトンテープで覆う。モーターの両面テープで、<b>中心が C7、端子が F 列の側</b>になるよう裏に貼る（表から見て右。裏から見ると左になる。図2の右の図）。端子の短い線を、すぐ横の穴に<b>裏から通して表ではんだ付け</b>する：<b>＋ → F8、− → F6</b>。</li>
+</ol>
+<div class="fig">
+<svg viewBox="0 0 640 125" width="100%" style="max-width:520px">
+  <path d="M60,20 L130,20 L130,75 L60,75 Z" fill="#444" stroke="#000" stroke-width="2"/>
+  <text x="95" y="46" font-size="11" fill="#fff" text-anchor="middle">UTC</text>
+  <text x="95" y="62" font-size="11" fill="#fff" text-anchor="middle">C1815</text>
+  <line x1="75" y1="75" x2="75" y2="105" stroke="#000" stroke-width="3"/><line x1="95" y1="75" x2="95" y2="105" stroke="#000" stroke-width="3"/><line x1="115" y1="75" x2="115" y2="105" stroke="#000" stroke-width="3"/>
+  <g font-size="12" font-weight="bold" text-anchor="middle"><text x="75" y="120">E</text><text x="95" y="120">C</text><text x="115" y="120">B</text></g>
+  <text x="150" y="20" font-size="10" font-weight="bold">子基板では、印字面を 1kΩ の側（下）に向けて C3・D3・E3</text>
+  <text x="150" y="36" font-size="10">平らな印字面をこちらに、足を下にして、左から E・C・B</text>
+  <text x="150" y="52" font-size="10">（UTC のデータシート：1・2・3 番 ＝ E・C・B）</text>
+  <text x="150" y="74" font-size="10" fill="#b3261e" font-weight="bold">要確認：届いた実物の印字が UTC か。別メーカーなら、</text>
+  <text x="150" y="90" font-size="10" fill="#b3261e" font-weight="bold">そのデータシートで並びを見直す</text>
+</svg>
+<div class="cap">図9：2SC1815 の足の並び。</div>
+</div>
+<div class="box ok"><b class="t">確かめる</b>（6枚とも）：C1・D1・E1、C3・D3・E3、B2・B3・B4 の間がはんだでつながっていない（ルーペかカメラで）。モーターが浮かずに平らに貼れている。</div>
+
+<h2>工程3. 6個のノードに線を付ける</h2>
+<p>6個まとめて、同じ順番で付けます（図4・図5）。子基板はノードの<b>下（肌の側）</b>に、部品の面をノードに向けて置き、線の長さを合わせる。</p>
+<ol>
+  <li><b>INT1</b>：緑の線（6 cm）を、センサーの<b>部品の面の「INT1」のランド</b>に付ける（XIAO の下の穴なので、下から）。部品の面に沿わせ、手前（D0〜D6 の列）のふちから表へ回し、<b>XIAO D1</b>（手前の列、USB から2番目）に付ける。途中をカプトンテープで押さえる。</li>
+  <li><b>子基板 F1 の 3V3（赤）</b>：センサーの<b>3V3 の穴の裏のランド</b>に付ける（表には今の赤が付いている）。</li>
+  <li><b>子基板 B1 の GND（黒）</b>：センサーの<b>GND の穴の裏のランド</b>に付ける。</li>
+  <li><b>子基板 B5 の D7（白）</b>：<b>XIAO D7</b>（奥の列、USB の反対の角）に付ける。</li>
+  <li><b>子基板 B2 の BAT+（赤）</b>：XIAO の裏の BAT+ へ。個体によって2通り（図6）。
+    <ul>
+      <li><b>電池がもう付いている個体</b>：USB を外して眠らせてから、<b>電池の赤だけ</b>を真ん中あたりで切り、電池側の先をすぐテープで包む。<b>XIAO 側の赤</b>を B2 の赤と、熱収縮チューブを先に通してからつなぐ。<b>電池側の赤</b>は工程6で B3 へ。黒は切らない。</li>
+      <li><b>電池がまだの個体</b>：XIAO をセンサーから静かにはがし（線は付いたまま）、裏の BAT+ に B2 の赤、BAT− に受け線の黒（6 cm、先はテープで包む）を付けて、貼り直す。</li>
+    </ul></li>
+</ol>
+<div class="box ok"><b class="t">確かめる</b>（6個とも）：XIAO の D1・D7 の隣（D0・D2、D8）にはんだが渡っていない。センサーの 3V3 と GND のランドがつながっていない。電池側の赤の先が包まれている。</div>
+
+<h2 class="page-break">工程4. 1個ずつ、振動と INT1 を確かめる</h2>
+<pre>cd ~/Developer/run-form-coach/hardware/sensor
+tools/flash.sh 04_haptic_check
+tools/monitor.sh</pre>
+<div class="box ok"><b class="t">成功のしるし</b>：①書き込むと<b>モーターが短く3回鳴り</b>、LED も3回点く。モニタに <code>buzz x3</code>、<code>LSM6DSV16X found</code>、<code>threshold 2.00 g</code>。②ノードを机に軽く<b>「トン」</b>と打つと、<code>INT1 #1</code> と出て、LED が点き、短く1回鳴る。静かに置けば鳴らない。</div>
+<table>
+  <tr><th style="width:36%">起きたこと</th><th>確かめること</th></tr>
+  <tr><td>3回鳴らない（LED は点く）</td><td>D7 の線、トランジスタの向き（<b>印字面が 1kΩ の側を向いているか</b>。10µF の側を向いていると E と B が逆で鳴らない）、E と B の足の折り、F6・F8 の線、モーターの極性。モニタで <b>b</b> を打つと1回鳴らせる</td></tr>
+  <tr><td>鳴りっぱなし</td><td>子基板の C と E（D3・C3）がつながっている</td></tr>
+  <tr><td>鳴った瞬間に XIAO が再起動する</td><td>3V3 が下がっている。<b>案</b>：子基板の 3V3（赤）を XIAO の裏の BAT+ に付け替える</td></tr>
+  <tr><td>トンで鳴らない</td><td>INT1 の線（緑）。モニタの <code>INT1 pin</code> が 0 のままか。<b>-</b> を打ってしきい値を下げる</td></tr>
+  <tr><td>何もしなくても鳴る</td><td><b>+</b> を打ってしきい値を上げる（0.25 g ずつ）</td></tr>
+</table>
+<p class="small">しきい値は書き込み直すと 2.0 g に戻ります。走るときの値（足首は着地で 10 g を超えうる）は、まだ決めていません。ちょうどよかった値をチェック表に書いておきます。</p>
+
+<h2>工程5. 1個ずつ、03_ble_imu を書き直す</h2>
+<pre>tools/flash.sh 03_ble_imu 1     # 1番。2〜6番は番号を変える</pre>
+<p><code>tools/viewer.sh</code> で RFC-IMU-番号 が出て、約100サンプル/秒・抜け 0 件になるのを見る（前の手順書の手順6）。<code>03_ble_imu</code> はモーターを鳴らしません。走りながら振動を試すときは <code>04_haptic_check</code> を書き込みます。</p>
+<p class="small"><span class="tbc">要確認</span>：<code>03_ble_imu</code> のとき、モーターが勝手に鳴らないこと（D7 は何も出さないので、鳴らないはず）。</p>
+
+<h2>工程6. 1個ずつ、電池とスイッチ</h2>
+<ol>
+  <li>スイッチをどちらか一方に寄せておく。</li>
+  <li><b>電池の赤 → 子基板 B3</b>（スイッチの真ん中の足）：熱収縮チューブを先に通し、裏の B3 の足の根元に付けて、チューブを縮める。</li>
+  <li><b>電池の黒</b>：電池がまだだった個体は、BAT− の受け線の黒と、チューブを先に通してからつなぐ（もう付いている個体は、そのまま）。</li>
+  <li>USB を外したまま、つまみを動かす。<b>入</b>で XIAO の LED が点き（<code>03_ble_imu</code> なら受信画面に出る）、<b>切</b>で消える。<b>横から見て、入の向きに矢印と「入」をマスキングテープで書いて貼る</b>（<span class="tbc">要確認</span>：つまみの位置と入・切の向きは、実物で決まる）。</li>
+  <li>受信画面で<b>「電池：3.xx V」</b>と出るのを見る。充電するときは<b>スイッチを入れてから</b> USB をつなぐ。</li>
+</ol>
+<div class="box"><b>眠る・起きる とスイッチ</b>：<code>03_ble_imu</code> の「10分つながらないと眠る」はそのまま。<b>しまうときはスイッチを切る</b>（眠っていても少し電気を使うので）。使うときはスイッチを入れると起きる。</div>
+
+<h2>工程7. 重ねて体に付ける</h2>
+<ol>
+  <li>子基板の部品の上にクッションの両面テープを重ね、ノード（センサーの部品の面）を貼る。<b>子基板を約 2 mm スイッチの側にずらし</b>、スイッチのつまみがノードの外形より外に出るようにする（図7）。</li>
+  <li>電池をノードの横に並べ、テープで留める。線を引っぱらない。</li>
+  <li>袋に入れ、<b>モーター（子基板の裏）が肌に当たる向き</b>でバンドに巻く（XIAO の面が外）。袋の上から、つまみを横からつまんで動かせるか確かめる。</li>
+</ol>
+
+<h2>チェック表</h2>
+<table class="chk">
+  <tr><th>工程</th><th>1番</th><th>2番</th><th>3番</th><th>4番</th><th>5番</th><th>6番</th></tr>
+  <tr><td>1 モーターに線・3V3 で回る</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>2 子基板を組んだ・モーターを裏に貼った</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>3 INT1 → D1 を付けた</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>3 3V3・GND・D7・BAT+ を付けた</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>4 04 で3回鳴った</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>4 机トンで鳴った（しきい値 ____ g）</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>5 03_ble_imu を番号付きで書いた・受信 OK</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>6 電池＋スイッチ（入で点く・切で消える・電圧が出る・向きの印）</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+  <tr><td>7 重ねて付けた・つまみが外から動く・走って感じた</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td><td>□</td></tr>
+</table>
+
+<h2 class="page-break">付録A. 確かめた寸法と出典・要確認</h2>
+<table class="small">
+  <tr><th style="width:26%">もの</th><th>確かめたこと</th><th style="width:28%">出典</th></tr>
+  <tr><td>Fタイプ（AE-F-TH）</td><td>23.5×18 mm、1.6 mm、両面スルーホール、穴 8×6＝48（φ1.0、ランド φ1.8）、2.54 mm、独立ランド</td><td>秋月 112731、図面 AE-F-TH.pdf</td></tr>
+  <tr><td>2SC1815L-GR-T92</td><td>UTC、TO-92、1・2・3＝E・C・B、Ic 150 mA、hFE 200〜400。「L」は鉛フリー</td><td>秋月 106477、2SC1815_unisonic.pdf</td></tr>
+  <tr><td>10 µF</td><td>村田 RDEC71E106K2K1H03B、足の間 5.0 mm、5.5×3.15×4.0 mm、極性なし</td><td>秋月 116018、村田のデータシート</td></tr>
+  <tr><td>LBV10B-009</td><td>3 V・50 mA、φ10×3.3 mm、ばね端子、極性あり。中の FD216 は動作 1.8〜4.5 V</td><td>秋月 106787、LBV10B-009.png、FD216.pdf</td></tr>
+  <tr><td>XIAO nRF52840</td><td>3V3 は SGM2040（250 mA）。D7＝P1.12、D1＝P0.03</td><td>Seeed 回路図 v1.2、ボードのパッケージ 1.1.13</td></tr>
+  <tr><td>AE-LSM6DSV16X</td><td>ピンの列の一方：SDX・SCX・INT1 ／ INT2・GND・3V3。INT1 と INT2 の間 10.16 mm</td><td>秋月 130950 の寸法図・回路図</td></tr>
+  <tr><td>SS12D01G4</td><td>1回路2接点（ON-ON、ノンショーティング）、本体 8.8×3.9 mm、高さ 3.5 mm＋つまみ 4 mm、足3本・2.5 mm きざみ（穴 φ0.8 推奨）、50 VDC・0.3 A。真ん中の足が共通</td><td>秋月 112723、SS12D01G4-G_2.pdf</td></tr>
+  <tr><td>LSM6DSV16X のウェイクアップ</td><td>50h・54h・56h・5Bh・5Ch・5Eh の設定（04 のコメント）</td><td>データシート DS13510 Rev 3、9.53〜9.65</td></tr>
+</table>
+<ul class="small">
+  <li><span class="tbc">要確認</span>：モーターの極性図がどちらの面からの図か。ばねにはんだが乗るか。</li>
+  <li><span class="tbc">要確認</span>：トランジスタの印字が UTC か。スイッチのつまみの位置と入・切の向き。</li>
+  <li><span class="tbc">要確認</span>：INT1 の穴の位置（部品の面の印字で確かめる）。3V3 で鳴らして XIAO が再起動しないか。<code>03_ble_imu</code> でモーターが勝手に鳴らないか。走るときのしきい値。モーターの振動が記録に入る量。</li>
+</ul>
+
+<h3>付録B. 04_haptic_check.ino</h3>
+<pre class="code">__SKETCH:04_haptic_check__</pre>
+
+</body>
+</html>

@@ -1,1 +1,4 @@
 tools/bin/
+tools/.venv/
+records/
+tools/__pycache__/

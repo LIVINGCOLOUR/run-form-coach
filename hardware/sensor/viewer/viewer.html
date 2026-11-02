@@ -8,30 +8,34 @@
   body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 24px; background: #fafafa; color: #222; }
   button { font-size: 16px; padding: 8px 16px; margin-right: 8px; }
   #status { margin: 12px 0; font-weight: bold; }
-  table { border-collapse: collapse; margin-top: 12px; }
-  td, th { border: 1px solid #ccc; padding: 6px 14px; text-align: right; font-variant-numeric: tabular-nums; }
+  #nodes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+  @media (max-width: 1000px) { #nodes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .node { background: #fff; border: 1px solid #ccc; border-radius: 8px; padding: 10px 12px; }
+  .node.off { opacity: 0.55; }
+  .node h2 { font-size: 17px; margin: 0 0 6px; display: flex; justify-content: space-between; align-items: center; }
+  .node h2 button { font-size: 13px; padding: 3px 10px; margin: 0; }
+  .state { font-size: 13px; color: #666; }
+  .warn { color: #c0392b; font-weight: bold; }
+  table { border-collapse: collapse; margin: 6px 0; }
+  td, th { border: 1px solid #ccc; padding: 4px 10px; text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
   th { background: #eee; }
+  .line { font-size: 13px; color: #444; font-variant-numeric: tabular-nums; }
   .note { color: #666; font-size: 14px; margin-top: 16px; }
 </style>
 </head>
 <body>
 <h1>IMU Viewer</h1>
-<button id="connect">接続</button>
 <button id="record" disabled>記録を始める</button>
 <button id="save" disabled>CSVで保存</button>
-<div id="status">未接続</div>
-<table>
-  <tr><th></th><th>x</th><th>y</th><th>z</th></tr>
-  <tr><th>加速度 [g]</th><td id="ax">-</td><td id="ay">-</td><td id="az">-</td></tr>
-  <tr><th>ジャイロ [dps]</th><td id="gx">-</td><td id="gy">-</td><td id="gz">-</td></tr>
-</table>
-<div id="info" class="note">加速度の範囲：-　電池：-</div>
-<div id="rate" class="note">受信：- サンプル/秒</div>
+<div id="status">各センサーの「つなぐ」を押してください（出てきた RFC-IMU-番号 を選ぶ）</div>
+<div id="nodes"></div>
 <div class="note">
+  付ける6か所の枠が決まった場所に並びます（どこにどの番号を付けているかは、viewer.html の SLOTS で変える）。「つなぐ」を押すと、その番号のセンサーだけが選ぶ画面に出ます（Chrome の決まりで、選ぶ画面は1個ずつ）。<br>
   置いたまま動かさないと、加速度のどれか1つが約 1.00（重力）、ジャイロはほぼ 0 になります。<br>
   受信が 1秒に約100サンプル（03_ble_imu の SAMPLE_HZ を 50 にしたときは約50）で、「抜け」が 0 のままなら正常です。<br>
   1回の通知に何サンプルかまとめて届くので、通知の回数はサンプル数より少なくて構いません。<br>
-  電池は 4.2V が満タン、3.5V を切ったら充電します。USB につないでいる間は、充電の電圧が出ます。
+  電池は 4.2V が満タン、3.5V を切ったら充電します。USB につないでいる間は、充電の電圧が出ます。<br>
+  記録は、つないでいる全部のセンサーをまとめて1つの CSV にします（1列目がセンサーの名前。time_ms はセンサーごとの起動からの ms、pc_ms は受け取ったときの PC の時計）。
 </div>
 <script id="parser">
 // 03_ble_imu が送る1回の通知を、サンプルの並びに戻す（形はファームの先頭のコメントと同じ）
@@ -75,91 +79,171 @@ function parseBattery(v) {
 const SERVICE = 0xffe0;
 const CHAR = 0xffe1;
 const BATTERY = 0xffe2;
+// 付ける場所と、そこに付けているセンサー（null は使わない枠）
+// 番号は頭から 1〜6 の予定だったが、5番はモーターが回らず外したので、3番を左足首に回している（2026-11-02）
+const SLOTS = [
+  { place: '頭', name: 'RFC-IMU-1' },
+  { place: '胸', name: 'RFC-IMU-2' },
+  { place: '左手首', name: null },
+  { place: '右手首', name: 'RFC-IMU-4' },
+  { place: '左足首', name: 'RFC-IMU-3' },
+  { place: '右足首', name: 'RFC-IMU-6' },
+];
 
 const $ = (id) => document.getElementById(id);
+const nodes = new Map(); // 名前 → センサー1個ぶんの状態
 let rows = [];
 let recording = false;
-let count = 0;    // この1秒に届いたサンプル数
-let packets = 0;  // この1秒に届いた通知の回数
-let lost = 0;     // 接続してから抜けたサンプル数
-let expectedSeq = null;
-let range = null;   // 加速度の範囲（g）
-let battery = null; // 電池の電圧（V）
-let deviceName = '';
 
-$('connect').onclick = async () => {
+function makeCard(node) {
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.innerHTML =
+    '<h2><span></span><button>つなぐ</button></h2>' +
+    '<div class="state"></div>' +
+    '<table><tr><th></th><th>x</th><th>y</th><th>z</th></tr>' +
+    '<tr><th>加速度 [g]</th><td>-</td><td>-</td><td>-</td></tr>' +
+    '<tr><th>ジャイロ [dps]</th><td>-</td><td>-</td><td>-</td></tr></table>' +
+    '<div class="line rate">受信：-</div><div class="line info">加速度の範囲：-　電池：-</div>';
+  el.querySelector('h2 span').textContent = node.place + '：' + (node.name || '使わない');
+  const btn = el.querySelector('h2 button');
+  btn.onclick = () => pickAndConnect(node);
+  const cells = el.querySelectorAll('td');
+  node.el = el;
+  node.btn = btn;
+  node.stateEl = el.querySelector('.state');
+  node.aCells = [cells[0], cells[1], cells[2]];
+  node.gCells = [cells[3], cells[4], cells[5]];
+  node.rateEl = el.querySelector('.rate');
+  node.infoEl = el.querySelector('.info');
+  $('nodes').appendChild(el);
+}
+
+function setState(node, text, connected) {
+  node.stateEl.textContent = text;
+  node.el.classList.toggle('off', !connected);
+  node.btn.style.display = connected ? 'none' : '';
+  node.btn.textContent = node.device ? 'つなぎ直す' : 'つなぐ';
+}
+
+function showInfo(node) {
+  node.infoEl.textContent = '加速度の範囲：' + (node.range ? '±' + node.range + ' g' : '-') +
+    '　電池：' + (node.battery !== null ? node.battery.toFixed(2) + ' V' : '-');
+}
+
+async function connectNode(node) {
+  try {
+    setState(node, 'つないでいます…', false);
+    const server = await node.device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE);
+    const ch = await service.getCharacteristic(CHAR);
+    node.expectedSeq = null;
+    node.lost = 0;
+    node.range = null;
+    node.battery = null;
+    node.bad = false;
+    ch.addEventListener('characteristicvaluechanged', (e) => onData(node, e.target.value));
+    await ch.startNotifications();
+    try {
+      const bat = await service.getCharacteristic(BATTERY);
+      bat.addEventListener('characteristicvaluechanged', (e) => { node.battery = parseBattery(e.target.value); showInfo(node); });
+      node.battery = parseBattery(await bat.readValue());
+      await bat.startNotifications();
+    } catch (e) {
+      node.battery = null; // 電池を測らない古いファーム
+    }
+    showInfo(node);
+    setState(node, 'つながっています', true);
+  } catch (e) {
+    setState(node, 'エラー：' + e.message, false);
+  }
+}
+
+// 枠ごとの「つなぐ」：その番号の名前だけを選ぶ画面に出す
+async function pickAndConnect(node) {
   if (!navigator.bluetooth) {
     $('status').textContent = 'このブラウザは Web Bluetooth に対応していません（Mac の Chrome で開いてください）';
     return;
   }
+  if (node.device) return connectNode(node); // 一度選んだものは選び直さずにつなぎ直す
   try {
-    $('status').textContent = '探しています…';
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'RFC-IMU' }],
+      filters: [{ name: node.name }],
       optionalServices: [SERVICE],
     });
-    device.addEventListener('gattserverdisconnected', () => {
-      $('status').textContent = '切断されました（もう一度「接続」を押してください）';
-    });
-    const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE);
-    const ch = await service.getCharacteristic(CHAR);
-    ch.addEventListener('characteristicvaluechanged', onData);
-    expectedSeq = null;
-    lost = 0;
-    range = null;
-    battery = null;
-    deviceName = device.name;
-    await ch.startNotifications();
-    try {
-      const bat = await service.getCharacteristic(BATTERY);
-      bat.addEventListener('characteristicvaluechanged', (e) => { battery = parseBattery(e.target.value); showInfo(); });
-      battery = parseBattery(await bat.readValue());
-      await bat.startNotifications();
-    } catch (e) {
-      battery = null; // 電池を測らない古いファーム
-    }
-    showInfo();
-    $('status').textContent = '接続しました：' + device.name;
-    $('record').disabled = false;
+    attach(node, device);
+    await connectNode(node);
   } catch (e) {
-    $('status').textContent = 'エラー：' + e.message;
+    setState(node, e.name === 'NotFoundError' ? '見つからないか、選ばずに閉じました（電源と、10分たって眠っていないかを確かめる）' : 'エラー：' + e.message, false);
   }
-};
-
-function showInfo() {
-  $('info').textContent = '加速度の範囲：' + (range ? '±' + range + ' g' : '-') +
-    '　電池：' + (battery !== null ? battery.toFixed(2) + ' V' : '-');
 }
 
-function onData(event) {
-  const p = parsePacket(event.target.value);
+function attach(node, device) {
+  node.device = device;
+  device.addEventListener('gattserverdisconnected', () => setState(node, '切れました（「つなぎ直す」を押してください）', false));
+}
+
+// 6個の枠を先に並べる
+for (const slot of SLOTS) {
+  const node = { ...slot, device: null, count: 0, packets: 0, lost: 0, expectedSeq: null, range: null, battery: null, bad: false };
+  makeCard(node);
+  if (!node.name) {
+    node.btn.style.display = 'none';
+    node.stateEl.textContent = 'この場所には付けていません';
+    node.el.classList.add('off');
+    continue;
+  }
+  nodes.set(node.name, node);
+  setState(node, 'つないでいません', false);
+}
+
+// 前に選んだことのあるセンサーは、選ぶ画面なしでつなぎにいく（Chrome が getDevices に対応しているときだけ）
+if (navigator.bluetooth && navigator.bluetooth.getDevices) {
+  navigator.bluetooth.getDevices().then((devices) => {
+    for (const device of devices) {
+      const node = nodes.get(device.name);
+      if (!node || node.device) continue;
+      attach(node, device);
+      connectNode(node);
+    }
+  }).catch(() => {});
+}
+$('record').disabled = false;
+
+function onData(node, value) {
+  const p = parsePacket(value);
   const { seq, samples } = p;
   if (samples.length === 0) {
-    $('status').textContent = '形の違うデータが届いています。XIAO に今の 03_ble_imu を書き込み直してください';
+    if (!node.bad) setState(node, '形の違うデータが届いています。XIAO に今の 03_ble_imu を書き込み直してください', true);
+    node.bad = true;
     return;
   }
-  if (expectedSeq !== null) {
-    const gap = (seq - expectedSeq) & 0xffff;
-    if (gap !== 0 && gap < 0x8000) lost += gap; // 通し番号が飛んだぶんが抜け
+  if (node.expectedSeq !== null) {
+    const gap = (seq - node.expectedSeq) & 0xffff;
+    if (gap !== 0 && gap < 0x8000) node.lost += gap; // 通し番号が飛んだぶんが抜け
   }
-  expectedSeq = (seq + samples.length) & 0xffff;
-  if (p.range !== range) { range = p.range; showInfo(); }
-  for (const s of samples) {
-    if (recording) rows.push([s.t, ...s.a.map((x) => x.toFixed(4)), ...s.g.map((x) => x.toFixed(2))]);
+  node.expectedSeq = (seq + samples.length) & 0xffff;
+  if (p.range !== node.range) { node.range = p.range; showInfo(node); }
+  if (recording) {
+    const pc = Date.now(); // 受け取ったときの PC の時計
+    for (const s of samples) rows.push([node.name, s.t, pc, ...s.a.map((x) => x.toFixed(4)), ...s.g.map((x) => x.toFixed(2))]);
   }
   const last = samples[samples.length - 1];
-  ['ax', 'ay', 'az'].forEach((id, i) => ($(id).textContent = last.a[i].toFixed(2)));
-  ['gx', 'gy', 'gz'].forEach((id, i) => ($(id).textContent = last.g[i].toFixed(1)));
-  count += samples.length;
-  packets++;
+  node.aCells.forEach((td, i) => (td.textContent = last.a[i].toFixed(2)));
+  node.gCells.forEach((td, i) => (td.textContent = last.g[i].toFixed(1)));
+  node.count += samples.length;
+  node.packets++;
 }
 
 setInterval(() => {
-  $('rate').textContent = '受信：' + count + ' サンプル/秒（通知 ' + packets + ' 回/秒）　抜け：' + lost + ' 件' +
-    (recording ? '　（記録中：' + rows.length + ' 件）' : '');
-  count = 0;
-  packets = 0;
+  for (const node of nodes.values()) {
+    node.rateEl.textContent = '受信：' + node.count + ' サンプル/秒（通知 ' + node.packets + ' 回/秒）　抜け：' + node.lost + ' 件';
+    node.rateEl.classList.toggle('warn', !!node.device && node.device.gatt.connected && (node.count < 80 || node.lost > 0));
+    node.count = 0;
+    node.packets = 0;
+  }
+  const on = [...nodes.values()].filter((n) => n.device && n.device.gatt.connected).length;
+  $('status').textContent = (recording ? '記録中：' + rows.length + ' 件　' : '') + 'つながっているセンサー：' + on + ' / ' + nodes.size;
 }, 1000);
 
 $('record').onclick = () => {
@@ -170,12 +254,15 @@ $('record').onclick = () => {
 };
 
 $('save').onclick = () => {
-  const header = 'time_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n';
+  const header = 'node,time_ms,pc_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n';
   const body = rows.map((r) => r.join(',')).join('\n');
   const blob = new Blob([header + body], { type: 'text/csv' });
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'imu-' + (deviceName || 'RFC-IMU') + '-' + new Date().toISOString().replace(/[:.]/g, '-') + '.csv';
+  a.download = 'imu-' + stamp + '.csv';
   a.click();
 };
 </script>
