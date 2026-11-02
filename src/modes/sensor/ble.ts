@@ -150,6 +150,12 @@ class SensorHub {
     const node = this.nodes[i]
     const bt = bluetooth()
     if (!node?.name || !bt) return
+    // 前につなげなかった（エラーの）ものは、覚えている相手を捨てて選び直す。
+    // getDevices で戻した相手がつなげないまま残ると、押しても同じエラーをくり返すため
+    if (node.device && node.status === 'error') {
+      node.wanted = false
+      node.device = null
+    }
     if (!node.device) {
       // ブラウザによって通らない頼み方があるので、通るまで形を変えて頼む（選ばずに閉じたときは、そこでやめる）
       const tries: RequestOptions[] = [
