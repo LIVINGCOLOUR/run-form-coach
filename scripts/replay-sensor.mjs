@@ -23,6 +23,7 @@ const opt = (name) => {
 }
 const over = { chest: JSON.parse(opt('--chest') ?? '{}'), head: JSON.parse(opt('--head') ?? '{}') }
 const WIN = 5
+const HOLD = 20 // 行のない間を、前の行のまま「走っている」とみる長さの上限（秒）
 if (!args.length) {
   console.error("使い方: npm run replay:sensor -- <rfc-….json | Mac の記録のフォルダ> … [--chest '{…}'] [--head '{…}']")
   process.exit(1)
@@ -69,8 +70,11 @@ function replay(p, samples, running, standT, t0, t1, hz) {
     const r = d.update(t, running(t))
     ticks.push({ t, run: running(t), ...r, line: r.ref !== null && r.ref !== undefined ? r.ref + p.margin : null })
   }
-  return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), learnedAt: ticks.find((x) => x.learned !== undefined) }
+  return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), slips: ticks.filter((x) => x.slip), learnedAt: ticks.find((x) => x.learned !== undefined) }
 }
+
+// ずれとみなして基準を置き直した時刻と、基準の変わり方
+const slipText = (r) => r.slips.map((x) => `${f1(x.t)}（${f1(x.slip.from)}→${f1(x.slip.to)}°）`).join(' ') || 'なし'
 
 const runMin = (ticks, p) => (ticks.filter((x) => x.run).length * p.tick) / 60
 
@@ -81,7 +85,9 @@ function cameraLog(path) {
   const nodes = S.decodeNodes(log.sensors, decodeBlock)
   const hz = 100 / (log.sensors.stride ?? 2)
   const standT = log.sensors.stand?.t ?? log.events.find((e) => e[1] === 'phase:run')?.[0]
-  // 走っているか：その時刻のいちばん近い前のカメラの行（段階が run で、歩数で走っていた）
+  // 走っているか：その時刻のいちばん近い前のカメラの行（段階が run で、歩数で走っていた）。
+  // カメラは走っている間、骨格を間引いて取る（10秒のうち3秒など。行のない間が7〜17秒）。アプリはその間も前の判定のまま
+  // 「走っている」とするので、HOLD 秒までの行のない間は前の行のままにする
   const rt = rows.map((r) => r.t)
   const running = (t) => {
     let lo = 0
@@ -93,7 +99,7 @@ function cameraLog(path) {
       else hi = m - 1
     }
     const r = rows[lo]
-    return r.phase === 'run' && r.moving && t - r.t < 1
+    return r.phase === 'run' && r.moving && t - r.t < HOLD
   }
   // カメラの答え（5秒の窓）
   const H = FORM.head
@@ -139,6 +145,7 @@ function cameraLog(path) {
     say(`知らせた ${r.cues.length} 回（${f1((r.cues.length / Math.max(runMinData, 1e-9)) * 10)} 回/10分）・そのうちカメラの答えが「崩れでない」${falseCues.length} 回（${f1((falseCues.length / Math.max(runMinData, 1e-9)) * 10)} 回/10分）`)
     const clear = cueRows.filter((c) => c.loose === false)
     say(`  ゆるい答え（${K.key === 'chest' ? `上体 > ${f1((FORM.trunk.max * 2) / 3)}°` : '首 > 40° かつ 頭の位置 > 42°'}）でも崩れでない（はっきり外れ）：${clear.length} 回（${f1((clear.length / Math.max(runMinData, 1e-9)) * 10)} 回/10分）`)
+    say(`  ずれとみなした ${r.slips.length} 回：${slipText(r)}`)
     say(`  時刻：${cueRows.map((c) => `${f1(c.t)}${c.bad === true ? '○' : c.bad === false ? '×' : '?'}(${c.cam})`).join(' ') || 'なし'}（○ カメラも崩れ・× カメラは崩れでない。かっこはその前5秒のカメラの値）`)
     // 5秒の窓：センサーが線を越えていた割合が半分以上なら「崩れ」
     const spans = S.runSpans(rows)
@@ -213,6 +220,7 @@ function macRecord(dir) {
       const n = r.cues.filter((t) => t >= x.t && t < end).length
       say(`  ${x.name.padEnd(8, '　')} ${f1(end - x.t)}秒  傾き 中央値 ${f1(S.median(tk.map((y) => y.tilt)))}°・基準 ${f1(S.median(tk.map((y) => y.ref)))}°  知らせた ${n} 回`)
     }
+    say(`  ずれとみなした ${r.slips.length} 回：${slipText(r)}`)
   }
 }
 

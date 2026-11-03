@@ -24,7 +24,7 @@ import { flushUploads } from '../core/upload/uploads'
 import { UploadKeyButton, UploadPanel } from '../ui/Upload'
 import { SensorPanel } from '../modes/sensor/SensorPanel'
 
-const ITEM_LABEL: Record<ItemKey, string> = { head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり', landing: '着地の位置' }
+const ITEM_LABEL: Record<ItemKey, string> = { hunch: '背中の丸まり', head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり', landing: '着地の位置' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
 // 小数1桁まで（よい例までの差は1°に満たないことがあり、整数に丸めると「7° → 7°」になるため）
 const fmt1 = (x: number) => String(Math.round(x * 10) / 10)
@@ -83,7 +83,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
       const demo = demoStride({ lean: 12, head: 3, drop: 0 })
       return { base: demo, ghost: undefined, idealFrames: demoStride({ lean: 7, head: 0, drop: 0 }), exaggerated: false }
     }
-    const frames = normalizeStride(stride)
+    const frames = normalizeStride(stride, best.gait?.cadence)
     let ghost
     let exaggerated = false
     if (next) {

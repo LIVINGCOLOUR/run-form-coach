@@ -1,3 +1,6 @@
+import type { ItemKey } from '../../core/types'
+import type { Level } from '../../core/level'
+
 // カメラ版の判定で使う数字（置き方、直立の基準、項目ごとの線など）。微調整するときはここだけを直す
 // 声かけのしくみの数字は src/core/params.ts
 // フォームの見方のページ（/theory/）は、この値をそのまま表示する。文章と値が食い違わないように、
@@ -70,7 +73,11 @@ export const BASELINE = {
 //   誤った声は10分あたり 0.11回（6本）、+0.04 では 0.32回（23本）。同じ速さでピッチを約10%下げた人（本当の増え +0.025）には 56% で声が出る。
 //   自分の記録（2026-10-19）のふつうの区間は、最初のふつうを基準にして最大 +0.010。3R の着地の崩し7本のうち 4〜5本が +0.05 を越えた。
 //   満点の際 0.02 と 0点 0.12 は、ほかの項目と同じく、声をかける線の手前と、その倍あまり先に置いた
-export const LIMITS: Record<'head' | 'trunk' | 'trunkBack' | 'body' | 'bodyBack' | 'hip' | 'landing', { full: number; zero: number; cue: number }> = {
+//   hunch：猫背（背中が丸まる）。今日の基準からの、上体（腰の中心→肩の中心）の前傾の増えと、首の角度の増え ＋ HUNCH.neckSlack の、小さいほう（度。coach.ts の hunchOf）。
+//   線はレベルごと（STRICT）。くわしくは下の HUNCH
+// 下の値は初心者（やさしめ）の線。走るときは、レベルごとの線（いちばん下の STRICT）に applyStrictness で入れ替える
+export const LIMITS: Record<ItemKey, { full: number; zero: number; cue: number }> = {
+  hunch: { full: 2, zero: 9, cue: 4 },
   head: { full: 5, zero: 15, cue: 8 },
   trunk: { full: 10, zero: 20, cue: 15 },
   trunkBack: { full: 2, zero: 10, cue: 5 },
@@ -145,6 +152,23 @@ export const LANDING = {
   //   走り出して90秒からの大またに声が出た割合は、前へ 9°・60秒で 92% → 100%、前へ 4°（かかと +0.07）・6°・9° の15秒でも 100%（崩して11〜16秒で）
   early: true,
   earlyCollect: 30,
+}
+
+// 猫背（hunch）の見方。横から撮った骨格の点で、背中の丸まりそのもの（胸椎の曲がり）は測れないので、丸まったときにいっしょに動く
+// 「上体の線（腰→肩）が前に傾く」と「頭がその先へ出る（首の角度が増える）」の両方で見る。
+// 確かめ：2026-11-03 の走り（胸と頭にセンサー、トレッドミル）で、わざとの猫背60秒は、胸のセンサーの前への傾きが ふつう +9.8°（6秒平均）。
+// カメラの値の、最初のふつうの2分を基準にした6秒平均の増えは、上体 +4.8°・首の角度 +6.5°・頭の位置 +11.7°（ふつうの区間は どれも ±0.4° 以内が真ん中）。
+// 猫背とふつうの区間（175窓）の分かれ方（AUC）は、上体 0.985・腰→耳の線 0.988・首の角度 0.89・hunchOf 0.98。
+// 頭だけ前に出した60秒（胸は動かない）とは、上体 0.96・hunchOf 0.90 で分かれ、首の角度だけでは分からない（0.37）。
+// 上体の増えだけで見ると、股関節から上体ごと倒した走り（背中はまっすぐ）も猫背と言ってしまう（仮想実験の「上体を前に倒す」）ので、
+// 首の角度がいっしょに増えた（少なくとも −neckSlack より下がっていない）ときだけにした。neckSlack 2 は、0〜3 を試して、
+// ふつうの区間との分かれ方が上体だけのとき（0.985）とほぼ同じになる値（0 で 0.95、2 で 0.98）。上体ごと倒すと 2 で頭打ちになり、どのレベルの線にも届かない。
+// 決まった線（FORM）は持たない：この走りの猫背の上体は 16秒平均で 8.2° で、講師のよい例（GOOD.trunk 4.8〜9.5°）の内側。人による違いのほうが大きく、
+// 今日の基準からの増えでしか分からない。2026-10-19 の猫背（上体 11.4°・首 51°・頭の位置 62°）のように大きければ、頭の決まった線でも分かる
+// 前の版で声が出なかったわけ：上体の決まった線（12°）に届かず、その60秒は今日の基準をためている間（途中で走りが止まったとみて、ため直した）に
+// 入っていたため。いまは仮の基準（FORM.early）からの崩れでも見る
+export const HUNCH = {
+  neckSlack: 2, // 度
 }
 
 // 上体と体全体の崩れは、今日の基準（整えたあとの形の平均）からの増え方で判定する。正しいフォームの線（FORM）の内側でも、
@@ -224,6 +248,7 @@ export const REL_LIMITS: Record<'trunk' | 'trunkBack' | 'body' | 'bodyBack', { f
 //   ふつう1 で 5.4〜6.8°（下から5%〜上から5%）と揺れ、線の際の人に声と「その形です」が行き来したので、16秒にした。
 //   直ったかは、声のあと hold 秒の平均が、線の内側に margin 以上入ったか（線のすぐ際でのぶれで「直った」と言わないため）。
 //   margin は点数の満点の際でもある。span は線から0点までの幅
+// 上の線（body.max・trunk.max・head）は初心者の値。レベルごとの線はいちばん下の STRICT
 export const FORM = {
   body: { min: 5.5, max: 15, margin: 0.5, span: 4 },
   trunk: { min: -2, max: 12, margin: 1, span: 6 },
@@ -239,6 +264,11 @@ export const FORM = {
   later: 300, // それを過ぎたら（直らなかったら）、知らせる間をこれだけあける（秒）
   refAfter: 60, // 整え終わってから、基準を作るまで、少なくともこれだけ（秒）直った形の値をためる
   refMin: 20, // 線の内側にいた秒がこれより少ない項目は、ためた値ではなく、走りの平均を線の内側に寄せた値を基準にする
+  // 仮の基準：整え終わってから、今日の基準をためた秒がこれだけ（歩数で走っていた秒）たまったら、その平均を仮の基準にして、
+  // 今日の基準ができるまでも、基準からの崩れ（猫背・頭・上体・体全体）で声をかける。仮の基準を越えて崩れた秒（6秒平均が線を越えた秒）は、
+  // 今日の基準にためない（崩れた形を基準に混ぜないため）。今日の基準ができるまでに3分以上かかり、走りが途中で止まったとみると
+  // ため直しになる（2026-11-03 の走りでは、わざとの猫背の60秒がまるごと基準をためる間に入り、声が出なかった）
+  early: 30,
 }
 
 // よい例の範囲。結果の画面の「よい例との差」と、次の一歩（今日の意識）に使う。走っている間は、これで声をかけない。
@@ -322,5 +352,85 @@ export const GAIT = {
   typical: { vo: { min: 0.055, mid: 0.072, max: 0.091 }, hip: { min: 0.933, mid: 0.949, max: 0.964 }, runs: 93, kmh: { min: 9, max: 12.6 } },
 }
 
-// 走り姿のアニメーション（結果画面）
-export const STRIDE = { every: 20, sec: 1.2, frames: 36 }
+// 走り姿のアニメーション（ホームと結果画面）。作り方は stride.ts
+export const STRIDE = {
+  every: 20, // この秒数ごとに1周を作って、候補にためる
+  window: 8, // 直近この秒数のコマから1周を作る（ピッチ170なら約11周を重ねる）
+  minCycles: 4, // 重ねられた周がこれより少なければ作らない
+  maxGap: 0.25, // コマの間がこれよりあいたところはつながない（秒）
+  periodMin: 0.5, // 1周の長さの範囲（秒）。ピッチ240〜110
+  periodMax: 1.1,
+  periodTol: 0.2, // 区切りの間が1周の長さからこの割合よりずれた周は使わない
+  hintTol: 0.15, // 歩数から測った1周の長さがあれば、その前後この割合の中で1周の長さを探す
+  minCorr: 0.5, // 手前の足首の動きの自己相関がこれより低ければ、1周がはっきりしないので作らない
+  minFrames: 12, // 1周のコマ数（毎秒30コマで再生）の下限と上限
+  maxFrames: 40,
+  smooth: 1, // 1周をつなげてなめらかにする回数（[1 2 1]）
+  legacySec: 1.2, // 前の記録の走り姿：決まった1.2秒を36コマにならしたもの（表示するときに1周に直す）
+}
+
+// 厳しさ：ランナーのレベル（src/core/level.ts）ごとに、声をかける線と、良い姿勢（点数）の目盛りを変える。
+// 初心者＝やさしめ（大きな崩れだけ言う）、中級＝ふつう、上級＝きびしめ（小さな崩れも言う）。見る項目の増やし方はレベルのまま（STEPS）。
+// 変えるのは、今日の基準からの崩れの線（LIMITS の猫背・頭・腰、REL_LIMITS）と、正しいフォームの線のうち前へ出る側（FORM の上体・体全体の上の線、頭）。
+// 点数は同じ目盛りから出す（良い姿勢 = SCORE.good 点以上）ので、線をきびしくすると、良い姿勢の割合も同じだけきびしくなる。
+// 起きすぎの下の線（FORM.body.min・FORM.trunk.min）と着地は、どのレベルでも同じ（線の際のぶれで行き来したため。上の FORM の説明）。
+// 根拠（くわしくは docs/validation-plan.md の「猫背と厳しさ」）：
+//   研究データ（Riglet 2024 の59本、実機なみのずれ、すべての項目。sim/result-coach-strict.md）で、ふつうに走って出た誤った声は10分あたり
+//   初心者 1.24・中級 2.51・上級 4.02 回で、ほとんどが頭（上体・体全体・腰・猫背は どのレベルでも 0.00、起きすぎ 0.02）。頭の線は 5° にすると 4.7回（sim/result-coach.md の ③）なので、
+//   上級でも 6° まで。上体・体全体・腰は誤った声が出ないので、上級は崩しの小さい側まで見る（上体 3°：上体を3°倒した走りに気づく割合 25% → 98%、
+//   体全体 2.5°：3°傾けた走りに 56% → 98%、腰 3%：3%落とした走りに 58% → 97%）。猫背は、3° の崩しに 73%・93%・98%。
+//   記録した走り（sim/result-strictness.md）で、2026-11-03 のわざとの猫背には、どのレベルも7秒前後で「背中が丸まっています」。ふつうの区間の声は10分あたり 1.8・2.4・3.5回（頭と腰）。
+//   正しいフォームの線（上体・体全体の上の線、頭）は、初心者は前の線のまま。中級・上級は、よい例（GOOD）の上の端（上体 9.5°・体全体 9.6°）へ寄せるが、
+//   超えない（上体 11°・10°：人の動画の「突っ込み」は 11.1〜11.4°、研究データで線を越えた走りは 11° で 3.4%）。頭の線は、
+//   自分のふつうの値（首 42°・頭の位置 44°）にそろえた仮想実験（sim/result-head-line.md）で、誤った声が10分あたり 48°/52° 0.04回・46°/50° 0.26回・
+//   44°/48° 0.88回、頭を +6° 前に出した走りに気づく割合が 42%・78%・88%
+type Lim = { full: number; zero: number; cue: number }
+export interface Strict {
+  hunch: Lim
+  head: Lim
+  hip: Lim
+  rel: { trunk: Lim; trunkBack: Lim; body: Lim; bodyBack: Lim }
+  form: { trunkMax: number; bodyMax: number; neck: number; headLean: number }
+}
+export const STRICT: Record<Level, Strict> = {
+  beginner: {
+    hunch: { full: 2, zero: 9, cue: 4 },
+    head: { full: 5, zero: 15, cue: 8 },
+    hip: { full: 3, zero: 10, cue: 4 },
+    rel: { trunk: { full: 2, zero: 10, cue: 4 }, trunkBack: { full: 2, zero: 10, cue: 4 }, body: { full: 1.5, zero: 7, cue: 3.5 }, bodyBack: { full: 1.5, zero: 7, cue: 3.5 } },
+    form: { trunkMax: 12, bodyMax: 15, neck: 48, headLean: 52 },
+  },
+  intermediate: {
+    hunch: { full: 1.5, zero: 8, cue: 3.5 },
+    head: { full: 4, zero: 14, cue: 7 },
+    hip: { full: 2.5, zero: 9, cue: 3.5 },
+    rel: { trunk: { full: 1.5, zero: 9, cue: 3.5 }, trunkBack: { full: 1.5, zero: 9, cue: 3.5 }, body: { full: 1.2, zero: 6, cue: 3 }, bodyBack: { full: 1.2, zero: 6, cue: 3 } },
+    form: { trunkMax: 11, bodyMax: 14, neck: 46, headLean: 50 },
+  },
+  advanced: {
+    hunch: { full: 1.2, zero: 7, cue: 3 },
+    head: { full: 3.5, zero: 13, cue: 6 },
+    hip: { full: 2, zero: 8, cue: 3 },
+    rel: { trunk: { full: 1, zero: 8, cue: 3 }, trunkBack: { full: 1, zero: 8, cue: 3 }, body: { full: 1, zero: 5, cue: 2.5 }, bodyBack: { full: 1, zero: 5, cue: 2.5 } },
+    form: { trunkMax: 10, bodyMax: 13, neck: 44, headLean: 48 },
+  },
+}
+// 既定は中級（ふつう）。レベルが分からない走り（前の版の記録を通し直すときなど）もこれ
+export const DEFAULT_STRICT: Level = 'intermediate'
+export let strictness: Level = DEFAULT_STRICT
+
+// 厳しさを入れ替える。線の入れ物（LIMITS・REL_LIMITS・FORM）の中身を書き換えるので、判定・点数・/theory/ の表示が同じ値になる。
+// コーチを作るとき（coach.ts の Coach）に、その走りのレベルで呼ぶ。1つの画面で同時に走るコーチは1つだけ
+export function applyStrictness(level: Level = DEFAULT_STRICT) {
+  const s = STRICT[level]
+  strictness = level
+  Object.assign(LIMITS.hunch, s.hunch)
+  Object.assign(LIMITS.head, s.head)
+  Object.assign(LIMITS.hip, s.hip)
+  for (const k of ['trunk', 'trunkBack', 'body', 'bodyBack'] as const) Object.assign(REL_LIMITS[k], s.rel[k])
+  FORM.trunk.max = s.form.trunkMax
+  FORM.body.max = s.form.bodyMax
+  FORM.head.neck = s.form.neck
+  FORM.head.headLean = s.form.headLean
+}
+applyStrictness()

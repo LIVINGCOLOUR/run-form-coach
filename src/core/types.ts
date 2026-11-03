@@ -8,11 +8,13 @@ export interface Pt {
 // 1コマの骨格（MediaPipe Pose の33点）
 export type Frame = Pt[]
 
-// 姿勢の項目。trunkBack・bodyBack は、上体・体全体が起きすぎた（後ろに傾いた）側。landing は着地の位置（足が体より前に着く）
-export type ItemKey = 'head' | 'trunk' | 'trunkBack' | 'body' | 'bodyBack' | 'hip' | 'landing'
-// 並び順が、声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰 → 着地）。
-// 着地は最後：体が後ろに残る・腰が落ちると、着地も前に出る（3R の動画）ので、もとの崩れを先に言う
-export const ITEM_KEYS: ItemKey[] = ['head', 'trunk', 'trunkBack', 'body', 'bodyBack', 'hip', 'landing']
+// 姿勢の項目。hunch は猫背（背中が丸まり、上体と首がいっしょに前へ）。trunkBack・bodyBack は、上体・体全体が起きすぎた（後ろに傾いた）側。
+// landing は着地の位置（足が体より前に着く）
+export type ItemKey = 'hunch' | 'head' | 'trunk' | 'trunkBack' | 'body' | 'bodyBack' | 'hip' | 'landing'
+// 並び順が、声をかける優先順（猫背 → 頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰 → 着地）。
+// 猫背は最初：背中が丸まると、頭も上体も前に出る。胸を開けば両方が戻るので、もとの崩れを先に言う。
+// 着地は最後：体が後ろに残る・腰が落ちると、着地も前に出る（人の動画）ので、もとの崩れを先に言う
+export const ITEM_KEYS: ItemKey[] = ['hunch', 'head', 'trunk', 'trunkBack', 'body', 'bodyBack', 'hip', 'landing']
 
 // 初回だけ取る直立の基準
 export interface Baseline {
@@ -26,6 +28,8 @@ export interface Baseline {
 export interface Sample {
   t: number // 練習開始からの秒（一時停止中は進まない）
   head: number // 今日の基準（整えたあとの形）から頭が前に出た量（度）。基準ができるまでは 0
+  // 猫背：今日の基準からの、上体の前傾の増えと首の角度の増えの、小さいほう（度。両方がいっしょに増えたときだけ大きい）。基準ができるまでは無い
+  hunch?: number
   trunk: number
   body: number
   hipDrop: number // 今日の基準の腰の高さからの下がり（%）
@@ -72,12 +76,15 @@ export interface FormResult {
 
 export type Category = 'good' | 'mid' | 'bad'
 
-// アニメーション用の1歩（正規化済みの骨格の連続）
+// アニメーション用の1周（2歩）。鉛直をそろえたピクセル座標の骨格の連続
 export interface Stride {
   frames: Frame[]
   dir: 1 | -1
   score: number
   avg: { head: number; trunk: number; body: number; hipDrop: number }
+  // 1周の秒数。あれば frames は何周も重ねたきれいな1周（毎秒30コマで再生して実際の速さ）。
+  // 無いのは前の記録で、決まった1.2秒を36コマにならしたもの（表示するときに1周に直す。camera/stride.ts の legacyCycle）
+  sec?: number
 }
 
 export interface CueLog {
@@ -153,10 +160,12 @@ export interface SensorLog {
   stand?: { t: number; base: [number, number, number] } // 立った姿勢を覚えた t と、胸の重力の向き
   runLean?: { t: number; deg: number } // 走る前傾を覚えた t と角度（度）
   cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]
+  slips?: [number, number, number][] // 胸のセンサーがずれたとみなした [t, ずれを測るもとの基準（度）, 置き直した基準（度）]。見張る前の記録にはない
   // 頭が前に出たのを頭のセンサーで見た記録（胸と同じ形）。頭を見る前の記録にはない
   head?: {
     stand?: { t: number; base: [number, number, number] }
     runLean?: { t: number; deg: number }
     cues: [number, number, number][] // [t, 頭の前への傾き（度）, 震わせられたか 1/0]
+    slips?: [number, number, number][] // 胸と同じ形
   }
 }

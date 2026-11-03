@@ -11,8 +11,13 @@ import type { Vec3 } from './parse'
 // 基準（走る前傾）は、線を越えていない間だけ、follow 秒の時定数でゆっくり今の傾きに寄せる。
 // ベルトの上でセンサーが少しずつずれていく（2026-11-02 の走りで、胸の傾きが3分半で約15°ずつ増えた。カメラの上体は変わらず）のを吸い、
 // 数秒で起きた崩れは線を越えるので知らせる。線を越えている間は基準を動かさないので、崩れたままなら知らせ続ける
+// ずれの見張り：次のどちらかで、崩れではなくセンサーの付け位置がずれたとみなし、基準を直近 slipRef 秒の傾きの真ん中の値へ置き直す（slip を返す）
+//   ・線を越えていた時間（線の下にいる間は slipDecay 倍の速さで減らす）が slipSec 秒に達した：急にずれて、線を越えたままになった
+//   ・基準が、走る前傾（前にずれとみなしたときは、そのときの基準）から slipDrift 度より前へ動いた：少しずつずれて、寄せた基準が動いた。
+//     後ろへ動いたのは見ない（鳴りにくくなるだけで、外れた知らせにはならない。基準は寄せて追う）
+// 2026-11-02 20:23 と 2026-11-03 15:08 の走りで、胸のセンサーがずれて傾きが +9〜13° 増えた（カメラの上体は変わらず）。わざとの猫背（60秒まで）は置き直さない
 
-export type LeanStep = { tilt: number | null; cue: boolean; learned?: number; ref?: number | null }
+export type LeanStep = { tilt: number | null; cue: boolean; learned?: number; ref?: number | null; slip?: { from: number; to: number } }
 
 const DEG = 180 / Math.PI
 const norm = (v: Vec3): Vec3 | null => {
@@ -39,6 +44,10 @@ export class LeanDetector {
   private lastSample = -Infinity // 最後に値が届いた t
   private overSince: number | null = null
   private lastCue = -Infinity
+  private overAcc = 0 // 線を越えていた時間（秒。線の下にいる間は減らす）
+  private tilts: { t: number; v: number }[] = [] // 直近 slipRef 秒の傾き（置き直す先を決める）
+  private anchor: number | null = null // ずれを測るもと（走る前傾。ずれとみなしたら、そのときの基準）
+  slips = 0 // ずれとみなして基準を置き直した回数
   readonly p: LeanParams
 
   // keepSec：立った姿勢を覚えるのに、さかのぼる長さの上限（秒）
@@ -70,6 +79,9 @@ export class LeanDetector {
     this.ref = null
     this.runSec = 0
     this.learnUs = []
+    this.overAcc = 0
+    this.tilts = []
+    this.anchor = null
     return true
   }
 
@@ -124,6 +136,7 @@ export class LeanDetector {
         if (this.learnUs.length >= p.learnMin) {
           this.runLean = this.learnNow()
           this.ref = this.runLean
+          this.anchor = this.runLean
           out.learned = this.runLean
           out.ref = this.ref
           out.tilt = this.tilt()
@@ -133,16 +146,33 @@ export class LeanDetector {
       return out
     }
     const ref = this.ref ?? this.runLean
+    this.tilts.push({ t, v: tilt })
+    while (t - this.tilts[0].t > p.slipRef) this.tilts.shift()
     if (tilt > ref + p.margin) {
       this.overSince ??= t
+      this.overAcc += dt
       if (t - this.overSince >= p.hold && t - this.lastCue >= p.cooldown) {
         this.lastCue = t
         out.cue = true
       }
     } else {
       this.overSince = null
+      this.overAcc = Math.max(0, this.overAcc - dt * p.slipDecay)
       // 線の下にいる間だけ、基準を今の傾きへゆっくり寄せる（follow が 0 なら寄せない）
       if (p.follow > 0) this.ref = ref + (tilt - ref) * Math.min(1, dt / p.follow)
+    }
+    // 崩れではなく、センサーがずれた：基準を今の傾きへ置き直し、ずれのせいで知らせ続けないようにする（slipSec・slipDrift が 0 なら見張らない）
+    const long = p.slipSec > 0 && this.overAcc >= p.slipSec
+    const drift = p.slipDrift > 0 && this.ref !== null && this.ref - (this.anchor ?? this.runLean) >= p.slipDrift
+    if (long || drift) {
+      const from = this.anchor ?? this.runLean
+      this.ref = median(this.tilts.map((x) => x.v))
+      this.anchor = this.ref
+      this.overAcc = 0
+      this.overSince = null
+      this.slips++
+      out.cue = false
+      out.slip = { from, to: this.ref }
     }
     out.ref = this.ref
     return out

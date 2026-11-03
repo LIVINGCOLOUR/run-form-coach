@@ -7,9 +7,9 @@ export type Level = 'beginner' | 'intermediate' | 'advanced'
 
 export const LEVEL_LABEL: Record<Level, string> = { beginner: '初心者', intermediate: '中級', advanced: '上級' }
 export const LEVEL_NOTE: Record<Level, string> = {
-  beginner: '注意することを1つずつ増やします',
-  intermediate: '前かがみと腰の高さから始めます',
-  advanced: '最初からすべての項目を見ます',
+  beginner: '注意することを1つずつ増やします。大きな崩れだけ言います',
+  intermediate: '前かがみと腰の高さから始めます。声をかける線はふつうです',
+  advanced: '最初からすべての項目を見ます。小さな崩れも言います',
 }
 
 // 段階ごとに、新しく足す項目と、走り出す前に言うこと。最後の段階（STEPS.length）は「すべて」。
@@ -22,7 +22,7 @@ export const LEVEL_NOTE: Record<Level, string> = {
 // 足が前に着く形は膝の痛みやブレーキの形として、講師も何度も取り上げる（3R の動画）ため。体が後ろに残る・腰が落ちると着地も前に出るので、
 // それらを先に見る
 export const STEPS: { add: ItemKey[]; title: string; focus: string; up?: string }[] = [
-  { add: ['trunk', 'body'], title: '胸のライトで前を照らす', focus: PHRASES.focusUpright },
+  { add: ['trunk', 'body', 'hunch'], title: '胸のライトで前を照らす', focus: PHRASES.focusUpright },
   { add: ['hip', 'trunkBack', 'bodyBack'], title: '腰を高く保つ', focus: PHRASES.focusHip, up: PHRASES.stepHip },
   { add: ['landing'], title: '体の真下に足を下ろす', focus: PHRASES.focusLanding, up: PHRASES.stepLanding },
   { add: ['head'], title: '耳を肩の真上に', focus: PHRASES.focusHead, up: PHRASES.stepHead },

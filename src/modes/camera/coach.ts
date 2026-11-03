@@ -4,11 +4,14 @@ import { category } from '../../core/scoring'
 import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
-import { FORM, LANDING, REL_LIMITS, STRIDE } from './params'
+import { applyStrictness, FORM, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
+import type { Level } from '../../core/level'
+import { CUE as CUE_P } from '../../core/params'
 import { RunningGate } from './motion'
 import { clampInside, formOver, formScale, FormStage, FORM_ORDER, voiced, type FormValues } from './form'
-import { LandingDrift, LandingWatch, refOf, SpeedGuard, type Peak } from './landing'
+import { LandingDrift, LandingWatch, median, refOf, SpeedGuard, type Peak } from './landing'
 import { GaitWatch } from './gait'
+import { strideCycle } from './stride'
 import { CueEngine, type EngineInput, type ItemSpec, type ModeAnalyzer, type SecondContext, type SecondOut, type Values } from '../../core/engine'
 
 // カメラモード：トレッドミルの横のスマホで骨格を取り、頭・体幹・体全体（前に倒れすぎ・起きすぎ）・腰・着地の位置を見る。顎は測って記録するだけ。
@@ -111,6 +114,10 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   // 今日の基準をためている間の速さの見張り（ためはじめの速さと比べる）。速さが変わってため直したら poolMoved
   private poolGuard = new SpeedGuard()
   private poolMoved = false
+  // 仮の基準（FORM.early）：今日の基準ができるまで、ためはじめの FORM.early 秒の平均で、基準からの崩れを見る。速さが変わってため直したら捨てる
+  private earlyRef: Pick<Ref, 'neck' | 'headLean' | 'trunk' | 'body'> | null = null
+  // 直近の秒の、基準からの崩れ（点数の目盛り）。CUE.window 秒の平均で、崩れた秒を基準にためないためと、猫背が線を越えている間に上体・頭の声を重ねないため
+  private recent: { t: number; v: Values<ItemKey> }[] = []
 
   // 今日の基準は、歩数で走っていると見た秒だけで作る。running は Coach が決めた「走っている」（RunningGate）。
   // runFrom は、いまの走りの始まり（しくみの秒）。基準ができる前に止まったら null にして、整え直す
@@ -135,7 +142,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const last = this.ring[this.ring.length - 1]
     if (last && inp.t - last.t > 0.3) this.ring = []
     this.ring.push({ frame: inp.frame, dir: inp.m.dir, t: inp.t })
-    while (this.ring.length && inp.t - this.ring[0].t > STRIDE.sec + 0.3) this.ring.shift()
+    while (this.ring.length && inp.t - this.ring[0].t > STRIDE.window) this.ring.shift()
   }
 
   // 走るのが止まった：基準ができる前なら、ためた分を捨てて、次に走り出したところから整え直す
@@ -145,6 +152,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     this.pool = emptyPool()
     this.poolGuard = new SpeedGuard()
     this.poolMoved = false
+    this.earlyRef = null
+    this.recent = []
     this.early = earlyDrift()
     this.form = this.form.restart()
   }
@@ -192,15 +201,24 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     // 今日の基準にためる：整え終わってから（走り出して HIP_REF.from 秒より後）の、歩数で走っていた秒。項目ごとに、
     // 直近 FORM.hold 秒の平均が線の内側で、知らせて直るのを待っていない秒だけ（直したあとの形。直す前の形を混ぜない）
     let ready = false
+    let poolSame = false
     if (this.leanRef === null && rt !== null && stepping && rt >= HIP_REF.from && this.form.doneAt !== null) {
       // ためている間も速さを見張る（走り出しはゆっくりで、あとからベルトの速さを上げる人がいるため）。外れている秒はためず、
       // 速さが変わったとみたら、それまでにためた秒を捨てて、新しい速さでため直す
       const pw = this.land.window()
       const c = pw ? this.poolGuard.check(pw) : 'same'
+      poolSame = c === 'same'
       if (c === 'changed') {
         this.pool = emptyPool()
         this.poolMoved = true
-      } else if (c === 'same') addSecond(this.pool, this.form, t, v, hipRatio, yaw, now.chin, steps)
+        this.earlyRef = null
+        this.recent = []
+      } else if (c === 'same') {
+        // 仮の基準から崩れている間（直近 CUE.window 秒の平均が線を越えた）は、ためない
+        if (this.earlyRef) this.noteRecent(t, relValues(v, this.earlyRef, true))
+        if (!this.earlyRef || !this.recentOver(REL_KEYS)) addSecond(this.pool, this.form, t, v, hipRatio, yaw, now.chin, steps)
+        if (!this.earlyRef && this.pool.all.length >= FORM.early) this.earlyRef = postureRefOf(this.pool, this.form).lean
+      }
     }
     // 走り出して長くたっても整え終わらない（値が足りない）ときは、打ち切る
     if (this.leanRef === null && rt !== null && rt > HIP_REF.to + FORM.later) this.form.finish(t)
@@ -233,7 +251,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     }
     // 姿勢を今日の基準と比べない秒：速さが外れている秒と、速さが変わって基準をためなおしている間
     const paused = hadRef && (away || this.repool !== null)
-    const ref = this.leanRef
+    // 今日の基準ができるまでは、仮の基準と比べる（速さが外れていない、ためている秒だけ）
+    const ref = this.leanRef ?? (poolSame ? this.earlyRef : null)
     const hipDrop = this.hipRef ? Math.max(0, ((this.hipRef - hipRatio) / this.hipRef) * 100) : 0
     // 頭は、今日の基準との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
     const head = ref ? headForward(neck - ref.neck, headLean - ref.headLean) : 0
@@ -241,10 +260,10 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     // 速さの目安が基準から大きく変わった秒は比べず、基準を作り直す（landing.ts の LandingDrift）。基準ができたこの秒は、ここで比べる
     if (!hadRef) {
       lw = this.land.window(undefined, this.drift.ref?.near)
-      landing = ref ? this.drift.judge(lw, steps, stepping) : undefined
+      landing = this.leanRef ? this.drift.judge(lw, steps, stepping) : undefined
     }
     // 今日の基準ができるまでは、着地の仮の基準と比べる（LANDING.early）
-    if (!ref && LANDING.early && rt !== null && rt >= FORM.from) {
+    if (!this.leanRef && LANDING.early && rt !== null && rt >= FORM.from) {
       const ew = this.land.window(undefined, this.early.ref?.near)
       landing = this.early.judge(ew, steps, stepping)
       if (this.early.ref) lw = ew
@@ -255,15 +274,20 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     // しくみが声をかける値：今日の基準からの崩れ（基準ができるまでと、姿勢を比べない秒は無い）。
     // 起きすぎの側は、歩数で走っていた秒だけ判定する（歩くと上体も体全体も起きるので、歩いている間に声をかけないため）
     const values: Values<ItemKey> = {}
+    let hunch: number | undefined
     if (ref && judge && back && !paused) {
-      values.trunk = judge.trunk
-      values.body = judge.body
-      if (stepping) {
-        values.trunkBack = back.trunk
-        values.bodyBack = back.body
-      }
-      values.head = head
+      const rv = relValues(v, ref, stepping)
+      hunch = rv.hunch
+      Object.assign(values, rv)
       if (this.hipRef) values.hip = hipDrop
+    }
+    // 点数は、猫背が線を越えている間も、上体と頭を数える。声は、猫背が線を越えている間（直近 CUE.window 秒の平均）は猫背だけにする
+    // （背中が丸まると上体も頭も前に出るので、「前かがみ」「頭が前」を重ねて言わない。胸を開けば両方戻る）
+    const scored: Values<ItemKey> = { ...values }
+    if (hunch !== undefined) this.noteRecent(t, values)
+    if (hunch !== undefined && this.recentOver(['hunch'])) {
+      delete values.trunk
+      delete values.head
     }
     if (landing !== undefined) values.landing = landing
     // 正しいフォームの線を外れた量（点数の目盛り）。歩数で走っていた秒だけ（速さが外れている秒は除く）。頭は斜めから撮っているように見える秒は比べない。
@@ -282,28 +306,53 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
       }
     }
     // 点数は、今日の基準からの崩れと、正しいフォームの線の外れの、悪いほう
-    const both: Values<ItemKey> = { ...values }
+    const both: Values<ItemKey> = { ...scored }
     for (const k of Object.keys(form) as ItemKey[]) both[k] = Math.max(both[k] ?? -Infinity, form[k]!)
     const score = ctx.score(both)
     // 顎：測って記録するだけ。上体が起きた分（頭は上体といっしょに回る）を差し引く
-    const chin = ref ? now.chin - ref.chin + (trunk - ref.trunk) : undefined
+    const chin = this.leanRef ? now.chin - this.leanRef.chin + (trunk - this.leanRef.trunk) : undefined
     const sample: Sample = { t, head, trunk, body, hipDrop, score: score ?? 100, quiet: ctx.quiet, judge, back, headLean, neck, yaw, form, chin }
+    if (hunch !== undefined) sample.hunch = hunch
     if (paused) sample.paused = true
     if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }
     if (score !== null) this.maybeKeepStride(sample)
     return { sample, values, ready, score, say: lead.say, hold: lead.hold }
   }
 
+  // 直近の秒の、基準からの崩れをためる（同じ秒はあと勝ち）。CUE.window 秒より古いものは捨てる
+  private noteRecent(t: number, v: Values<ItemKey>) {
+    const r = this.recent
+    if (r.length && r[r.length - 1].t === t) r[r.length - 1].v = v
+    else r.push({ t, v })
+    while (r.length && r[0].t <= t - CUE_P.window) r.shift()
+  }
+
+  // 直近 CUE.window 秒の平均が、ks のどれかで声をかける線を越えているか（しくみの窓と同じ：値のある秒が CUE.coverage 以上）
+  private recentOver(ks: ItemKey[]): boolean {
+    return ks.some((k) => {
+      const xs = this.recent.flatMap((x) => (x.v[k] === undefined ? [] : [x.v[k]!]))
+      return xs.length >= CUE_P.window * CUE_P.coverage && mean(xs) > LIMITS[k].cue
+    })
+  }
+
+  // 走り姿の候補：直近 STRIDE.window 秒から、何周も重ねたきれいな1周を作る（stride.ts）。作れなければ、次の秒にもう一度ためす
   private maybeKeepStride(s: Sample) {
     const r = this.ring
-    if (r.length < 8 || r[r.length - 1].t - r[0].t < STRIDE.sec || s.t - this.lastStrideAt < STRIDE.every) return
+    if (r.length < 8 || r[r.length - 1].t - r[0].t < STRIDE.window - 1 || s.t - this.lastStrideAt < STRIDE.every) return
+    const dir = r[r.length - 1].dir
+    if (r.some((x) => x.dir !== dir)) return
+    // 1周の長さの目安：同じ区間の1歩の長さ（gait.ts）の中央値の2倍
+    const steps = this.gait.steps.filter((x) => x.t >= r[0].t).map((x) => x.sec)
+    const c = strideCycle(r, dir, steps.length >= 4 ? 2 * median(steps) : undefined)
+    if (!c) return
     this.lastStrideAt = s.t
     const list = this.candidates[category(s.score)]
     const stride: Stride = {
-      frames: resample(r, STRIDE.frames, STRIDE.sec),
-      dir: this.ring[this.ring.length - 1].dir,
+      frames: c.frames,
+      dir,
       score: s.score,
       avg: { head: Math.max(0, s.head), trunk: s.trunk, body: s.body, hipDrop: s.hipDrop },
+      sec: c.sec,
     }
     if (list.length < 60) list.push(stride)
     else list[Math.floor(Math.random() * list.length)] = stride
@@ -329,7 +378,10 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   // 走る前に立って測る基準は、猫背の確認にだけ使い、ここには渡さない（頭は今日の基準と比べる）
   // 判定しなかった秒（values に入れなかった秒）には、その項目で新しく知らせない（holdUnjudged）：着地と姿勢は速さが変わった秒、
   // 起きすぎと着地は歩数で走っていない秒に判定を止めるので、止めた直後に、止める前の秒の値で知らせないため
-  constructor(opts: { pause?: boolean; items?: ItemKey[] } = {}) {
+  // level：ランナーのレベル。声をかける線と点数の目盛りの厳しさ（params.ts の STRICT）を、ここで入れ替える。
+  //   なければ入れ替えない（いまの線のまま。読み込んだときは中級＝ふつう。採点の道具が線を書き換えて試すため）
+  constructor(opts: { pause?: boolean; items?: ItemKey[]; level?: Level } = {}) {
+    if (opts.level) applyStrictness(opts.level)
     super(new CameraAnalyzer(), { holdUnjudged: true, ...opts })
   }
 
@@ -386,23 +438,33 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   }
 }
 
-// 実際に取れたコマ（毎秒15コマ前後）を、直近 sec 秒を n コマに等間隔でならす
-function resample(ring: { frame: Frame; t: number }[], n: number, sec: number): Frame[] {
-  const end = ring[ring.length - 1].t
-  const out: Frame[] = []
-  let j = 0
-  for (let k = 0; k < n; k++) {
-    const t = end - sec + (sec * k) / (n - 1)
-    while (j + 1 < ring.length - 1 && ring[j + 1].t <= t) j++
-    const a = ring[j]
-    const b = ring[Math.min(j + 1, ring.length - 1)]
-    const u = b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0
-    out.push(a.frame.map((p, i) => ({ x: p.x + (b.frame[i].x - p.x) * u, y: p.y + (b.frame[i].y - p.y) * u, v: Math.min(p.v, b.frame[i].v) })))
+export { itemScore }
+
+// 基準からの崩れで見る姿勢の項目（腰と着地のほか）
+const REL_KEYS: ItemKey[] = ['hunch', 'head', 'trunk', 'trunkBack', 'body', 'bodyBack']
+
+// 基準 ref からの崩れ（点数の目盛り）：上体・体全体の前と後ろ（後ろは歩数で走っていた秒だけ）、頭、猫背
+function relValues(v: FormValues, ref: Pick<Ref, 'neck' | 'headLean' | 'trunk' | 'body'>, stepping: boolean): Values<ItemKey> {
+  const out: Values<ItemKey> = {
+    hunch: hunchOf(v.trunk - ref.trunk, v.neck - ref.neck),
+    head: headForward(v.neck - ref.neck, v.headLean - ref.headLean),
+    trunk: toScale('trunk', v.trunk - ref.trunk),
+    body: toScale('body', v.body - ref.body),
+  }
+  if (stepping) {
+    out.trunkBack = toScale('trunkBack', ref.trunk - v.trunk)
+    out.bodyBack = toScale('bodyBack', ref.body - v.body)
   }
   return out
 }
 
-export { itemScore }
+// 猫背：今日の基準からの、上体（腰→肩）の前傾の増えと、首の角度（肩→耳の前傾 − 腰→肩の前傾）の増え ＋ HUNCH.neckSlack の、小さいほう。
+// 背中が丸まると、肩が前に落ちて上体の線が前に傾き、頭もその先へ出るので、両方がいっしょに増える。
+// 頭だけ前に出すと上体は傾かないので小さいまま。股関節から上体ごと前に倒す（背中はまっすぐ、首の角度は変わらない）と、
+// HUNCH.neckSlack で頭打ちになり、どのレベルの線にも届かない（そちらは上体の前かがみの声）。くわしくは params.ts の HUNCH
+export function hunchOf(trunkDelta: number, neckDelta: number): number {
+  return Math.min(trunkDelta, neckDelta + HUNCH.neckSlack)
+}
 
 // 頭が前に出た量：首の角度の増え（頭が上体より前に出た）と、頭の位置そのものの増えの、小さいほう。
 // 上体が起きると首の角度だけが増える（頭は動いていない）ので、頭の位置そのものも前に出たときだけ「頭が前」にする
@@ -417,6 +479,7 @@ export function judged(s: Sample, k: ItemKey): number {
   if (k === 'landing') return Math.max(f, s.land?.drift ?? -Infinity)
   if (s.paused) return f
   if (k === 'hip') return s.hipDrop
+  if (k === 'hunch') return s.hunch ?? -Infinity
   if (k === 'head') return Math.max(f, s.judge ? s.head : -Infinity)
   if (k === 'trunkBack') return Math.max(f, s.back?.trunk ?? -Infinity)
   if (k === 'bodyBack') return Math.max(f, s.back?.body ?? -Infinity)

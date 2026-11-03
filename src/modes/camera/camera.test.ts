@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
 import { itemScore, postureScore } from './scoring'
-import { Coach, headForward, toScale } from './coach'
-import { FORM, GOOD, LIMITS, REL_LIMITS, SETUP } from './params'
+import { Coach, headForward, hunchOf, toScale } from './coach'
+import { applyStrictness, FORM, GOOD, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
 import { formOver, formScale } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
@@ -13,11 +13,14 @@ import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, RunningGate, bodyVisible } from './motion'
 import { HIP_REF, RUNNING } from '../../core/params'
 import { FOCUS, PHRASES, phraseId } from '../../core/phrases'
-import { demoStride, strideStats, DEMO_SPM, REFERENCE } from './ui/figure'
+import { demoStride, strideStats, DEMO_FRAMES, DEMO_SPM, REFERENCE } from './ui/figure'
 import type { FormGroup, FormResult, Frame, Session } from '../../core/types'
 import type { Measure } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
+
+// このファイルの多くのテストは、初心者（やさしめ）の線で書いている。厳しさを変えるテストは、その中で入れ替える
+beforeEach(() => applyStrictness('beginner'))
 
 describe('角度の測定', () => {
   it('体幹の前傾を測れる', () => {
@@ -280,7 +283,9 @@ describe('コーチの流れ', () => {
     const s = coach.finish()
     expect(s.share.good + s.share.mid + s.share.bad).toBeCloseTo(1, 5)
     expect(s.share.good).toBeGreaterThan(0.5)
-    expect(s.strides.good?.frames.length).toBe(36)
+    // 走り姿は、見本の走り（1周 DEMO_FRAMES コマ）のちょうど1周
+    expect(s.strides.good?.frames.length).toBe(DEMO_FRAMES)
+    expect(s.strides.good?.sec).toBeCloseTo(DEMO_FRAMES / 30, 1)
     expect(s.strides.bad).toBeDefined()
     const trunk = s.form!.find((r) => r.group === 'trunk')!
     expect(trunk.value).toBeGreaterThan(good.trunk)
@@ -404,7 +409,9 @@ describe('省電力（間引いて見る）', () => {
     feedSparse(coach, 0, 600, good)
     const s = coach.finish()
     expect(s.share.good).toBeGreaterThan(0.95)
-    expect(s.strides.good?.frames.length).toBe(36)
+    // 走り姿は、見本の走り（1周 DEMO_FRAMES コマ）のちょうど1周
+    expect(s.strides.good?.frames.length).toBe(DEMO_FRAMES)
+    expect(s.strides.good?.sec).toBeCloseTo(DEMO_FRAMES / 30, 1)
   })
 })
 
@@ -1049,5 +1056,79 @@ describe('正しいフォームへ整える（走り出し）', () => {
     expect(itemScore('bodyBack', formScale('body', 'bodyBack', FORM.body.span))).toBe(0)
     expect(formOver('trunk', { trunk: FORM.trunk.max + 2, body: 9, neck: 0, headLean: 0 })).toEqual({ key: 'trunk', over: 2 })
     expect(formOver('head', { trunk: 7, body: 9, neck: FORM.head.neck + 5, headLean: FORM.head.headLean - 1 }).over).toBe(-1)
+  })
+})
+
+describe('猫背（背中の丸まり）', () => {
+  it('上体の前傾と首の角度が、いっしょに増えたときだけ大きい（小さいほう）', () => {
+    expect(hunchOf(5, 6)).toBe(5)
+    expect(hunchOf(5, 0)).toBe(HUNCH.neckSlack) // 股関節から上体ごと倒す（背中はまっすぐ）：どのレベルの線にも届かない
+    for (const s of Object.values(STRICT)) expect(HUNCH.neckSlack).toBeLessThan(s.hunch.cue)
+    expect(hunchOf(0.5, 8)).toBe(0.5) // 頭だけ前
+  })
+  it('今日の基準ができたあと、背中が丸まったら「背中が丸まっています」と言い、前かがみ・頭の声は重ねない', () => {
+    applyStrictness('intermediate')
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 260, good)
+    expect(coach.leanRef).not.toBeNull()
+    // 上体 +4°・首 +4°（頭の位置は上体と首の分 +8°）。上体は正しいフォームの線（中級 11°）の内側
+    const said = feedSparse(coach, 260, 40, { ...good, trunk: good.trunk + 4, neck: good.neck + 4, headLean: good.headLean + 8 }).speak
+    expect(said).toContain(PHRASES.cueHunch)
+    expect(said).not.toContain(PHRASES.cueTrunk)
+    expect(said).not.toContain(PHRASES.cueHead)
+  })
+  it('股関節から上体ごと倒した（首の角度は変わらない）ときは、猫背ではなく前かがみ', () => {
+    applyStrictness('intermediate')
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 260, good)
+    const said = feedSparse(coach, 260, 40, { ...good, trunk: good.trunk + 5, headLean: good.headLean + 5 }).speak
+    expect(said).toContain(PHRASES.cueTrunk)
+    expect(said).not.toContain(PHRASES.cueHunch)
+  })
+  it('今日の基準ができる前でも、仮の基準（FORM.early）から丸まったら言い、丸まった秒は今日の基準にためない', () => {
+    applyStrictness('intermediate')
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 100, good)
+    expect(coach.leanRef).toBeNull()
+    const said = feedSparse(coach, 100, 40, { ...good, trunk: good.trunk + 5, neck: good.neck + 5, headLean: good.headLean + 10 }).speak
+    expect(said).toContain(PHRASES.cueHunch)
+    feedSparse(coach, 140, 120, good)
+    expect(coach.leanRef).not.toBeNull()
+    expect(coach.leanRef!.trunk).toBeLessThan(good.trunk + 0.5) // 丸まった40秒を混ぜていない
+  })
+})
+
+describe('厳しさ（レベルごとの線）', () => {
+  it('上級ほど線がきびしい（声をかける線・点数の目盛り・正しいフォームの線）', () => {
+    const [b, i, a] = [STRICT.beginner, STRICT.intermediate, STRICT.advanced]
+    for (const k of ['hunch', 'head', 'hip'] as const) {
+      expect(a[k].cue).toBeLessThan(i[k].cue)
+      expect(i[k].cue).toBeLessThan(b[k].cue)
+      for (const s of [a, i, b]) expect(s[k].full).toBeLessThan(s[k].cue)
+    }
+    for (const k of ['trunk', 'trunkBack', 'body', 'bodyBack'] as const) expect(a.rel[k].cue).toBeLessThan(b.rel[k].cue)
+    expect(a.form.trunkMax).toBeLessThan(b.form.trunkMax)
+    expect(a.form.neck).toBeLessThan(b.form.neck)
+  })
+  it('コーチを作るときにレベルの線へ入れ替える', () => {
+    new Coach({ level: 'advanced' })
+    expect(LIMITS.head.cue).toBe(STRICT.advanced.head.cue)
+    expect(REL_LIMITS.trunk.cue).toBe(STRICT.advanced.rel.trunk.cue)
+    expect(FORM.head.neck).toBe(STRICT.advanced.form.neck)
+    new Coach({ level: 'beginner' })
+    expect(LIMITS.head.cue).toBe(STRICT.beginner.head.cue)
+  })
+  it('同じ小さな崩れ（頭を基準より7°前）に、上級は声をかけ、初心者はかけない。良い姿勢の割合も上級のほうが低い', () => {
+    const run = (level: 'beginner' | 'advanced') => {
+      const coach = new Coach({ pause: false, level })
+      feedSparse(coach, 0, 260, good)
+      const said = feedSparse(coach, 260, 60, { ...good, neck: good.neck + 7, headLean: good.headLean + 7 }).speak
+      return { said, good: coach.finish().share.good }
+    }
+    const b = run('beginner')
+    const a = run('advanced')
+    expect(a.said).toContain(PHRASES.cueHead)
+    expect(b.said).not.toContain(PHRASES.cueHead)
+    expect(a.good).toBeLessThan(b.good)
   })
 })

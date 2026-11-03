@@ -10,7 +10,7 @@ import { ShareBar } from '../../../ui/ShareBar'
 
 const CAT_LABEL: Record<Category, string> = { good: '良い', mid: 'ふつう', bad: '悪い' }
 const CAT_COLOR: Record<Category, string> = { good: '#7C8A4A', mid: '#C98A5A', bad: '#FF8A3D' }
-const ITEM_LABEL: Record<ItemKey, string> = { head: '頭', trunk: '体幹', trunkBack: '体幹', body: '体全体', bodyBack: '体全体', hip: '腰', landing: '着地' }
+const ITEM_LABEL: Record<ItemKey, string> = { hunch: '背中', head: '頭', trunk: '体幹', trunkBack: '体幹', body: '体全体', bodyBack: '体全体', hip: '腰', landing: '着地' }
 type Overlay = 'next' | 'best' | 'none'
 
 export function Posture({ session: s, sessions, go }: { session: Session; sessions: Session[]; go: (x: Screen) => void }) {
@@ -22,13 +22,13 @@ export function Posture({ session: s, sessions, go }: { session: Session; sessio
 
   const frames = useMemo(() => {
     const st = s.strides[cat]
-    return st ? alignStride(normalizeStride(st)) : []
+    return st ? alignStride(normalizeStride(st, s.gait?.cadence)) : []
   }, [s, cat])
 
   const ghost = useMemo(() => {
     const st = best?.strides.good
     if (!st || ov === 'none') return undefined
-    const f = alignStride(normalizeStride(st))
+    const f = alignStride(normalizeStride(st, best?.gait?.cadence))
     if (ov === 'best' || !next) return f
     return f.map((x) => nextStepFrame(x, next.item, next.from, next.to))
   }, [best, next, ov])

@@ -15,6 +15,8 @@ const PARTS: { key: Key; p: LeanParams; ev: Names }[] = [
   { key: 'chest', p: HUNCH, ev: { stand: 'sensor:stand', lean: 'sensor:runLean', cue: 'sensor:hunch' } },
   { key: 'head', p: HEAD, ev: { stand: 'sensor:headStand', lean: 'sensor:headLean', cue: 'sensor:head' } },
 ]
+// ずれとみなしたとき（胸も頭も同じ名前で、場所を付ける）：sensor:slip 胸 18.2→34.6（ずれを測るもとの基準 → 置き直した基準）
+const SLIP = 'sensor:slip'
 
 const r2 = (x: number) => Math.round(x * 100) / 100
 
@@ -68,6 +70,13 @@ export class SensorSession {
       if (r.learned !== undefined && this.rec) {
         this.slot(x.key).runLean = { t: r2(t), deg: Math.round(r.learned * 10) / 10 }
         this.onEvent(t, `${x.ev.lean} ${r.learned.toFixed(1)}`)
+      }
+      // ずれとみなした：短く3回震わせる（崩れの1秒1回と分ける）。声は出さない。走ったあとの結果の画面で「付け直して」と知らせる（SlipNote.tsx）
+      if (r.slip) {
+        const { from, to } = r.slip
+        if (this.rec) (this.slot(x.key).slips ??= []).push([r2(t), Math.round(from * 10) / 10, Math.round(to * 10) / 10])
+        this.onEvent(t, `${SLIP} ${x.p.place} ${from.toFixed(1)}→${to.toFixed(1)}`)
+        void sensors.buzz(x.p.place, x.p.slipBuzzCount, x.p.slipBuzzMs)
       }
       if (r.cue && r.tilt !== null) {
         const tilt = r.tilt

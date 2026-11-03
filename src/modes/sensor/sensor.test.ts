@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { parseBattery, parsePacket, type Vec3 } from './parse'
-import { LeanDetector } from './lean'
+import { LeanDetector, type LeanStep } from './lean'
 import { batteryPercent } from './battery'
 import { decodeBlock, SensorRecorder } from './log'
 import { HEAD, HUNCH, SENSOR_LOG } from './params'
+import { slipNotes } from './slipText'
 import type { RunLog } from '../../core/types'
 
 // 自作のセンサー：通知のパーサ（hardware/sensor/viewer/test_parse.mjs と同じ例）、猫背の見分け、記録の詰め方
@@ -93,7 +94,7 @@ const lean = (deg: number, side = 0): Vec3 => {
 
 // 100Hz で胸の値を流し、0.1秒ごとに判定する。tiltAt(秒) → 傾き、runAt(秒) → 走っているか
 function play(d: LeanDetector, from: number, to: number, tiltAt: (t: number) => number, runAt: (t: number) => boolean, sideAt: (t: number) => number = () => 0) {
-  const out: { t: number; cue: boolean; learned?: number; tilt: number | null; ref?: number | null }[] = []
+  const out: ({ t: number } & LeanStep)[] = []
   for (let i = Math.round(from * 100); i < Math.round(to * 100); i++) {
     const t = i / 100
     d.sample(t, lean(tiltAt(t), sideAt(t)))
@@ -195,6 +196,53 @@ describe('胸のセンサーで猫背を見る', () => {
       const out = play(d, 50, 50 + sec + 20, (t) => 14 + Math.min(12, ((t - 50) * 12) / sec), () => true)
       expect(out.some((o) => o.cue)).toBe(want)
     }
+  })
+
+  // ずれの見張り（2026-11-03 15:08 の走り：胸のセンサーがずれて、傾きが +13° 前後のまま9分続いた。カメラの上体は 3〜6° のまま）
+  it('急にずれて線を越えたまま：slipSec 秒で基準を置き直し、それからは鳴らない', () => {
+    const d = setup()
+    play(d, 5, 50, () => 14, () => true)
+    const out = play(d, 50, 400, () => 27, () => true) // 50秒で +13° ずれ、そのまま
+    const slips = out.filter((o) => o.slip)
+    expect(slips.length).toBe(1)
+    expect(slips[0].t).toBeGreaterThan(50 + HUNCH.slipSec)
+    expect(slips[0].t).toBeLessThan(50 + HUNCH.slipSec + 3)
+    expect(slips[0].slip!.from).toBeCloseTo(14, 0)
+    expect(slips[0].slip!.to).toBeCloseTo(27, 0)
+    expect(d.slips).toBe(1)
+    const cues = out.filter((o) => o.cue).map((o) => o.t)
+    expect(cues.length).toBeGreaterThan(15) // それまでは4秒ごと
+    expect(cues.every((t) => t < slips[0].t)).toBe(true) // 置き直したあとは鳴らない
+    // 置き直したあとでも、そこから数秒で崩れれば知らせる
+    expect(play(d, 400, 420, () => 27 + 12, () => true).some((o) => o.cue)).toBe(true)
+    // 見張らなければ、走り終わるまで鳴り続ける
+    const off = setup({ ...HUNCH, slipSec: 0, slipDrift: 0 })
+    play(off, 5, 50, () => 14, () => true)
+    expect(play(off, 50, 400, () => 27, () => true).filter((o) => o.cue).length).toBeGreaterThan(80)
+  })
+
+  it('わざとの猫背 60秒は、ずれとみなさず知らせ続ける。60秒あけてもう一度でも同じ', () => {
+    const d = setup()
+    play(d, 5, 50, () => 14, () => true)
+    const out = play(d, 50, 250, (t) => ((t >= 60 && t < 120) || (t >= 180 && t < 240) ? 27 : 14), () => true)
+    expect(out.some((o) => o.slip)).toBe(false)
+    const cues = out.filter((o) => o.cue).map((o) => o.t)
+    expect(cues.filter((t) => t >= 60 && t < 121).length).toBeGreaterThanOrEqual(14)
+    expect(cues.filter((t) => t >= 180 && t < 241).length).toBeGreaterThanOrEqual(14)
+  })
+
+  it('ゆっくりずれて基準が slipDrift より前へ動いたら、ずれとみなす（知らせはしない）', () => {
+    const d = setup()
+    play(d, 5, 50, () => 14, () => true)
+    const out = play(d, 50, 260, (t) => 14 + (t - 50) * 0.1, () => true) // 3分半で +21°
+    expect(out.some((o) => o.cue)).toBe(false)
+    const slips = out.filter((o) => o.slip)
+    expect(slips.length).toBeGreaterThanOrEqual(1)
+    expect(slips[0].ref! - 14).toBeGreaterThan(HUNCH.slipDrift - 1) // 基準が動いた量が slipDrift に届いたところ（置き直した先は今の傾き）
+    // 後ろへ動いた（傾きが減った）のは、ずれとみなさない
+    const back = setup()
+    play(back, 5, 50, () => 20, () => true)
+    expect(play(back, 50, 300, (t) => 20 - Math.min(15, (t - 50) * 0.1), () => true).some((o) => o.slip)).toBe(false)
   })
 
   it('横に傾いただけ（前への傾きは同じ）では知らせない', () => {
@@ -313,5 +361,15 @@ describe('電池の残り', () => {
     expect(batteryPercent(3.74)).toBe(20)
     expect(batteryPercent(3.71)).toBe(15)
     expect(batteryPercent(3.2)).toBe(0)
+  })
+})
+
+describe('結果の画面の「センサーがずれたようです」', () => {
+  const base = { version: 1 as const, nodes: [], stride: 2, blocks: [], cues: [] }
+  it('胸と頭の slips から、走り出してからの分で知らせる。ずれていなければ何も出さない', () => {
+    expect(slipNotes(undefined)).toEqual([])
+    expect(slipNotes({ ...base })).toEqual([])
+    const log = { ...base, stand: { t: 80, base: [0, 0, 1] as [number, number, number] }, slips: [[851, 18.2, 34.6]] as [number, number, number][], head: { cues: [], slips: [[200, 6, 25], [230, 25, 45]] as [number, number, number][] } }
+    expect(slipNotes(log)).toEqual(['胸のセンサーが13分ごろにずれたようです。次は付け直してください', '頭のセンサーが2分・3分ごろにずれたようです。次は付け直してください'])
   })
 })

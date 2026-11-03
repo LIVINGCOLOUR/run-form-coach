@@ -10,6 +10,7 @@ import type { ItemKey } from './types'
 //   （スマホ版は着地の衝撃の減り方を見るので「ブレーキがかかっています」）。決まった形（足を体の真下に）を直すので部位で言い、
 //   直し方は、歩幅を小さくする（同じ速さでピッチを上げると、足は体の近くに着く。スマホ版のピッチの声「小さな歩幅で」と同じ向き）
 export const PHRASES = {
+  cueHunch: '背中が丸まっています。胸を開いてください。',
   cueHead: '頭が前に出ています。顎を引いてください。',
   cueTrunk: '前かがみになっています。胸のライトで、前を照らしてください。',
   cueTrunkBack: '上体が起きています。少しだけ前に傾けてください。',
@@ -122,6 +123,7 @@ export const PHRASES = {
 export type PhraseId = keyof typeof PHRASES
 
 export const CUE: Record<ItemKey, string> = {
+  hunch: PHRASES.cueHunch,
   head: PHRASES.cueHead,
   trunk: PHRASES.cueTrunk,
   trunkBack: PHRASES.cueTrunkBack,
@@ -133,6 +135,7 @@ export const CUE: Record<ItemKey, string> = {
 
 // 今日意識すること（項目ごと）。ホームの「今日の意識」の見出し（camera/nextStep.ts の NEXT_TEXT）と同じことを言う
 export const FOCUS: Record<ItemKey, string> = {
+  hunch: PHRASES.focusUpright,
   head: PHRASES.focusHead,
   trunk: PHRASES.focusUpright,
   trunkBack: PHRASES.focusTrunkBack,

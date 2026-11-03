@@ -13,6 +13,7 @@ import { formOver } from './form'
 // 離れ方は、外れた量を、その項目の0点までの幅（FORM.span）で割って比べる（項目ごとにぶれの大きさが違うため）
 // 見出し（title）は、走り出す前に言う言葉（phrases.ts の FOCUS）と同じことを言う
 export const NEXT_TEXT: Record<ItemKey, { title: string; reason: string }> = {
+  hunch: { title: '胸を開いて、背を高く', reason: '一番外れていたのは、背中の丸まり（猫背）です' },
   head: { title: '耳を肩の真上に', reason: '声をかける線から一番外れていたのは、頭の位置です' },
   trunk: { title: '胸のライトで前を照らす', reason: '声をかける線から一番外れていたのは、上体の前かがみです' },
   trunkBack: { title: '上体を少しだけ前に', reason: '声をかける線から一番外れていたのは、上体の後ろへの傾きです' },
@@ -26,7 +27,7 @@ export const NEXT_TEXT: Record<ItemKey, { title: string; reason: string }> = {
 export const GROUP_LABEL: Record<FormGroup, string> = { body: '体全体の前傾', trunk: '上体の前傾', head: '頭の位置', landing: '着地の位置' }
 
 // よい例より離れていた向きの言い方（前回の走りのことを言うときは、past で「〜いました」に）
-const GAP_WORD: Record<ItemKey, string> = { head: '前に出ています', trunk: '前に傾いています', trunkBack: '起きています', body: '前に倒れています', bodyBack: '起きています', hip: '下がっています', landing: '前に着いています' }
+const GAP_WORD: Record<ItemKey, string> = { hunch: '丸まっています', head: '前に出ています', trunk: '前に傾いています', trunkBack: '起きています', body: '前に倒れています', bodyBack: '起きています', hip: '下がっています', landing: '前に着いています' }
 const past = (w: string) => w.replace(/います$/, 'いました')
 
 // 着地の線：声にしない間（FORM.landing.say が false）は「試しの線」と呼ぶ（まだ声はかけない）

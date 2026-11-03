@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
 import { demoStride, REFERENCE } from '../modes/camera/ui/figure'
 import { FORM, GAIT, LANDING, LIMITS, REL_LIMITS } from '../modes/camera/params'
+import { PHRASES } from '../core/phrases'
 import { Logic } from './Logic'
 
 // 脚の長さに対する割合を、小数1桁の % に
@@ -162,7 +163,7 @@ const POINTS: Point[] = [
     title: '上体の傾き',
     base: '腰から肩にかけて、わずかに前に傾く（見本は7°）。5000mのレースで測ると、接地のときの上体の前傾は日本の一流選手で約8.6°、ケニアの選手で約12.4°だった（筑波大学）。',
     off: '97人のランナーを調べた研究では、上体がまっすぐに近い人ほど記録が良かった。一方で、上体を7°ほど前に倒すと膝の負担が約6%減り、そのぶんお尻の筋肉の負担が増える。倒れすぎず、反りすぎずが目安。',
-    how: `走り出しに、腰から肩の線が${FORM.trunk.min}〜${FORM.trunk.max}°、足首から肩の線が${FORM.body.min}〜${FORM.body.max}°（正しいフォームの範囲）に入っているかを見て、外れていれば1つずつ直してもらう。そのあとは、整えた形より腰から肩の線が${REL_LIMITS.trunk.cue}°以上、足首から肩の線が${REL_LIMITS.body.cue}°以上、前に倒れたり後ろに起きたりした状態が続いたら声をかける。`,
+    how: `走り出しに、腰から肩の線が${FORM.trunk.min}〜${FORM.trunk.max}°、足首から肩の線が${FORM.body.min}〜${FORM.body.max}°（正しいフォームの範囲）に入っているかを見て、外れていれば1つずつ直してもらう。そのあとは、整えた形より腰から肩の線が${REL_LIMITS.trunk.cue}°以上、足首から肩の線が${REL_LIMITS.body.cue}°以上、前に倒れたり後ろに起きたりした状態が続いたら声をかける。背中が丸まった形（猫背）は、腰から肩の線の前傾と首の角度が、整えた形からいっしょに増えたとき（小さいほうが${LIMITS.hunch.cue}°を越えたとき）に、前かがみとは別に「${PHRASES.cueHunch}」と言う（横からの骨格の点では背中の曲がりそのものは測れないので、丸まると一緒に動く上体の線と頭で見る）。線の高さはランナーのレベルで変わる（上級ほどきびしい）。`,
     status: 'coach',
     refs: ['enomoto', 'folland', 'teng'],
     demo: { lean: 17, head: 3, drop: 0 },

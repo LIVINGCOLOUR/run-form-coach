@@ -12,6 +12,11 @@ for (const [key, kind, sec] of parts) {
   at += sec * 1000
 }
 const cues = (evs: Ev[]) => evs.filter((e) => classify(e.text)?.kind === 'cue').map((e) => `${Math.round(e.T / 1000)}:${e.text}`)
+// 同じ声が同じ順で、時刻は1秒まで（記録の値は小数1桁に丸めてあるので、線の際では通し直した値と1秒ずれることがある）
+const expectSame = (a: string[], b: string[]) => {
+  expect(a.map((x) => x.split(':')[1])).toEqual(b.map((x) => x.split(':')[1]))
+  a.forEach((x, i) => expect(Math.abs(Number(x.split(':')[0]) - Number(b[i].split(':')[0]))).toBeLessThanOrEqual(1))
+}
 const logged = (f: ReturnType<typeof makeCameraSample>) => f.log.events.map(([t, text]) => ({ T: f.log.clock!.epochMs + t * 1000 - f.log.clock!.perfMs, text }))
 
 describe('トレッドミルの採点：カメラ版の全コマ記録', () => {
@@ -36,11 +41,11 @@ describe('トレッドミルの採点：カメラ版の全コマ記録', () => {
   it('通し直すと、撮ったときと同じ声が同じ時刻に出る', () => {
     const r = replayCamera(full)
     expect(cues(r.events).length).toBeGreaterThan(0)
-    expect(cues(r.events)).toEqual(cues(logged(full)))
+    expectSame(cues(r.events), cues(logged(full)))
   })
 
   it('thin で、ふだんの間引きで撮ったときと同じ声になる', () => {
-    expect(cues(replayCamera(full, { thin: true }).events)).toEqual(cues(logged(thin)))
+    expectSame(cues(replayCamera(full, { thin: true }).events), cues(logged(thin)))
     expect(replayCamera(thin, { thin: true }).warnings.some((w) => w.includes('--thin'))).toBe(true)
   })
 })
@@ -55,7 +60,8 @@ describe('トレッドミルの採点：走り始めの基準と「走ってい�
     const ref = r.ref!
     expect((ref.from - r.runStartT!) / 1000).toBeGreaterThan(29)
     expect((ref.from - r.runStartT!) / 1000).toBeLessThan(32)
-    expect((ref.to - r.runStartT!) / 1000).toBeGreaterThan(179)
+    // 終わりは3分の少し前でもよい：この記録は3分ちょうどから頭を前に出すので、仮の基準（FORM.early）から崩れた秒はためない
+    expect((ref.to - r.runStartT!) / 1000).toBeGreaterThan(170)
     expect((ref.to - r.runStartT!) / 1000).toBeLessThan(182)
     // 値は、その間に記録にある値の平均にほぼ等しい（1秒ごとに平均してから平均するので、少しだけ違う）
     const cols = full.log.columns

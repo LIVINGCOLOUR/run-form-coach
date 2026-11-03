@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { LEVEL_LABEL, STEPS } from '../core/level'
 import { ABSENCE, BREAKDOWN, CUE, HIP_REF, LEVEL, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../core/params'
-import { BASELINE, CORRECT, FORM, GAIT, GOOD, LANDING, LIMITS, REL_LIMITS, SETUP, STRIDE } from '../modes/camera/params'
+import { BASELINE, CORRECT, FORM, GAIT, GOOD, HUNCH, LANDING, LIMITS, REL_LIMITS, SETUP, STRICT, STRIDE } from '../modes/camera/params'
 import { ITEM_KEYS } from '../core/types'
 import { FORM_ORDER } from '../modes/camera/form'
 import { measure } from '../modes/camera/geometry'
@@ -22,7 +22,7 @@ const d1 = (x: number) => `${Math.round(x * 10) / 10}`
 const p0 = (x: number) => `${Math.round(x * 100)}%`
 const sp0 = (x: number) => (x < 0 ? `−${p0(-x)}` : `+${p0(x)}`)
 
-const ITEM_NAME = { head: '頭の位置', trunk: '上体の傾き', trunkBack: '上体の起きすぎ', body: '体全体の傾き', bodyBack: '体全体の起きすぎ', hip: '腰の高さ', landing: '着地の位置' } as const
+const ITEM_NAME = { hunch: '背中の丸まり（猫背）', head: '頭の位置', trunk: '上体の傾き', trunkBack: '上体の起きすぎ', body: '体全体の傾き', bodyBack: '体全体の起きすぎ', hip: '腰の高さ', landing: '着地の位置' } as const
 const GROUP_NAME = { body: '体全体', landing: '着地', trunk: '上体', head: '頭' } as const
 const GROUP_WHAT = {
   body: '足首の中心→肩の中心の線の前傾',
@@ -37,6 +37,7 @@ const GROUP_LINE = {
   head: `首の角度が${FORM.head.neck}°を越え、頭の位置も${FORM.head.headLean}°を越えた（頭が前）`,
 } as const
 const DRIFT = {
+  hunch: `今日の基準から、上体の前傾の増えと、首の角度の増え ＋ ${HUNCH.neckSlack}° の、小さいほうが +${LIMITS.hunch.cue}°（背中が丸まって、上体と頭がいっしょに前へ）`,
   head: `今日の基準から頭が前に出た量（首の角度の増えと、頭の位置の増えの、小さいほう）が +${LIMITS.head.cue}°`,
   trunk: `今日の基準から +${REL_LIMITS.trunk.cue}°（前かがみ）／−${REL_LIMITS.trunkBack.cue}°（起きすぎ）`,
   body: `今日の基準から +${REL_LIMITS.body.cue}°（倒れすぎ）／−${REL_LIMITS.bodyBack.cue}°（体が後ろに残る）`,
@@ -229,9 +230,15 @@ export function Logic() {
           トレッドミルでは足元や操作パネルを見て頭が下がりやすいので、立ち姿勢の確認と走り出しで「目線は正面に」と言う。
         </Row>
         <Row>
+          今日の基準ができるまで（走り出して約3分）も、整え終わってから{FORM.early}秒ためた形を仮の基準にして、猫背・頭・上体・体全体の崩れを見る。仮の基準から崩れていた秒は、今日の基準にためない。
+          猫背が線を越えている間は、前かがみ・頭の声は重ねない（胸を開けば両方戻るので）。
+        </Row>
+        <Row>
           ランナーのレベル：基準からの崩れで声をかける項目を、{LEVEL_LABEL.beginner}は1つずつ足していく（{STEPS.map((x) => x.title).join(' → ')} → すべて）。{LEVEL_LABEL.intermediate}は2つ目から、{LEVEL_LABEL.advanced}は最初からすべて見る。上体・体全体の起きすぎ（基準から後ろへの崩れ）は、腰の段階で足す（腰が落ちる走りは、上体が起きる形に出ることが多い）。
           着地は腰のあと、頭より先の1つの段階にした（腰と同じ段階にすると、腰を意識する走りで2つの直し方を言うことになる。ふつうに走るだけで出る誤った声が頭より少なく、足が前に着く形は、講師が膝の痛みやブレーキの形として何度も取り上げるため）。
           正しいフォームの線で整える声は、どのレベルでもかける（フォームの土台なので。それでも一度に1つずつ）。
+          厳しさもレベルで変わる。{(['beginner', 'intermediate', 'advanced'] as const).map((l) => `${LEVEL_LABEL[l]}は 猫背${STRICT[l].hunch.cue}°・頭${STRICT[l].head.cue}°・上体${STRICT[l].rel.trunk.cue}°・体全体${STRICT[l].rel.body.cue}°・腰${STRICT[l].hip.cue}%、正しいフォームの線は上体${STRICT[l].form.trunkMax}°・体全体${STRICT[l].form.bodyMax}°・首${STRICT[l].form.neck}°/頭の位置${STRICT[l].form.headLean}°`).join('。')}。
+          点数（良い姿勢の割合）も同じ線から出すので、上級ほど「良い姿勢」の割合はきびしく出る。起きすぎの下の線と着地は、どのレベルでも同じ。このページのほかの数字は、いま入っているレベルの線（はじめは{LEVEL_LABEL.intermediate}）。
           走り出す前の立ち姿勢の確認のあとに、今日意識することを1つだけ言う（ホームの「今日の意識」と同じもの。選び方は 11）。いま足した項目で声がかからない走り（{Math.round(LEVEL.minRunSec / 60)}分以上）が{LEVEL.advanceAfter}回続いたら、次の項目を足し、次の走り出しでそれを伝える。
           まだ注意していない項目も測って記録し、大きく崩れたとき（その項目の点数が{SCORE.mid}点未満）だけ声をかける。一度に意識できるのは1つなので、全部を言うと、どれも残らないため。
         </Row>
@@ -365,7 +372,7 @@ export function Logic() {
           崩れ始め：{BREAKDOWN.minRun / 60}分以上走ったとき、{BREAKDOWN.window / 60}分平均の姿勢スコアが序盤より{BREAKDOWN.drop}点以上下がった最初の時刻。
         </Row>
         <Row>
-          走り姿：{STRIDE.every}秒ごとに{STRIDE.sec}秒分の骨格を取り、良い・ふつう・悪いそれぞれの代表の1歩をアニメーションにする。
+          走り姿：{STRIDE.every}秒ごとに、直近{STRIDE.window}秒の骨格から1周（2歩）を作り、良い・ふつう・悪いそれぞれの代表の1周をアニメーションにする。手前の足首が一番前に出た瞬間で1周ずつ区切り、何周も（{STRIDE.minCycles}周以上）時間をそろえて重ねて、点ごとの中央値を取る（1つの周のぶれや左右の取り違えが消え、くり返しても切れ目が出ない）。奥の脚と奥の腕は体に隠れて点が当てにならないので、手前の脚と腕を半周ずらして描く。
         </Row>
       </Step>
 

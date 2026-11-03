@@ -2,19 +2,22 @@ import type { Frame, ItemKey, Pt, Stride } from '../../../core/types'
 import { L } from '../landmarks'
 import { legLength, mid } from '../geometry'
 import reference from '../reference.json'
+import { legacyCycle } from '../stride'
 
 // 描画用の座標系：腰の平均が (170, 262)、脚の長さが 164、右向き
 const CX = 170
 const CY = 262
 const LEG = 164
 
-export function normalizeStride(s: Stride): Frame[] {
-  const hips = s.frames.map((f) => mid(f[L.leftHip], f[L.rightHip]))
+// 前の記録（1周ではない1.2秒）は、ここで1周に直してから描く。cadence：その走りのピッチ（あれば、1周の長さの目安にする）
+export function normalizeStride(s: Stride, cadence?: number): Frame[] {
+  const src = s.sec === undefined ? legacyCycle(s, cadence ? 120 / cadence : undefined) : s.frames
+  const hips = src.map((f) => mid(f[L.leftHip], f[L.rightHip]))
   const hx = hips.reduce((a, b) => a + b.x, 0) / hips.length
   const hy = hips.reduce((a, b) => a + b.y, 0) / hips.length
-  const leg = s.frames.reduce((a, f) => a + legLength(f), 0) / s.frames.length || 1
+  const leg = src.reduce((a, f) => a + legLength(f), 0) / src.length || 1
   const k = LEG / leg
-  return s.frames.map((f) => f.map((p) => ({ x: CX + (p.x - hx) * k * s.dir, y: CY + (p.y - hy) * k, v: p.v })))
+  return src.map((f) => f.map((p) => ({ x: CX + (p.x - hx) * k * s.dir, y: CY + (p.y - hy) * k, v: p.v })))
 }
 
 // 画面上で反時計回りに deg 度まわす（右向きの人なら、前傾を deg 度へらす）

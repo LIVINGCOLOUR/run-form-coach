@@ -18,10 +18,10 @@ import { loadTrial } from './rbds'
 import { LongRun, distort, truthOf, legLengthMm, groundOf, DISTORT_LABEL, type DistortKind, type Source } from './longrun'
 import { film, replay, BASE, BASE_NOISE, type Extra, type Stream } from './pipeline'
 import type { Placement, Noise, Body } from './camera'
-import { LIMITS, REL_LIMITS, FORM } from '../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, FORM, STRICT, applyStrictness, DEFAULT_STRICT } from '../src/modes/camera/params'
 import { HIP_REF, CUE as CUE_P } from '../src/core/params'
 import { FORM_SAY } from '../src/core/phrases'
-import { activeItems, ALL } from '../src/core/level'
+import { activeItems, ALL, LEVEL_LABEL, type Level } from '../src/core/level'
 import { ITEM_KEYS, type ItemKey } from '../src/core/types'
 
 const RIGLET = process.env.RIGLET_DIR
@@ -30,7 +30,7 @@ const RBDS = process.env.RBDS_DIR
 const OUT = process.env.SIM_OUT ?? 'sim/result-coach.md'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
-const ITEM_JA: Record<ItemKey, string> = { head: '頭', trunk: '上体', trunkBack: '上体の起きすぎ', body: '体全体', bodyBack: '体全体の起きすぎ', hip: '腰', landing: '着地' }
+const ITEM_JA: Record<ItemKey, string> = { hunch: '猫背', head: '頭', trunk: '上体', trunkBack: '上体の起きすぎ', body: '体全体', bodyBack: '体全体の起きすぎ', hip: '腰', landing: '着地' }
 const zeros = () => Object.fromEntries(ITEMS.map((k) => [k, 0])) as Record<ItemKey, number>
 const LEVELS = [
   { label: '初心者（最初）', items: activeItems(0) },
@@ -55,7 +55,7 @@ const CONDS: { label: string; pl?: Partial<Placement>; noise?: Partial<Noise>; e
 type Of = 'neck' | 'trunk' | 'body' | 'hip' | 'trunkBack' | 'bodyBack'
 const KINDS: { kind: DistortKind; of: Of; unit: string; sizes: number[]; ok: ItemKey[] }[] = [
   { kind: 'head', of: 'neck', unit: '°（首の角度）', sizes: [2, 4, 6, 8, 10, 14], ok: ['head'] },
-  { kind: 'hunch', of: 'trunk', unit: '°（上体の傾き）', sizes: [2, 4, 6, 8, 10], ok: ['trunk', 'head'] },
+  { kind: 'hunch', of: 'trunk', unit: '°（上体の傾き）', sizes: [2, 4, 6, 8, 10], ok: ['hunch', 'trunk', 'head'] },
   { kind: 'trunk', of: 'trunk', unit: '°（上体の傾き）', sizes: [2, 4, 6, 8, 10], ok: ['trunk', 'body'] },
   { kind: 'body', of: 'body', unit: '°（体全体の傾き）', sizes: [1, 2, 3, 4, 5, 6], ok: ['body', 'trunk'] },
   { kind: 'sit', of: 'hip', unit: '%（腰の高さ、脚の長さに対して）', sizes: [2, 4, 6, 8, 10], ok: ['hip', 'body'] },
@@ -409,6 +409,48 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
     console.log(text)
   })
 
+  // 厳しさ：レベルごとの線（params.ts の STRICT）で、ふつうの走りの誤った声と、崩しに気づく割合（実機なみのずれ、すべての項目）。
+  // 結果は sim/result-coach-strict.md（このテストだけ動かすとき：-t 厳しさ）
+  itAll('厳しさ（レベルごとの線）', () => {
+    const OUT_STRICT = process.env.SIM_OUT_STRICT ?? 'sim/result-coach-strict.md'
+    const c = CONDS[1]
+    const KS: { kind: DistortKind; sizes: number[]; ok: ItemKey[] }[] = [
+      { kind: 'hunch', sizes: [3, 4, 6], ok: ['hunch', 'trunk', 'head'] },
+      { kind: 'head', sizes: [4, 6, 8], ok: ['head'] },
+      { kind: 'trunk', sizes: [3, 4, 6], ok: ['trunk', 'body', 'hunch'] },
+      { kind: 'body', sizes: [2, 3, 4], ok: ['body', 'trunk'] },
+      { kind: 'sit', sizes: [3, 4, 6], ok: ['hip', 'body'] },
+    ]
+    const ss = runners.map((r, k) => filmOf(r, k, c, NORMAL_SEC, bodyFn(r), 1))
+    const dss = new Map<string, Stream[]>()
+    for (const k of KS) for (const size of k.sizes) dss.set(`${k.kind}|${size}`, runners.map((r, i) => filmOf(r, i, c, ONSET + HOLD + 10, bodyFn(r, k.kind, size), 1)))
+    let text =
+      `# 厳しさ（レベルごとの線）の仮想実験\n\n` +
+      `研究データ（Riglet 2024）の${runners.length}本を、実機なみのゆっくりしたずれを足して仮想のスマホで映し、レベルごとの線（params.ts の STRICT）でコーチに通した。見る項目はすべて。` +
+      `誤った声は、今日の基準ができたあとの10分あたりの、基準からの崩れの声（カッコ内は声が1回でも出た走りの割合）。` +
+      `崩しは走り始めて${ONSET}秒から${HOLD}秒。「見つけた」は合う項目の声が${HOLD}秒以内に出た走りの割合、カッコ内は声までの秒数の中央値。\n` +
+      `動かし方：RIGLET_DIR=<データ> npx vitest run --config sim/vitest.config.ts sim/coach.sim.ts -t 厳しさ\n\n` +
+      `「整える間」は走り出しに正しいフォームの線で言った声が出た走りの数、「線（あと）」は基準ができたあとに正しいフォームの線で言った声の10分あたりの回数（走りの数）。\n\n` +
+      `| レベル | 線（猫背・頭・上体・体全体・腰） | 誤った声：猫背 | 頭 | 上体 | 体全体 | 腰 | 起きすぎ | 合計 | 整える間 | 線（あと） | ${KS.flatMap((k) => k.sizes.map((s) => `${DISTORT_LABEL[k.kind].split('（')[0]} ${s}`)).join(' | ')} |\n` +
+      `|---|---|---|---|---|---|---|---|---|---|---|${KS.flatMap((k) => k.sizes.map(() => '---')).join('|')}|\n`
+    for (const lv of ['beginner', 'intermediate', 'advanced'] as Level[]) {
+      applyStrictness(lv)
+      const st = STRICT[lv]
+      const f = falseCues(ss.map((s) => ({ r: replay(s, { items: activeItems(ALL) }), end: NORMAL_SEC })))
+      const tot = ITEMS.reduce((a, k) => a + f.after[k], 0)
+      const cells = KS.flatMap((k) =>
+        k.sizes.map((size) => {
+          const d = detect(dss.get(`${k.kind}|${size}`)!.map((s) => replay(s, { items: activeItems(ALL) })), k.ok, ONSET)
+          return `${pct(d.right)}（${d.lat}）`
+        }),
+      )
+      text += `| ${LEVEL_LABEL[lv]} | ${st.hunch.cue}°・${st.head.cue}°・${st.rel.trunk.cue}°・${st.rel.body.cue}°・${st.hip.cue}% | ${['hunch', 'head', 'trunk', 'body', 'hip'].map((k) => f.per10(f.after[k as ItemKey]).toFixed(2)).join(' | ')} | ${f.per10(f.after.trunkBack + f.after.bodyBack).toFixed(2)} | ${f.per10(tot).toFixed(2)}（${pct(f.anyRunner / f.runners)}） | ${f.stageRunner}本 | ${f.per10(ITEMS.reduce((x, k) => x + f.formAfter[k], 0)).toFixed(2)}（${f.formRunner}本） | ${cells.join(' | ')} |\n`
+    }
+    applyStrictness(DEFAULT_STRICT)
+    writeFileSync(OUT_STRICT, text)
+    console.log(text)
+  })
+
   itAll('線を変えたとき', () => {
     let text =
       `## ③ 声をかける線を変えたとき（上級、実機なみのずれ）\n\n` +
@@ -474,8 +516,8 @@ describe.skipIf(!RIGLET)('Riglet：ふつうの走りと崩し', () => {
       const sz = sizes.find((x) => det?.[x] && det[x].right >= 0.9)
       return sz === undefined ? `${sizes[sizes.length - 1]}でも届かない` : `${sz}（${Math.round(det![sz].latSec)}秒）`
     }
-    const item: Record<DistortKind, ItemKey> = { head: 'head', hunch: 'trunk', trunk: 'trunk', body: 'body', sit: 'hip', trunkBack: 'trunkBack', bodyBack: 'bodyBack', uprightHead: 'trunkBack' }
-    const lineNow: Record<ItemKey, string> = { head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, trunkBack: `後ろへ ${REL_LIMITS.trunkBack.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, bodyBack: `後ろへ ${REL_LIMITS.bodyBack.cue}°`, hip: `${LIMITS.hip.cue}%`, landing: `増え +${LIMITS.landing.cue}` }
+    const item: Record<DistortKind, ItemKey> = { head: 'head', hunch: 'hunch', trunk: 'trunk', body: 'body', sit: 'hip', trunkBack: 'trunkBack', bodyBack: 'bodyBack', uprightHead: 'trunkBack' }
+    const lineNow: Record<ItemKey, string> = { hunch: `${LIMITS.hunch.cue}°`, head: `${LIMITS.head.cue}°`, trunk: `増え方 ${REL_LIMITS.trunk.cue}°`, trunkBack: `後ろへ ${REL_LIMITS.trunkBack.cue}°`, body: `増え方 ${REL_LIMITS.body.cue}°`, bodyBack: `後ろへ ${REL_LIMITS.bodyBack.cue}°`, hip: `${LIMITS.hip.cue}%`, landing: `増え +${LIMITS.landing.cue}` }
     const summary =
       `## まとめ（上級、実機なみのずれ、${runners.length}本）\n\n` +
       `「9割」は、崩しに合った声を9割の走りで${HOLD}秒以内に出せた、いちばん小さい崩しの大きさ（カッコ内は声までの秒数の中央値）。誤った声は今日の基準ができたあとの10分あたりの、基準からの崩れの声。` +

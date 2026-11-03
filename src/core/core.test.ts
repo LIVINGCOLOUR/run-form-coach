@@ -37,7 +37,7 @@ describe('ランナーのレベル', () => {
 
   it('初心者は前かがみから始め、声がかからない走りが2回続くと腰を足し、次の走り出しで伝える', () => {
     let p = startProgress('beginner')
-    expect(activeItems(p.step)).toEqual(['trunk', 'body'])
+    expect(activeItems(p.step)).toEqual(['trunk', 'body', 'hunch'])
     expect(startPhrase(p)).toBe(PHRASES.focusUpright)
     p = afterRun(p, run(900))
     expect(p.step).toBe(0)
@@ -46,7 +46,7 @@ describe('ランナーのレベル', () => {
     p = afterRun(p, run(900, ['head'])) // まだ見ていない項目の声かけは数えない
     p = afterRun(p, run(900))
     expect(p.step).toBe(1)
-    expect(activeItems(p.step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack'])
+    expect(activeItems(p.step)).toEqual(['trunk', 'body', 'hunch', 'hip', 'trunkBack', 'bodyBack'])
     expect(startPhrase(p)).toBe(PHRASES.stepHip)
     p = afterRun(p, run(900, ['hip']))
     expect(startPhrase(p)).toBe(PHRASES.focusHip)
@@ -60,9 +60,9 @@ describe('ランナーのレベル', () => {
   })
 
   it('中級は腰から、上級は最初からすべて見る', () => {
-    expect(activeItems(startProgress('intermediate').step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack'])
+    expect(activeItems(startProgress('intermediate').step)).toEqual(['trunk', 'body', 'hunch', 'hip', 'trunkBack', 'bodyBack'])
     const adv = startProgress('advanced')
-    expect(activeItems(adv.step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack', 'landing', 'head'])
+    expect(activeItems(adv.step)).toEqual(['trunk', 'body', 'hunch', 'hip', 'trunkBack', 'bodyBack', 'landing', 'head'])
     expect(startPhrase(adv)).toBe(PHRASES.focusAll)
     expect(afterRun(adv, run(900)).step).toBe(adv.step)
   })
@@ -72,7 +72,7 @@ describe('ランナーのレベル', () => {
     p = afterRun(p, run(900))
     p = afterRun(p, run(900))
     expect(p.step).toBe(2)
-    expect(activeItems(p.step)).toEqual(['trunk', 'body', 'hip', 'trunkBack', 'bodyBack', 'landing'])
+    expect(activeItems(p.step)).toEqual(['trunk', 'body', 'hunch', 'hip', 'trunkBack', 'bodyBack', 'landing'])
     expect(startPhrase(p)).toBe(PHRASES.stepLanding)
     p = afterRun(p, run(900, ['landing']))
     expect(p.clean).toBe(0)

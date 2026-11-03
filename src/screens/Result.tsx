@@ -7,6 +7,7 @@ import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
 import { formRows, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
 import { GOOD } from '../modes/camera/params'
+import { SlipNote } from '../modes/sensor/SlipNote'
 import type { FormResult, GaitResult } from '../core/types'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
@@ -154,6 +155,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         </div>
       )}
 
+      <SlipNote logId={s.logId} />
       <div style={{ flexGrow: 1 }} />
       {s.logId && <UploadState kind="camera" logId={s.logId} startedAt={s.startedAt} />}
       {s.logId && (

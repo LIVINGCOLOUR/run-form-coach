@@ -44,7 +44,7 @@ export function SensorPanel() {
       ) : (
         <>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。走っている間に、猫背が {HUNCH.hold} 秒続くと胸が、頭が前に出たのが {HEAD.hold} 秒続くと頭が震えます（その場所がつながっているとき）。
+            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。走っている間に、猫背が {HUNCH.hold} 秒続くと胸が、頭が前に出たのが {HEAD.hold} 秒続くと頭が震えます（その場所がつながっているとき）。センサーがずれたとみたときは、その場所が短く {HUNCH.slipBuzzCount} 回震え、走ったあとの結果の画面でも知らせます。
           </div>
           {low.length > 0 && (
             <div style={{ color: 'var(--warn)', fontSize: 13, fontWeight: 700, lineHeight: 1.6 }}>
