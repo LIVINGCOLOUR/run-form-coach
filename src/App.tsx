@@ -10,6 +10,7 @@ import { PhoneLive } from './modes/phone/screens/PhoneLive'
 import { PhoneResult } from './modes/phone/screens/PhoneResult'
 import { loadPhoneLogStamps, loadPhoneSessions, phoneLogPayload } from './modes/phone/storage'
 import { cameraLogPayload } from './core/exportLog'
+import { rebuildOldStrides } from './modes/camera/rebuild'
 import { registerUploadSource, startUploads } from './core/upload/uploads'
 import type { PhoneKind, PhoneSession, PhoneWhere } from './modes/phone/session'
 import type { LocationPermission } from './modes/phone/sensor'
@@ -32,7 +33,10 @@ export default function App() {
 
   const reload = useCallback(async () => {
     try {
-      setSessions(await loadSessions())
+      const list = await loadSessions()
+      setSessions(list)
+      // 前の作り方の走り姿は、端末に残っている記録から作り直す（あとから差し替える）
+      void rebuildOldStrides(list).then((next) => next && setSessions(next)).catch(() => {})
     } catch {
       setSessions([])
     }

@@ -3,6 +3,9 @@ import { legacyCycle, strideCycle, type TimedFrame } from './stride'
 import { demoStride, DEMO_FRAMES } from './ui/figure'
 import { L } from './landmarks'
 import type { Frame, Stride } from '../../core/types'
+import type { Measure } from './types'
+import { LogRecorder } from './log'
+import { replayStrides } from './rebuild'
 
 // 見本の走り（1周 DEMO_FRAMES コマを毎秒30コマ）を、時刻 t の形として取る（コマの間はまっすぐつなぐ）
 const demo = demoStride()
@@ -86,8 +89,8 @@ describe('走り姿の1周（stride.ts）', () => {
         cnt++
       }
     })
-    // 区切りの位相のずれ（半コマ以内）となめらかにした分を見込む。脚の長さに対する割合
-    expect(sum / cnt).toBeLessThan(0.04)
+    // 描くのは実際の1周なので、その周の点のぶれと区切りの位相のずれ（半コマ以内）を見込む。脚の長さに対する割合
+    expect(sum / cnt).toBeLessThan(0.05)
     expect(worst).toBeLessThan(0.12)
   })
 
@@ -109,5 +112,19 @@ describe('走り姿の1周（stride.ts）', () => {
     expect(after.seam).toBeLessThan(after.maxStep * 1.2)
     // 1周の長さが分からなくても、手前の足首の動きから決める
     expect(legacyCycle({ ...s, frames: Array.from({ length: 36 }, (_, i) => at((1.2 * i) / 35)) }).length).toBe(DEMO_FRAMES)
+  })
+})
+
+describe('前の走り姿を記録から作り直す（rebuild.ts）', () => {
+  it('調整用の記録のコマを流し込んで、1周の走り姿（sec つき）を作る', () => {
+    const rec = new LogRecorder()
+    const good: Measure = { neck: 2, headLean: 12, chin: -20, yaw: 0, trunk: 7, body: 9, hipRatio: 0.9, dir: 1 }
+    for (let i = 0; i < 200 * 15; i++) {
+      const t = i / 15
+      rec.frame(t, 'run', 480, 640, at(t), { visible: true, moving: true, by: 'steps', cadence: 177, m: good, sideDeg: 0, still: 0 })
+    }
+    const st = replayStrides(rec.log, {})
+    expect(st.good?.sec).toBeCloseTo(SEC, 1)
+    expect(st.good?.frames.length).toBe(DEMO_FRAMES)
   })
 })

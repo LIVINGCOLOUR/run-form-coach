@@ -127,7 +127,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   private secOff = 0
 
   private ring: { frame: Frame; dir: 1 | -1; t: number }[] = []
-  private candidates: Record<Category, Stride[]> = { good: [], mid: [], bad: [] }
+  private candidates: Record<Category, { stride: Stride; speed?: number }[]> = { good: [], mid: [], bad: [] }
   private lastStrideAt = -1e9
 
   // 走っている間の1コマ：その秒に走っていたかを数え、着地の山を取り、走り姿のアニメーション用に骨格をためる
@@ -340,30 +340,43 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const r = this.ring
     if (r.length < 8 || r[r.length - 1].t - r[0].t < STRIDE.window - 1 || s.t - this.lastStrideAt < STRIDE.every) return
     const dir = r[r.length - 1].dir
-    if (r.some((x) => x.dir !== dir)) return
+    // 速さを変えている途中の秒は取らない（速さが変わると走り方も変わる）
+    if (s.paused || r.some((x) => x.dir !== dir)) return
     // 1周の長さの目安：同じ区間の1歩の長さ（gait.ts）の中央値の2倍
     const steps = this.gait.steps.filter((x) => x.t >= r[0].t).map((x) => x.sec)
-    const c = strideCycle(r, dir, steps.length >= 4 ? 2 * median(steps) : undefined)
-    if (!c) return
+    const cyc = strideCycle(r, dir, steps.length >= 4 ? 2 * median(steps) : undefined)
+    if (!cyc) return
     this.lastStrideAt = s.t
     const list = this.candidates[category(s.score)]
     const stride: Stride = {
-      frames: c.frames,
+      frames: cyc.frames,
       dir,
       score: s.score,
       avg: { head: Math.max(0, s.head), trunk: s.trunk, body: s.body, hipDrop: s.hipDrop },
-      sec: c.sec,
+      sec: cyc.sec,
     }
-    if (list.length < 60) list.push(stride)
-    else list[Math.floor(Math.random() * list.length)] = stride
+    const c = { stride, speed: s.land?.speed }
+    if (list.length < 60) list.push(c)
+    else list[Math.floor(Math.random() * list.length)] = c
   }
 
-  // 結果画面の走り姿：分類ごとに、点数がその分類の平均にいちばん近い1歩
+  // 結果画面の走り姿：分類ごとに、点数がその分類の平均にいちばん近い1周。
+  // その走りの主な速さ（候補の速さの目安の中央値）から STRIDE.speedTol、主なピッチ（候補の1周の長さの中央値）から STRIDE.secTol の
+  // 割合の中で走っていた候補から選ぶ
+  // （走り出しのゆっくりした数分から取ると、歩いているような走り姿になったため）。その分類に主な速さの候補がなければ、すべての候補から
   strides(): Session['strides'] {
     const strides: Session['strides'] = {}
+    const all = (['good', 'mid', 'bad'] as Category[]).flatMap((c) => this.candidates[c])
+    const sp = all.flatMap((x) => (x.speed === undefined ? [] : [x.speed]))
+    const main = sp.length ? median(sp) : undefined
+    const sec = median(all.map((x) => x.stride.sec!))
+    const atMain = (x: { stride: Stride; speed?: number }) =>
+      (main === undefined || (x.speed !== undefined && Math.abs(x.speed - main) <= STRIDE.speedTol * main)) && Math.abs(x.stride.sec! - sec) <= STRIDE.secTol * sec
     for (const cat of ['good', 'mid', 'bad'] as Category[]) {
-      const list = this.candidates[cat]
-      if (!list.length) continue
+      const cands = this.candidates[cat]
+      if (!cands.length) continue
+      const kept = cands.filter(atMain)
+      const list = (kept.length ? kept : cands).map((x) => x.stride)
       const m = mean(list.map((x) => x.score))
       strides[cat] = list.reduce((a, b) => (Math.abs(b.score - m) < Math.abs(a.score - m) ? b : a))
     }

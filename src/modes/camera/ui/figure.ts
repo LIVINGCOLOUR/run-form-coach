@@ -109,7 +109,8 @@ export function paths(f: Frame, nearLeft: boolean): Paths {
   const sh = shoulderMid(f)
   const ear = f[n.e]
   const nose = f[L.nose]
-  const head = { x: (ear.x + nose.x) / 2, y: (ear.y + nose.y) / 2 - 8 }
+  // 頭の丸の中心：耳から鼻の方へ3割、耳より少し上。鼻は耳より前で下にあるので、耳と鼻の真ん中に描くと、頭が前に屈んで見える
+  const head = { x: ear.x + (nose.x - ear.x) * 0.3, y: ear.y - 6 }
   return {
     legBack: `M${P(hip)} L${P(f[o.k])} L${P(f[o.a])} L${P(f[o.ft])}`,
     legFront: `M${P(hip)} L${P(f[n.k])} L${P(f[n.a])} L${P(f[n.ft])}`,

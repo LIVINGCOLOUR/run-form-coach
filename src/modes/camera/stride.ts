@@ -4,10 +4,12 @@
 // 奥の脚と奥の腕は体に隠れて点がぶれ、左右の取り違えも起きる（自分の記録で、奥の膝の確からしさ 0.5 前後、奥の手首 0.1 前後）。
 // そこで、直近 STRIDE.window 秒から次のように1周を作る：
 //   1. 手前の足首が腰より一番前に出た瞬間を、1周の区切りにする（1周の長さは、手前の足首の動きの自己相関で決める）
-//   2. 区切りから区切りまでを1周として、何周ぶんも時間をそろえて重ね、点ごとの中央値を取る（1つの周のぶれや取り違えが消える）
-//   3. 重ねた形と比べて、膝・足（足首・かかと・つま先）の左右の名前が入れ替わっていたコマは入れ替えてから、もう一度重ねる
-//   4. 奥の脚と奥の腕は、手前の脚と腕を半周ずらして作る（左右の動きはほぼ同じで、奥は点が当てにならないため）
-//   5. 1周をつなげて繰り返しても切れ目が出ないよう、周の始まりと終わりをつないで軽くなめらかにする
+//   2. 区切りから区切りまでを1周として、何周ぶんも時間と位相をそろえて重ね、点ごとの中央値を取る
+//   3. 重ねた形と比べて、膝・足（足首・かかと・つま先）の左右の名前が入れ替わっていたコマは入れ替える
+//   4. 描くのは、重ねた形ではなく実際の1周：脚の振れ・膝の曲がり・かかとの上がりが区間の周の中央値にいちばん近く、点が跳ばない周。
+//      重ねた形は、周ごとに山の時刻が少しずつ違うので、膝の曲がりやかかとの上がりが小さくなり、歩いているように見えたため
+//   5. 奥の脚と奥の腕は、手前の脚と腕を半周ずらして作る（左右の動きはほぼ同じで、奥は点が当てにならないため）
+//   6. 1周の始まりと終わりの差は、1周にわたって少しずつ戻して、くり返しても切れ目が出ないようにする
 // 1周のコマ数は、毎秒30コマで再生して実際の速さになる数（1周の秒数 × 30）
 import type { Frame, Pt, Stride } from '../../core/types'
 import { L } from './landmarks'
@@ -157,19 +159,69 @@ function cyclesOf(anchors: number[], period: number): [number, number][] {
 type Rel = { x: number; y: number; v: number }[] // 腰の基準からの位置
 
 // 何周ぶんも重ねて、位相ごとに点の中央値を取る。どこかの位相で重ねられる周がなければ null
-function fold(ts: number[], rel: Rel[], cycles: [number, number][], n: number): Rel[] | null {
+// 時刻 t の形を、前後2コマずつからなめらかな曲線（Catmull-Rom）で取る。まっすぐつなぐと、毎秒13コマでは
+// 膝の曲がりやかかとの上がりの山が削れるため。前後のコマの間があきすぎていれば null
+function sampleAt(ts: number[], rel: Rel[], t: number): Rel | null {
+  if (t < ts[0] || t > ts[ts.length - 1]) return null
+  let lo = 0
+  let hi = ts.length - 1
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1
+    if (ts[m] <= t) lo = m
+    else hi = m
+  }
+  if (ts[hi] - ts[lo] > STRIDE.maxGap) return null
+  const u = ts[hi] > ts[lo] ? (t - ts[lo]) / (ts[hi] - ts[lo]) : 0
+  const p0 = lo > 0 && ts[lo] - ts[lo - 1] <= STRIDE.maxGap ? lo - 1 : lo
+  const p3 = hi < ts.length - 1 && ts[hi + 1] - ts[hi] <= STRIDE.maxGap ? hi + 1 : hi
+  const cr = (a: number, b: number, c: number, d: number) => b + 0.5 * u * (c - a + u * (2 * a - 5 * b + 4 * c - d + u * (3 * (b - c) + d - a)))
+  return rel[lo].map((p, q) => ({
+    x: cr(rel[p0][q].x, p.x, rel[hi][q].x, rel[p3][q].x),
+    y: cr(rel[p0][q].y, p.y, rel[hi][q].y, rel[p3][q].y),
+    v: Math.min(p.v, rel[hi][q].v),
+  }))
+}
+
+// 何周ぶんも重ねて、位相ごとに点の中央値を取る。shifts：周ごとの位相のずれ（align で合わせたもの）。
+// どこかの位相で重ねられる周がなければ null
+function fold(ts: number[], rel: Rel[], cycles: [number, number][], n: number, shifts?: number[]): Rel[] | null {
   const out: Rel[] = []
   for (let j = 0; j < n; j++) {
-    const ph = j / n
     const got: Rel[] = []
-    for (const [a, b] of cycles) {
-      const r = interpAt(ts, a + ph * (b - a), (i, k, u) => rel[i].map((p, q) => ({ x: p.x + (rel[k][q].x - p.x) * u, y: p.y + (rel[k][q].y - p.y) * u, v: Math.min(p.v, rel[k][q].v) })))
+    cycles.forEach(([a, b], c) => {
+      const r = sampleAt(ts, rel, a + (j / n + (shifts?.[c] ?? 0)) * (b - a))
       if (r) got.push(r)
-    }
+    })
     if (!got.length) return null
     out.push(got[0].map((_, q) => ({ x: med(got.map((g) => g[q].x)), y: med(got.map((g) => g[q].y)), v: med(got.map((g) => g[q].v)) })))
   }
   return out
+}
+
+// 周ごとに、重ねた形にいちばん合う位相のずれを探す（区切りの山は点のぶれで前後するので、そのままでは周ごとに少しずつずれ、
+// 重ねると脚の振れが小さくなる）。比べるのは手前の脚と腕の、腰からの位置
+function align(ts: number[], rel: Rel[], cycles: [number, number][], tpl: Rel[], near: Side): number[] {
+  const n = tpl.length
+  const qs = [near.knee, near.ankle, near.heel, near.foot, near.el, near.wr]
+  return cycles.map(([a, b]) => {
+    let best = 0
+    let bestCost = Infinity
+    for (let s = -STRIDE.alignMax; s <= STRIDE.alignMax + 1e-9; s += 0.01) {
+      let cost = 0
+      let c = 0
+      for (let j = 0; j < n; j++) {
+        const r = sampleAt(ts, rel, a + (j / n + s) * (b - a))
+        if (!r) continue
+        for (const q of qs) cost += (r[q].x - r[near.hip].x - (tpl[j][q].x - tpl[j][near.hip].x)) ** 2 + (r[q].y - r[near.hip].y - (tpl[j][q].y - tpl[j][near.hip].y)) ** 2
+        c++
+      }
+      if (c >= n / 2 && cost / c < bestCost) {
+        bestCost = cost / c
+        best = s
+      }
+    }
+    return best
+  })
 }
 
 // 1周の形の、位相 ph（0〜1、くり返す）の点 q
@@ -251,6 +303,51 @@ function smoothLoop(tpl: Rel[], times: number): Rel[] {
   return cur
 }
 
+// 1周の形の数字：手前の足首の前後幅・膝の最大の曲がり（度）・かかとの上がり（腰からの高さの幅）。脚の長さに対する割合
+export function formOf(fs: Frame[], near: Side, dir: 1 | -1, leg: number) {
+  const hip = (f: Frame) => mid(f[L.leftHip], f[L.rightHip])
+  const ax = fs.map((f) => ((f[near.ankle].x - hip(f).x) * dir) / leg)
+  const knee = fs.map((f) => {
+    const u = { x: f[near.hip].x - f[near.knee].x, y: f[near.hip].y - f[near.knee].y }
+    const w = { x: f[near.ankle].x - f[near.knee].x, y: f[near.ankle].y - f[near.knee].y }
+    const c = (u.x * w.x + u.y * w.y) / (Math.hypot(u.x, u.y) * Math.hypot(w.x, w.y) || 1)
+    return 180 - (Math.acos(Math.max(-1, Math.min(1, c))) * 180) / Math.PI
+  })
+  const heel = fs.map((f) => (f[near.heel].y - hip(f).y) / leg)
+  return { ankle: Math.max(...ax) - Math.min(...ax), knee: Math.max(...knee), heel: Math.max(...heel) - Math.min(...heel) }
+}
+
+// 区間の中から、いちばん典型的な実際の1周を選び、毎秒30コマ（n コマ）にならす。始まりと終わりの差は1周にわたって少しずつ戻す
+function pickCycle(ts: number[], rel: Rel[], cycles: [number, number][], n: number, near: Side, dir: 1 | -1, leg: number): Rel[] | null {
+  const cand: { fs: Rel[]; end: Rel; form: ReturnType<typeof formOf>; jerk: number; seam: number }[] = []
+  const pts = [near.knee, near.ankle, near.heel, near.foot]
+  for (const [a, b] of cycles) {
+    const fs: Rel[] = []
+    for (let j = 0; j <= n; j++) {
+      const r = sampleAt(ts, rel, a + (j / n) * (b - a))
+      if (!r) break
+      fs.push(r)
+    }
+    if (fs.length <= n) continue
+    const end = fs.pop()!
+    let jerk = 0
+    for (let j = 0; j < n; j++) {
+      const p = fs[(j - 1 + n) % n]
+      const c = fs[j]
+      const q = j === n - 1 ? end : fs[j + 1]
+      for (const k of pts) jerk = Math.max(jerk, Math.hypot(p[k].x - 2 * c[k].x + q[k].x, p[k].y - 2 * c[k].y + q[k].y) / leg)
+    }
+    const seam = Math.max(...pts.map((k) => d2(fs[0][k], end[k]))) / leg
+    cand.push({ fs, end, form: formOf(fs, near, dir, leg), jerk, seam })
+  }
+  if (!cand.length) return null
+  const m = { ankle: med(cand.map((c) => c.form.ankle)), knee: med(cand.map((c) => c.form.knee)), heel: med(cand.map((c) => c.form.heel)) }
+  const cost = (c: (typeof cand)[number]) =>
+    Math.abs(c.form.ankle / m.ankle - 1) + Math.abs(c.form.knee / m.knee - 1) + Math.abs(c.form.heel / m.heel - 1) + STRIDE.pickJerk * c.jerk + STRIDE.pickSeam * c.seam
+  const best = cand.reduce((x, y) => (cost(y) < cost(x) ? y : x))
+  return best.fs.map((r, j) => r.map((p, q) => ({ x: p.x - ((best.end[q].x - best.fs[0][q].x) * j) / n, y: p.y - ((best.end[q].y - best.fs[0][q].y) * j) / n, v: p.v })))
+}
+
 export interface CycleResult {
   frames: Frame[] // 1周（毎秒30コマで再生して実際の速さ）。区切りは手前の足首が一番前に出た瞬間
   sec: number // 1周の秒数
@@ -306,10 +403,21 @@ export function strideCycle(seq: TimedFrame[], dir: 1 | -1, hint?: number): Cycl
   if (!first) return null
   const swapped = fixSwaps(ts, rel, cycles, first, near, far)
   cycles = anchorsOf() ?? cycles
-  const second = fold(ts, rel, cycles, n)
+  let second = fold(ts, rel, cycles, n)
   if (!second) return null
-  const mirrored = mirrorFar(second, near, far)
-  const farDiff = second.reduce((a, r, j) => a + d2(r[far.ankle], mirrored[j][far.ankle]), 0) / n / leg
+  // 周ごとの位相のずれを合わせて重ね直す（2回）
+  for (let k = 0; k < 2; k++) {
+    const next = fold(ts, rel, cycles, n, align(ts, rel, cycles, second, near))
+    if (!next) break
+    second = next
+  }
+  // 重ねた形は、周ごとに膝の曲がりやかかとの上がりの山の時刻が少しずつ違うので、山が低くなる（記録で、かかとの上がりが生の周の約8割）。
+  // そこで、重ねた形は左右の取り違えを直すためだけに使い、描くのは実際の1周：脚の振れ・膝の曲がり・かかとの上がりが、
+  // 区間の周の中央値にいちばん近く、途中で点が跳ばず、始まりと終わりが近い周
+  const pick = pickCycle(ts, rel, cycles, n, near, dir, leg)
+  if (!pick) return null
+  const mirrored = mirrorFar(pick, near, far)
+  const farDiff = second.reduce((a, r, j) => a + d2(r[far.ankle], mirrorFar(second!, near, far)[j][far.ankle]), 0) / n / leg
   const frames = smoothLoop(mirrored, STRIDE.smooth).map((r) => r.map((p): Pt => ({ x: p.x, y: p.y, v: p.v })))
   const sec = cycles.reduce((a, [s, e]) => a + (e - s), 0) / cycles.length
   return { frames, sec, cycles: cycles.length, swapped, farDiff }
