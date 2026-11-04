@@ -10,7 +10,8 @@ import { L } from '../landmarks'
 import { overCue } from '../scoring'
 import { gravityAvailable, gravityPitch, gravityRoll, phoneStillSec } from '../gravity'
 import { queueUpload } from '../../../core/upload/uploads'
-import { loadBaselines, loadProgress, loadSettings, saveBaseline, saveLog, saveProgress, saveSession } from '../../../core/storage'
+import { loadBaselines, loadProgress, loadSettings, persistStorage, saveBaseline, saveProgress, saveSession, writeLogChunk } from '../../../core/storage'
+import { LOG_CHUNK, LogSaver } from '../../../core/logChunks'
 import { activeItems, afterRun } from '../../../core/level'
 import { todayFocus } from '../nextStep'
 import { LogRecorder } from '../log'
@@ -109,6 +110,11 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     // 調整用の記録（骨格の点と判定の数字）。カメラで撮るときは、スマホ版の記録と時刻を合わせられるよう、時計の対応を残す
     const rec = new LogRecorder(file ? undefined : { perfMs: performance.now(), epochMs: Date.now() })
     if (full || file) rec.log.full = true
+    // 長い走り（マラソンで7時間まで）でも、記録を手元に溜めこまない：LOG_CHUNK.every 秒ごとに端末へ書き出す（アプリが落ちても、そこまでは残る）
+    const saver = new LogSaver(rec.log, { write: writeLogChunk })
+    void persistStorage().then((st) => {
+      if (st) rec.log.storage = st
+    })
     let nowT = 0
     let tickMoving = false
     // ランナーのレベルと、今日注意する項目（走り終わったら、続いて声がかからなかったかで次の段階へ）
@@ -121,6 +127,16 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           sensorRun.tick(performance.now() / 1000, phase === 'run' && !!coach && coach.state === 'running' && coach.stepping)
         }, HUNCH.tick * 1000)
       : null
+    const logTimer = setInterval(() => {
+      const cur = sensorRun?.current()
+      if (cur) rec.log.sensors = cur
+      void saver.flush()
+    }, LOG_CHUNK.every * 1000)
+    // 走り終わり（やめたときも）：残りを書いて、走っている途中の印を外す
+    const saveAll = () => {
+      clearInterval(logTimer)
+      return saver.flush(true)
+    }
     let sensorsClosed = false
     const closeSensors = () => {
       if (sensorsClosed) return
@@ -159,12 +175,12 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         rec.log.sessionId = s.id
         await saveSession(s)
         saveProgress(afterRun(progress, s))
-        await saveLog(rec.log).catch(() => {})
+        await saveAll()
         queueUpload('camera', rec.log.id, rec.log.startedAt)
         onDone(s.id)
       } else {
         // 走りが始まらなかったときこそ調整に使うので、記録は残す
-        await saveLog(rec.log).catch(() => {})
+        await saveAll()
         queueUpload('camera', rec.log.id, rec.log.startedAt)
         onDone()
       }
@@ -486,9 +502,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       if (screenMode === 'show' || phase === 'setup') draw(frame, w, h, hot)
       else draw(null, w, h, hot)
 
-      if (rec.log.rows.length < 80000) {
-        rec.frame(t, phase, w, h, frame, { visible, moving: tickMoving, by: motion.by, cadence: motion.cadence, m, sideDeg, still: phoneStillSec(), pitch: gravityPitch() })
-      }
+      // 上限は置かない（LOG_CHUNK.every 秒ごとに端末へ書き出して、手元の rows は空にする）
+      rec.frame(t, phase, w, h, frame, { visible, moving: tickMoving, by: motion.by, cadence: motion.cadence, m, sideDeg, still: phoneStillSec(), pitch: gravityPitch() })
       updateHud(t, visible, sideDeg)
     }
 
@@ -521,7 +536,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       if (!finished) {
         stopVoice()
         closeSensors()
-        saveLog(rec.log).catch(() => {})
+        void saveAll()
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

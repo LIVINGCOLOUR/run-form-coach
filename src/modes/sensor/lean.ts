@@ -15,9 +15,13 @@ import type { Vec3 } from './parse'
 //   ・線を越えていた時間（線の下にいる間は slipDecay 倍の速さで減らす）が slipSec 秒に達した：急にずれて、線を越えたままになった
 //   ・基準が、走る前傾（前にずれとみなしたときは、そのときの基準）から slipDrift 度より前へ動いた：少しずつずれて、寄せた基準が動いた。
 //     後ろへ動いたのは見ない（鳴りにくくなるだけで、外れた知らせにはならない。基準は寄せて追う）
+// 体を曲げた（物を拾う）：傾きが基準 + bend 以上（または、ほかの場所で曲げたと分かった：update の bentElsewhere）なら、走る姿勢ではない。
+//   その間と bendAfter 秒あとまでは、知らせず、基準も寄せず、ずれの見張りにも数えない。越え始めてから数えた分もなかったことにする。
+//   大きく傾いて知らせるとき（基準 + confirmAbove 以上）は confirmSec 秒待ち、その間に曲げたと分かれば知らせない
 // 2026-11-02 20:23 と 2026-11-03 15:08 の走りで、胸のセンサーがずれて傾きが +9〜13° 増えた（カメラの上体は変わらず）。わざとの猫背（60秒まで）は置き直さない
 
-export type LeanStep = { tilt: number | null; cue: boolean; learned?: number; ref?: number | null; slip?: { from: number; to: number } }
+// bent：体を曲げている（またはその直後）ので見ていない。bend：この tick で曲げ始めたと見た（そのときの傾き。胸の bend を越えたときだけ）
+export type LeanStep = { tilt: number | null; cue: boolean; learned?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number }
 
 const DEG = 180 / Math.PI
 const norm = (v: Vec3): Vec3 | null => {
@@ -47,6 +51,10 @@ export class LeanDetector {
   private overAcc = 0 // 線を越えていた時間（秒。線の下にいる間は減らす）
   private tilts: { t: number; v: number }[] = [] // 直近 slipRef 秒の傾き（置き直す先を決める）
   private anchor: number | null = null // ずれを測るもと（走る前傾。ずれとみなしたら、そのときの基準）
+  private overAccAtStart = 0 // 線を越え始めたときの overAcc（曲げたと分かったら、ここへ戻す）
+  private waitSince: number | null = null // 大きく傾いて知らせるのを待ち始めた t
+  private bendUntil = -Infinity // この t までは曲げている（その直後）とみなす
+  private bending = false // 前の tick で、曲げている間だった
   slips = 0 // ずれとみなして基準を置き直した回数
   readonly p: LeanParams
 
@@ -118,7 +126,13 @@ export class LeanDetector {
     return median(this.learnUs.map((u) => this.angle(u, this.fwd)))
   }
 
-  update(t: number, running: boolean): LeanStep {
+  // t の時点で、曲げている（その直後）とみているか
+  bent(t: number): boolean {
+    return t < this.bendUntil
+  }
+
+  // bentElsewhere：ほかの場所（胸）で、体を曲げたと分かっている
+  update(t: number, running: boolean, bentElsewhere = false): LeanStep {
     const dt = this.lastT === null ? 0 : Math.max(0, Math.min(1, t - this.lastT))
     this.lastT = t
     const u = t - this.lastSample > this.p.stale ? null : this.dir()
@@ -126,10 +140,27 @@ export class LeanDetector {
     const out: LeanStep = { tilt, cue: false, ref: this.ref }
     if (!running || tilt === null || !u) {
       this.overSince = null
+      this.waitSince = null
+      this.bending = false
       return out
     }
     this.runSec += dt
     const p = this.p
+    // 体を曲げた：知らせず、基準・ずれの見張り・走る前傾の覚え込みにも使わない
+    const big = p.bend > 0 && tilt >= (this.ref ?? this.runLean ?? 0) + p.bend
+    if (big || bentElsewhere) {
+      if (big && !this.bending) out.bend = tilt
+      this.bendUntil = t + p.bendAfter
+    }
+    if (t < this.bendUntil) {
+      if (this.overSince !== null) this.overAcc = this.overAccAtStart
+      this.overSince = null
+      this.waitSince = null
+      this.bending = true
+      out.bent = true
+      return out
+    }
+    this.bending = false
     if (this.runLean === null) {
       if (this.runSec >= p.skip && this.runSec < p.skip + p.learn) this.learnUs.push(u)
       if (this.runSec >= p.skip + p.learn) {
@@ -149,14 +180,24 @@ export class LeanDetector {
     this.tilts.push({ t, v: tilt })
     while (t - this.tilts[0].t > p.slipRef) this.tilts.shift()
     if (tilt > ref + p.margin) {
-      this.overSince ??= t
+      if (this.overSince === null) {
+        this.overSince = t
+        this.overAccAtStart = this.overAcc
+      }
       this.overAcc += dt
       if (t - this.overSince >= p.hold && t - this.lastCue >= p.cooldown) {
-        this.lastCue = t
-        out.cue = true
+        // 越えて最初の知らせで大きく傾いているときは、曲げる途中かもしれないので少し待つ（越えたままの知らせ直しは待たない）
+        const wait = p.confirmAbove > 0 && p.confirmSec > 0 && this.lastCue < this.overSince && tilt >= ref + p.confirmAbove
+        if (wait) this.waitSince ??= t
+        if (!wait || t - this.waitSince! >= p.confirmSec) {
+          this.lastCue = t
+          this.waitSince = null
+          out.cue = true
+        }
       }
     } else {
       this.overSince = null
+      this.waitSince = null
       this.overAcc = Math.max(0, this.overAcc - dt * p.slipDecay)
       // 線の下にいる間だけ、基準を今の傾きへゆっくり寄せる（follow が 0 なら寄せない）
       if (p.follow > 0) this.ref = ref + (tilt - ref) * Math.min(1, dt / p.follow)
@@ -170,6 +211,7 @@ export class LeanDetector {
       this.anchor = this.ref
       this.overAcc = 0
       this.overSince = null
+      this.waitSince = null
       this.slips++
       out.cue = false
       out.slip = { from, to: this.ref }

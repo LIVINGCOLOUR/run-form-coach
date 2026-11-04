@@ -10,8 +10,9 @@ export const SLOTS: readonly { place: string; name: string | null }[] = [
   { place: '胸', name: 'RFC-IMU-2' },
   { place: '左手首', name: 'RFC-IMU-4' },
   { place: '右手首', name: null },
-  { place: '左足首', name: 'RFC-IMU-3' },
-  { place: '右足首', name: 'RFC-IMU-6' },
+  // 2026-11-05〜：左右の接地時間の差が体か付け方かを見るため、足首の3番と6番を入れ替えて走る（確かめたら戻す。viewer・coach.py は元のまま）
+  { place: '左足首', name: 'RFC-IMU-6' },
+  { place: '右足首', name: 'RFC-IMU-3' },
 ]
 export const CHEST = '胸'
 export const HEAD_PLACE = '頭'
@@ -47,6 +48,15 @@ export interface LeanParams {
   slipRef: number // 置き直す先：直近これ（秒）の傾きの真ん中の値
   slipBuzzCount: number // ずれたと知らせる振動（崩れの1秒1回と分けて、0.3秒を3回）。走りながら気づけるかは、まだ試していない
   slipBuzzMs: number
+  // 体を曲げた（物を拾う・靴ひもを結ぶ）：傾きが基準 + bend（度）以上なら、走る姿勢ではないとみなし、知らせない。0 なら見ない。
+  //   曲げている間と、戻ってから bendAfter 秒は、知らせず、基準も寄せず、ずれの見張りにも数えない（越え始めてからの分もなかったことにする）。
+  //   胸で曲げたと見たら、頭もいっしょに止める（session.ts。頭は曲げるより先に下を向くので、頭だけでは見分けられない）
+  bend: number
+  bendAfter: number
+  // 線を越えて最初に知らせるときの傾きが基準 + confirmAbove（度）以上なら、confirmSec 秒待って、その間に曲げたと分からなければ知らせる（0 なら待たない）。
+  //   曲げる途中の傾きで先に震わせないため（2026-11-04 の3回は、頭の知らせが胸で曲げたと分かる約0.4秒前だった）
+  confirmAbove: number
+  confirmSec: number
 }
 
 const LEAN = {
@@ -68,6 +78,10 @@ const LEAN = {
   slipRef: 10,
   slipBuzzCount: 3,
   slipBuzzMs: 300,
+  bend: 0,
+  bendAfter: 5,
+  confirmAbove: 0,
+  confirmSec: 1,
 }
 
 // 胸の猫背。実機：ふつうに走って胸 約12〜16°、猫背 約26〜28°、胸を張って 約18°（立った姿勢から）。立った姿勢からの決まった 18° では、ふつうの走りでも鳴った。
@@ -83,15 +97,19 @@ const LEAN = {
 //   ・カメラの猫背（6秒平均）と胸の増えは、わざとの猫背のある 11-03 で 相関 0.61・胸 ≈ 1.9 + 1.36 × カメラ。カメラの線 4°・3.5°・3° は胸の +7.3°・+6.7°・+6.0° にあたり、
 //     胸は 1.5秒続けば震えるので（6秒平均より揺れる）、その 1° ほど下に置くと、カメラより少し早く震える
 //   ・ふつうの区間で、カメラの猫背の声から ±15秒より離れて震えたのは、10分あたり +8° 1.4回（上級のカメラと比べて 0.8回）→ 初心者 +6° 2.2回・中級 +5.5° 2.7回・
-//     上級 +5° 2.7回（11-04 の32分と 11-03 の前半5分）。カメラの声（あわせて 初心者・中級 4回、上級 5回）に合ったのは 初心者・中級 3 → 4回、上級 4 → 4回
+//     上級 +5° 2.7回（11-04 の32分と 11-03 の前半5分。体を曲げたのを外す前の数で、外したいまは 11-04 の物を拾った3回のぶん、どの線も3回ずつ少ない）。カメラの声（あわせて 初心者・中級 4回、上級 5回）に合ったのは 初心者・中級 3 → 4回、上級 4 → 4回
 //     11-04 に走ったときのカメラの猫背の声 3回（胸の値がある間）には、+8° は1回、+5〜6° は2回合った（残る1回は胸が +3° しか動かず、+3° まで下げないと合わない。+3° では外れが 5.8回）
 //   ・その代わり、センサーがずれて線を越えたままの間は、見張り（slipSec）が置き直すまで鳴る回数が増える（ずれの間の震え 10分あたり +8° 6回 → +5° 22回。11-03 は 715秒にずれ、約795秒に置き直す）。
 //     わざとの猫背 60秒（2回でも）はずれとみなさないこと、急なずれを約75秒で黙らせることは変わらない（sim/result-lean-slip.md）
+// bend 45・confirmAbove 20（胸）：2026-11-04 の走りで物を拾った3回（22・27・35分ごろ）は、胸が基準から +82〜84°（立った姿勢から 76〜92°）まで傾き、
+//   胸と頭が震えた。走っている間の胸の「傾き − 基準」は、4本の記録で ふつう 上から0.1%で +12〜19°、わざとの猫背（11-03）で +36°、
+//   11-03 の走りの終わり（止まるところ）で +52°。+45° はわざとの猫背より 9° 上で、拾う動きは越え始めから約0.5秒で越える（npm run replay:sensor）。
+//   +20° より大きく傾いて知らせるときだけ1秒待つ（ふつうの猫背の知らせ 24°・+10° 前後は待たない）
 // HUNCH は、レベルが分からないときの線（中級＝カメラの既定 DEFAULT_STRICT と同じ）
 export const HUNCH_BY_LEVEL: Record<Level, LeanParams> = {
-  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8 },
-  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8 },
-  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8 },
+  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20 },
+  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20 },
+  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20 },
 }
 export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 
@@ -102,14 +120,28 @@ export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 // 頭のセンサーは頭のうなずき（下を向く）も同じに見るので、首が前に出たのか下を向いたのかは分けられない
 // slipDrift 15：頭は線が広く、頭を前に出している間も線の下に入るたびに基準が寄るので、胸より大きくした（12 では、わざと 60秒 ×2 で 20通りのうち4回ずれとみなした。sim/lean-slip.sim.ts）。
 // 3本の記録では、頭でずれとみなしたことはない
-export const HEAD: LeanParams = { ...LEAN, place: HEAD_PLACE, margin: 18, slipDrift: 15 }
+// bend 0：頭だけでは曲げたのと見分けられない（拾った3回の頭は基準から +53〜59°、わざと頭を前に出したテスト（11-02・11-03）でも +47〜50°）。胸で見る（session.ts）。
+// confirmAbove 35：知らせるときの傾きが基準 +35° 以上なら1秒待つ（拾った3回は知らせたとき +53°。ふつうの頭の知らせは +16〜32°、
+//   11-04 の 56分の頭の知らせ（カメラも頭が前に出たと言った）は +42° で、1秒遅れて知らせる）
+export const HEAD: LeanParams = { ...LEAN, place: HEAD_PLACE, margin: 18, slipDrift: 15, confirmAbove: 35 }
 
-// 走った記録に入れるセンサーの値（log.ts）。100Hz のうち1件おき（50Hz）を、センサーごとに約1秒ずつまとめる。
-// 5個 × 50Hz × 14バイト = 3.5KB/秒、base64 で約4.7KB/秒 → 30分で約8.4MB。maxChars を超えたら値は残さない（知らせた記録は残す）
+// 走った記録に入れるセンサーの値（log.ts）。センサーごとに約1秒ずつまとめる。場所ごとに残す間隔を変える（every：100Hz のうち何件に1件か）。
+//   mean：間引いた間の平均を残す（間引いた値の折り返しの揺れを残さない）。false なら、通し番号が every で割り切れる件をそのまま残す
+//   足首 50Hz（そのまま）：接地時間は 50Hz でも 100Hz と同じに見つかる（sim/result-contact.md の①：接地時間のずれ 100Hz -1.1 ± 17.7ms、50Hz -0.1 ± 17.6ms）。
+//     着地の衝撃の山は 50Hz では低めに出るが、衝撃は記録だけで声にしない
+//   胸・頭 25Hz（平均）：傾きの見分け（lean.ts）は加速度を約0.5秒でならした向きを 0.1秒ごとに見る。記録4本（11-02 ×2・11-03・11-04）の 50Hz の値を
+//     平均で間引いて npm run replay:sensor（--gate stop）に通すと、25Hz では知らせた回数が 胸 0/6/49/6 → 0/8/49/6・頭 15/12/16/8 → 14/12/16/9、
+//     5秒の窓の一致は ±1% の内で、11-04 の体を曲げた3回も同じく見つける。10Hz では 20:23 の胸が 6 → 10回（一致 86 → 72%）、
+//     曲げたとみなすのが2回増えた（線ぎりぎりの知らせが入れ替わる・一瞬の揺れが大きく出る）ので使わない
+//   手首 25Hz（平均）：アプリでは使っていない。あとで腕振り（compare:sensor の⑥、振り 約1.4Hz）を見るために残す
+// 大きさ：足首 2 × 50 + 頭・胸・手首 3 × 25 = 175件/秒 × 14バイト ＋ ブロックの頭 → base64 で約12MB/時（前の 5か所 × 50Hz は約17MB/時）。
+// 上限は置かない。走っている間、core/logChunks.ts の LOG_CHUNK.every 秒ごとに端末（IndexedDB）へ書き出して、手元に持たない
 export const SENSOR_LOG = {
-  stride: 2, // 通し番号がこの数で割り切れる件だけ残す（2 で 50Hz）
+  rates: { 頭: { every: 4, mean: true }, 胸: { every: 4, mean: true }, 左手首: { every: 4, mean: true }, 右手首: { every: 4, mean: true }, 左足首: { every: 2, mean: false }, 右足首: { every: 2, mean: false } } as Record<string, { every: number; mean: boolean }>,
+  fallback: { every: 2, mean: false }, // 上にない場所
   block: 1, // まとめる長さ（秒）
-  maxChars: 10_000_000, // base64 の文字数の上限（約35分ぶん）
+  secEvery: 1, // 1秒ごとのまとめ（sec。傾き・基準・接地時間）を残す間隔（秒）。あとで長い走りのどこで崩れたかを見るため
+  batteryEvery: 60, // 電池の電圧を残す間隔（秒）。持ち時間を記録から出すため
 }
 
 // 電池（リポ 1セル、OCTelect 401030 110mAh）の電圧 → 残りの目安（%）。リポのふつうの放電曲線の表を、間を直線でつなぐ。

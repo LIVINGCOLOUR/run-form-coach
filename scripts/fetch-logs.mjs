@@ -7,6 +7,8 @@
 //   - VERCEL_OIDC_TOKEN と BLOB_STORE_ID（vercel env pull .env.local で入る。OIDC の鍵は半日ほどで切れるので、切れたら取り直す）
 // 置く名前は rfc-phone-年月日-時分_<記録の id>.json（カメラ版は rfc-年月日-時分_<id>.json）。gzip はほどいて、
 // 書き出し（{ log, session }）と同じ JSON で置くので、npm run compare -- <スマホ版> <カメラ版> にそのまま渡せる
+// 2時間より長い記録は、2時間ごとのファイル（名前の id のうしろに -p<何番目>of<いくつ>）に分けて届く（src/core/logChunks.ts）。
+// 全部そろってから取ってきて、log.chunks.paths の配列（rows・sensors.blocks・sensors.sec）をつないで1つのファイルにする。そろうまでは「途中」と出して取らない
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -39,7 +41,14 @@ if ((out + sep).startsWith(resolve(root) + sep)) {
 }
 
 // runs/phone/rfc-phone-20261013-0712_phone-log-1760307120000.json.gz → rfc-phone-20261013-0712_phone-log-1760307120000.json
-const localName = (pathname) => pathname.split('/').pop().replace(/\.gz$/, '')
+// 分けたファイル（…_log-1793790318421-p2of4.json.gz）は、つないだあとの名前（…_log-1793790318421.json）
+const PART = /-p(\d+)of(\d+)\.json$/
+const fileName = (pathname) => pathname.split('/').pop().replace(/\.gz$/, '')
+const localName = (pathname) => fileName(pathname).replace(PART, '.json')
+const partOf = (pathname) => {
+  const m = fileName(pathname).match(PART)
+  return m ? [Number(m[1]), Number(m[2])] : [1, 1]
+}
 const kindOf = (pathname) => pathname.split('/')[1] ?? '?'
 const mb = (n) => `${(n / 1024 / 1024).toFixed(1)}MB`
 const when = (d) => {
@@ -67,32 +76,83 @@ if (!blobs.length) {
 }
 
 mkdirSync(out, { recursive: true })
-const fresh = blobs.filter((b) => !existsSync(join(out, localName(b.pathname))))
-console.log(`届いた記録 ${blobs.length} 件（新しく取ってくるもの ${fresh.length} 件） → ${out}`)
+// 同じ記録のファイル（分けたもの）をまとめる
+const groups = new Map()
 for (const b of blobs) {
-  const mark = fresh.includes(b) ? '新' : '　'
-  console.log(`${mark} ${when(new Date(b.uploadedAt))}  ${kindOf(b.pathname).padEnd(6)}  ${mb(b.size).padStart(7)}  ${localName(b.pathname)}`)
+  const name = localName(b.pathname)
+  const g = groups.get(name) ?? { name, kind: kindOf(b.pathname), parts: [], of: partOf(b.pathname)[1] }
+  g.parts.push(b)
+  groups.set(name, g)
+}
+const runs = [...groups.values()]
+const complete = (g) => new Set(g.parts.map((b) => partOf(b.pathname)[0])).size >= g.of
+const fresh = runs.filter((g) => !existsSync(join(out, g.name)) && complete(g))
+console.log(`届いた記録 ${runs.length} 件（新しく取ってくるもの ${fresh.length} 件） → ${out}`)
+for (const g of runs) {
+  const mark = fresh.includes(g) ? '新' : !complete(g) && !existsSync(join(out, g.name)) ? '途' : '　'
+  const size = g.parts.reduce((n, b) => n + b.size, 0)
+  const last = g.parts.reduce((a, b) => (new Date(b.uploadedAt) > new Date(a.uploadedAt) ? b : a))
+  const parts = g.of > 1 ? `  （${g.parts.length}/${g.of} に分けて${complete(g) ? '' : '、途中'}）` : ''
+  console.log(`${mark} ${when(new Date(last.uploadedAt))}  ${g.kind.padEnd(6)}  ${mb(size).padStart(7)}  ${g.name}${parts}`)
 }
 if (listOnly || !fresh.length) process.exit(0)
 
+// 1つのファイルを取ってきて、gzip をほどいて読む
+async function fetchJson(b) {
+  const access = new URL(b.url).hostname.includes('.public.') ? 'public' : 'private'
+  const r = await get(b.pathname, { access, useCache: false, ...auth })
+  if (!r || r.statusCode !== 200) throw new Error('見つかりません')
+  let buf = Buffer.from(await new Response(r.stream).arrayBuffer())
+  if (buf[0] === 0x1f && buf[1] === 0x8b) buf = gunzipSync(buf)
+  const data = JSON.parse(buf.toString('utf8'))
+  if (!data || typeof data !== 'object' || !data.log) throw new Error('書き出しの形（{ log, session }）ではありません')
+  return { data, text: buf }
+}
+
+// path（'sensors.blocks' など）の配列。なければ作る（親がなければ undefined）
+function arrayAt(o, path) {
+  const keys = path.split('.')
+  let cur = o
+  for (const k of keys.slice(0, -1)) {
+    cur = cur?.[k]
+    if (!cur || typeof cur !== 'object') return undefined
+  }
+  const last = keys[keys.length - 1]
+  if (!Array.isArray(cur[last])) cur[last] = []
+  return cur[last]
+}
+
 let failed = 0
-for (const b of fresh) {
-  const name = localName(b.pathname)
+for (const g of fresh) {
   try {
-    const access = new URL(b.url).hostname.includes('.public.') ? 'public' : 'private'
-    const r = await get(b.pathname, { access, useCache: false, ...auth })
-    if (!r || r.statusCode !== 200) throw new Error('見つかりません')
-    let buf = Buffer.from(await new Response(r.stream).arrayBuffer())
-    if (buf[0] === 0x1f && buf[1] === 0x8b) buf = gunzipSync(buf)
-    const data = JSON.parse(buf.toString('utf8'))
-    if (!data || typeof data !== 'object' || !data.log) throw new Error('書き出しの形（{ log, session }）ではありません')
-    const dest = join(out, name)
-    writeFileSync(`${dest}.part`, buf)
+    const dest = join(out, g.name)
+    let text
+    if (g.of <= 1) text = (await fetchJson(g.parts[0])).text
+    else {
+      // 分けたファイルを番号順に取ってきて、1番目に2番目からの配列を足す（ほかの中身は1番目のもの）
+      const sorted = [...new Map(g.parts.map((b) => [partOf(b.pathname)[0], b])).entries()].sort((a, b) => a[0] - b[0]).map((x) => x[1])
+      let base = null
+      for (const b of sorted) {
+        const { data } = await fetchJson(b)
+        if (!base) {
+          base = data
+          continue
+        }
+        for (const p of base.log.chunks?.paths ?? []) {
+          const items = arrayAt(data.log, p)
+          const into = arrayAt(base.log, p)
+          if (items && into) for (const x of items) into.push(x)
+        }
+      }
+      delete base.part
+      text = JSON.stringify(base)
+    }
+    writeFileSync(`${dest}.part`, text)
     renameSync(`${dest}.part`, dest)
-    console.log(`取ってきた: ${name}（${mb(buf.length)}）`)
+    console.log(`取ってきた: ${g.name}（${mb(text.length)}${g.of > 1 ? `、${g.of} つをつないだ` : ''}）`)
   } catch (e) {
     failed++
-    console.error(`取ってこられなかった: ${name}（${e instanceof Error ? e.message : e}）`)
+    console.error(`取ってこられなかった: ${g.name}（${e instanceof Error ? e.message : e}）`)
   }
 }
 if (failed) process.exit(1)

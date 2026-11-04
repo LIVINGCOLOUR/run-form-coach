@@ -90,23 +90,24 @@ export const resetWaits = (list: UploadEntry[]): UploadEntry[] => list.map((e) =
 
 // 送り先の名前。runs/<kind>/<書き出しと同じ名前>_<記録の id>.json(.gz)
 // Mac の npm run logs は、この名前から .gz と記録の id を外して、書き出しと同じ名前で保存する
-export function uploadPathname(kind: string, name: string, logId: string, gzip: boolean): string {
+// 長い記録を分けて送るときは、記録の id のうしろに -p<何番目>of<いくつ> を付ける（part は 1 から）。npm run logs が全部そろってからつなぐ
+export function uploadPathname(kind: string, name: string, logId: string, gzip: boolean, part?: [number, number]): string {
   const base = name.replace(/\.json$/, '')
-  const id = logId.replace(/[^A-Za-z0-9-]/g, '-')
+  const id = logId.replace(/[^A-Za-z0-9-]/g, '-') + (part && part[1] > 1 ? `-p${part[0]}of${part[1]}` : '')
   return `runs/${kind}/${base}_${id}.json${gzip ? '.gz' : ''}`
 }
 
-// 送る記録の中身。name は書き出しのファイル名（rfc-phone-年月日-時分.json など）
-export interface UploadPayload {
-  name: string
-  data: unknown
-}
+// 送る記録の中身。name は書き出しのファイル名（rfc-phone-年月日-時分.json など）。
+// data：中身そのもの。pieces：長い記録（core/logChunks.ts）。1つの大きな文字列を作らずに、parts 個のファイルの JSON の切れはしを流す
+export type DataPayload = { name: string; data: unknown }
+export type UploadPayload = DataPayload | { name: string; parts: number; pieces: (part: number) => AsyncIterable<string> }
 
 export interface FlushDeps {
   getList: () => UploadEntry[]
   setList: (list: UploadEntry[]) => void
   load: (e: UploadEntry) => Promise<UploadPayload | undefined>
   pack: (data: unknown) => Promise<Packed>
+  packPieces?: (pieces: () => AsyncIterable<string>) => Promise<Packed>
   send: (pathname: string, p: Packed, onProgress?: (pct: number) => void) => Promise<SendResult>
   now: () => number
   onSending?: (id: string | null, pct?: number) => void
@@ -125,7 +126,15 @@ export async function flushQueue(deps: FlushDeps, force = false): Promise<void> 
       try {
         const p = await deps.load(e)
         if (!p) r = 'gone'
-        else {
+        else if ('pieces' in p) {
+          // 分けたファイルを順に送る。前に送れたファイルは「もうある」で送れたことになる
+          r = { ok: false, error: '送るものがありません' }
+          for (let k = 0; k < p.parts; k++) {
+            const packed = deps.packPieces ? await deps.packPieces(() => p.pieces(k)) : await deps.pack(JSON.parse(await joinPieces(p.pieces(k))))
+            r = await deps.send(uploadPathname(e.kind, p.name, e.logId, packed.gzip, [k + 1, p.parts]), packed, (pct) => deps.onSending?.(id, Math.round((k * 100 + pct) / p.parts)))
+            if (!r.ok) break
+          }
+        } else {
           const packed = await deps.pack(p.data)
           r = await deps.send(uploadPathname(e.kind, p.name, e.logId, packed.gzip), packed, (pct) => deps.onSending?.(id, pct))
         }
@@ -138,4 +147,11 @@ export async function flushQueue(deps: FlushDeps, force = false): Promise<void> 
   } finally {
     deps.onSending?.(null)
   }
+}
+
+// 切れはしをつないだ文字列（短い記録とテスト用）
+export async function joinPieces(src: AsyncIterable<string>): Promise<string> {
+  const xs: string[] = []
+  for await (const s of src) xs.push(s)
+  return xs.join('')
 }

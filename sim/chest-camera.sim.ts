@@ -19,7 +19,7 @@ import { CUE as CUE_TEXT } from '../src/core/phrases'
 import { LEVEL_LABEL, type Level } from '../src/core/level'
 import type { Frame, ItemKey, RunLog, Sample } from '../src/core/types'
 import { LeanDetector } from '../src/modes/sensor/lean'
-import { decodeBlock } from '../src/modes/sensor/log'
+import { decodeBlock, nodeHz } from '../src/modes/sensor/log'
 import { HUNCH, HUNCH_BY_LEVEL, type LeanParams } from '../src/modes/sensor/params'
 // @ts-expect-error 型のない .mjs（scripts/sensor-camera.test.ts と同じく読む）
 import { decodeNodes } from '../scripts/sensor-camera.mjs'
@@ -74,7 +74,7 @@ function replay(log: RunLog, params: LeanParams[]): Out {
   // 胸のセンサー
   const nodes = decodeNodes(log.sensors, decodeBlock) as { place: string; name: string; samples: { tt: number; a: [number, number, number] }[] }[]
   const chest = nodes.find((n) => n.place === HUNCH.place && n.name && n.samples.length)!
-  const hz = 100 / (log.sensors!.stride ?? 2)
+  const hz = nodeHz(log.sensors!, nodes.indexOf(chest))
   const standT = log.sensors!.stand?.t ?? log.events.find((e) => e[1] === 'phase:run')![0]
   const dets = params.map((p) => {
     const k = 1 - Math.pow(1 - p.ema, 100 / hz)

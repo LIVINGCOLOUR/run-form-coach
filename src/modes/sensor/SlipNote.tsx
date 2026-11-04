@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { loadLog } from '../../core/storage'
+import { loadLogMeta } from '../../core/storage'
 import { slipNotes } from './slipText'
 
 // 結果の画面の、センサーがずれたときの知らせ（slipText.ts）。記録がないか、ずれていなければ何も出さない
@@ -8,7 +8,7 @@ export function SlipNote({ logId }: { logId?: string }) {
   useEffect(() => {
     if (!logId) return
     let live = true
-    void loadLog(logId).then((log) => live && setNotes(slipNotes(log?.sensors)))
+    void loadLogMeta(logId).then((log) => live && setNotes(slipNotes(log?.sensors)))
     return () => {
       live = false
     }

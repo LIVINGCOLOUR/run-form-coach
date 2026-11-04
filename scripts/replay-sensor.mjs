@@ -6,6 +6,7 @@
 //   Mac の記録のフォルダ（hardware/sensor/tools の記録。imu.csv と phases.csv）：区切りごとに知らせた回数を出す（わざと崩したテストの確かめ）
 //   --level：胸の線のレベル（beginner / intermediate / advanced。params.ts の HUNCH_BY_LEVEL。なければ HUNCH＝中級）
 //   --chest / --head：数字を JSON で上書きして試す（params.ts は変えない）
+//   --gate stop：歩数で走っていた行から8秒までは、立ち止まっても走っているとみる（アプリに近い。物を拾った数秒を流し直す）
 // 記録の中身は画面に出すだけで、どこにも書かない
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -24,6 +25,10 @@ const opt = (name) => {
 }
 const over = { chest: JSON.parse(opt('--chest') ?? '{}'), head: JSON.parse(opt('--head') ?? '{}') }
 const level = opt('--level')
+// --gate stop：歩数で走っていた行から STOP 秒までは、立ち止まっても「走っている」とみる。アプリの「走っている」は1秒ごとの歩数で決めていて、
+// 立ち止まって物を拾った数秒も走っているままだった（2026-11-04）。その数秒を流し直して確かめるとき
+const gate = opt('--gate')
+const STOP = 8
 const WIN = 5
 const HOLD = 20 // 行のない間を、前の行のまま「走っている」とみる長さの上限（秒）
 if (!args.length) {
@@ -38,7 +43,7 @@ const entry = join(tmp, 'replay-sensor-entry.ts')
 writeFileSync(
   entry,
   [
-    `export { decodeBlock } from '${join(root, 'src/modes/sensor/log.ts')}'`,
+    `export { decodeBlock, nodeHz } from '${join(root, 'src/modes/sensor/log.ts')}'`,
     `export { LeanDetector } from '${join(root, 'src/modes/sensor/lean.ts')}'`,
     `export { HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS } from '${join(root, 'src/modes/sensor/params.ts')}'`,
     `export { FORM, BASELINE } from '${join(root, 'src/modes/camera/params.ts')}'`,
@@ -46,7 +51,7 @@ writeFileSync(
 )
 const bundle = join(tmp, 'replay-sensor.mjs')
 await build({ input: entry, platform: 'node', logLevel: 'warn', output: { file: bundle, format: 'esm' } })
-const { decodeBlock, LeanDetector, HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS, FORM, BASELINE } = await import(pathToFileURL(bundle).href)
+const { decodeBlock, nodeHz, LeanDetector, HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS, FORM, BASELINE } = await import(pathToFileURL(bundle).href)
 if (level && !HUNCH_BY_LEVEL[level]) {
   console.error(`--level は beginner / intermediate / advanced のどれか（${level}）`)
   process.exit(1)
@@ -63,20 +68,21 @@ const KINDS = [
 say(`胸：${JSON.stringify(KINDS[0].p)}`)
 say(`頭：${JSON.stringify(KINDS[1].p)}`)
 
-// 1つの場所の値を流す。samples：[{ tt, a }]（時刻順）、running(t)、standT：立った姿勢を覚える t。100Hz でない記録は ema を件数に合わせる
-function replay(p, samples, running, standT, t0, t1, hz) {
+// 1つの場所の値を流す。samples：[{ tt, a }]（時刻順）、running(t)、standT：立った姿勢を覚える t。100Hz でない記録は ema を件数に合わせる。
+// bentBy：ほかの場所（胸）の tick ごとの「体を曲げている」（頭はアプリと同じく、胸で曲げたと分かれば止める）
+function replay(p, samples, running, standT, t0, t1, hz, bentBy) {
   const k = 1 - Math.pow(1 - p.ema, 100 / hz)
   const d = new LeanDetector({ ...p, ema: k, standMin: Math.round((p.standMin * hz) / 100) }, 5)
   const ticks = []
   let i = 0
   let stood = false
-  for (let t = t0; t < t1; t += p.tick) {
+  for (let t = t0, k = 0; t < t1; t += p.tick, k++) {
     while (i < samples.length && samples[i].tt <= t) d.sample(samples[i].tt, samples[i++].a)
     if (!stood && t >= standT) stood = d.stand(t, BASELINE.collect)
-    const r = d.update(t, running(t))
-    ticks.push({ t, run: running(t), ...r, line: r.ref !== null && r.ref !== undefined ? r.ref + p.margin : null })
+    const r = d.update(t, running(t), !!bentBy?.[k])
+    ticks.push({ t, run: running(t), ...r, bentNow: d.bent(t), line: r.ref !== null && r.ref !== undefined ? r.ref + p.margin : null })
   }
-  return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), slips: ticks.filter((x) => x.slip), learnedAt: ticks.find((x) => x.learned !== undefined) }
+  return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), slips: ticks.filter((x) => x.slip), bends: ticks.filter((x) => x.bend !== undefined), learnedAt: ticks.find((x) => x.learned !== undefined) }
 }
 
 // ずれとみなして基準を置き直した時刻と、基準の変わり方
@@ -89,12 +95,14 @@ function cameraLog(path) {
   if (!log?.sensors) return say('この記録にはセンサーの値がない')
   const rows = S.cameraRows(log)
   const nodes = S.decodeNodes(log.sensors, decodeBlock)
-  const hz = 100 / (log.sensors.stride ?? 2)
   const standT = log.sensors.stand?.t ?? log.events.find((e) => e[1] === 'phase:run')?.[0]
   // 走っているか：その時刻のいちばん近い前のカメラの行（段階が run で、歩数で走っていた）。
   // カメラは走っている間、骨格を間引いて取る（10秒のうち3秒など。行のない間が7〜17秒）。アプリはその間も前の判定のまま
   // 「走っている」とするので、HOLD 秒までの行のない間は前の行のままにする
   const rt = rows.map((r) => r.t)
+  // --gate stop：最後に歩数で走っていた行から STOP 秒までは、立ち止まっても走っているとみる
+  const lastMoving = []
+  rows.forEach((r, i) => (lastMoving[i] = r.moving ? r.t : (lastMoving[i - 1] ?? -Infinity)))
   const running = (t) => {
     let lo = 0
     let hi = rt.length - 1
@@ -105,7 +113,7 @@ function cameraLog(path) {
       else hi = m - 1
     }
     const r = rows[lo]
-    return r.phase === 'run' && r.moving && t - r.t < HOLD
+    return r.phase === 'run' && (gate === 'stop' ? t - lastMoving[lo] < STOP : r.moving) && t - r.t < HOLD
   }
   // カメラの答え（5秒の窓）
   const H = FORM.head
@@ -129,14 +137,19 @@ function cameraLog(path) {
   const runRows = rows.filter((r) => r.phase === 'run' && r.moving)
   const t0 = rows[0].t
   const t1 = rows[rows.length - 1].t
+  let chestBent = null
   for (const K of KINDS) {
-    const n = nodes.find((x) => x.place === K.p.place && x.name && x.samples.length)
+    const ni = nodes.findIndex((x) => x.place === K.p.place && x.name && x.samples.length)
+    const n = nodes[ni]
     say(`\n## ${K.name}`)
     if (!n) {
       say('値がない')
       continue
     }
-    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz)
+    const hz = nodeHz(log.sensors, ni)
+    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null)
+    if (K.key === 'chest') chestBent = r.ticks.map((x) => x.bentNow)
+    say(`値の速さ ${f1(hz)}Hz・体を曲げたとみなした ${r.bends.length} 回：${r.bends.map((x) => `${f1(x.t)}（${f1(x.bend)}°）`).join(' ') || 'なし'}`)
     const mins = runMin(r.ticks, K.p)
     const last = n.samples[n.samples.length - 1].tt
     say(`値 ${f1(n.samples[0].tt)}〜${f1(last)} 秒・走った ${f1(mins)} 分（この間に値があった分）・走る前傾 ${f1(r.d.runLean)}°（${f1(r.learnedAt?.t)} 秒）・前の向き ${r.d.fwd ? 'あり' : 'なし（向きによらない角度）'}`)

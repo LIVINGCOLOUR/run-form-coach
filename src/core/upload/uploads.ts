@@ -1,7 +1,7 @@
 // 記録を送るしくみの、端末の側の入れ物（順番待ちと送る鍵は localStorage）と、画面へ知らせる口。
 // 送る鍵がある端末でだけ、走り終わった記録を順番待ちに入れる（鍵がなければ何もしない）。
 // 記録の中身は入り口ごとに持っているので、入り口が registerUploadSource で取り出し方と、端末に残っている記録の一覧を渡す
-import { packJson } from './pack'
+import { packJson, packPieces } from './pack'
 import { addEntry, backfillEntries, entryId, flushQueue, resetWaits, type LocalLog, type UploadEntry, type UploadPayload } from './queue'
 import { sendRun } from './send'
 
@@ -107,6 +107,7 @@ export function flushUploads(force = false): Promise<void> {
         return load(e.logId)
       },
       pack: (data) => packJson(data),
+      packPieces: (pieces) => packPieces(pieces),
       send: (pathname, p, onProgress) => sendRun(pathname, p, key, onProgress),
       now: () => Date.now(),
       onSending: (id, p) => {

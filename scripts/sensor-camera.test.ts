@@ -25,15 +25,16 @@ describe('センサーの記録を戻して、カメラの時計に合わせる'
     const clock0 = 100 // センサーの時刻 5000 ms が、カメラの時計の 100 秒
     const lat = [0.08, 0.05, 0.02, 0.09, 0.06, 0.07, 0.04] // 7件で回るので、1秒ごとのブロックの先頭がいろいろな遅れになる
     let k = 0
-    for (let seq = 0; seq < 1000; seq += 10) {
+    // 通知は4件ずつ（頭は4件ずつの平均で残すので、通知の先頭が平均の窓の先頭と同じ）
+    for (let seq = 0; seq < 1000; seq += 4) {
       if (seq >= 400 && seq < 700) continue // 3秒切れる
       const t0 = 5000 + seq * 10
-      rec.add(0, clock0 + (t0 - 5000) / 1000 + lat[k++ % lat.length], 16, packet(seq, t0, 10, () => [0, 0, 2049]).samples)
+      rec.add(0, clock0 + (t0 - 5000) / 1000 + lat[k++ % lat.length], 16, packet(seq, t0, 4, () => [0, 0, 2049]).samples)
     }
     rec.finish()
     const [n] = decodeNodes(rec.log, decodeBlock)
-    // 1件おき（stride 2）で残る
-    expect(n.samples.length).toBe(350)
+    // 頭は4件ずつの平均（25Hz。src/modes/sensor/params.ts の SENSOR_LOG.rates）で残る
+    expect(n.samples.length).toBe(175)
     // どの件も、いちばん小さい遅れ（0.02 秒）だけずれた時刻になる（ブロックごとの遅れのばらつきは残らない）
     const s0 = n.samples[0]
     for (const s of n.samples) expect(Math.abs(s.tt - (clock0 + (s.seq * 10) / 1000) - 0.02)).toBeLessThan(1e-6)

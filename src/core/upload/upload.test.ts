@@ -90,6 +90,8 @@ describe('送り直しの順番待ち', () => {
   it('送り先の名前は、書き出しの名前と記録の id から作る', () => {
     expect(uploadPathname('phone', 'rfc-phone-20261013-0712.json', 'phone-log-1760307120000', true)).toBe('runs/phone/rfc-phone-20261013-0712_phone-log-1760307120000.json.gz')
     expect(uploadPathname('camera', 'rfc-20261013-0712.json', 'log-1', false)).toBe('runs/camera/rfc-20261013-0712_log-1.json')
+    expect(uploadPathname('camera', 'rfc-20261104-2005.json', 'log-1793790318421', true, [2, 4])).toBe('runs/camera/rfc-20261104-2005_log-1793790318421-p2of4.json.gz')
+    expect(uploadPathname('camera', 'rfc-20261104-2005.json', 'log-1', true, [1, 1])).toBe('runs/camera/rfc-20261104-2005_log-1.json.gz') // 1つなら前と同じ名前
   })
 })
 
@@ -173,6 +175,39 @@ describe('まとめて送る（flushQueue）', () => {
     // すぐにもう一度呼んでも、失敗したものは待つ間が過ぎるまで送らない
     await flushQueue(s.deps)
     expect(s.sent).toHaveLength(3)
+  })
+
+  it('長い記録は、分けたファイルを順に送る。途中で送れなければ、そこでやめて次にやり直す', async () => {
+    let l = addEntry([], 'camera', 'log-9', 1)
+    const sent: string[] = []
+    let failAt: string | null = 'p2of3'
+    const deps = {
+      getList: () => l,
+      setList: (x: UploadEntry[]) => {
+        l = x
+      },
+      load: async () => ({ name: 'rfc-20261104-2005.json', parts: 3, pieces: async function* (k: number) { yield `{"part":${k}}` } }),
+      pack: async () => packed,
+      packPieces: async (pieces: () => AsyncIterable<string>) => {
+        let s = ''
+        for await (const x of pieces()) s += x
+        return { body: new Blob([s]), gzip: true }
+      },
+      send: async (pathname: string) => {
+        sent.push(pathname)
+        if (failAt && pathname.includes(failAt)) return { ok: false as const, error: '500' }
+        return { ok: true as const, pathname }
+      },
+      now: () => 0,
+    }
+    await flushQueue(deps)
+    expect(sent).toEqual(['runs/camera/rfc-20261104-2005_log-9-p1of3.json.gz', 'runs/camera/rfc-20261104-2005_log-9-p2of3.json.gz'])
+    expect(l[0]).toMatchObject({ state: 'waiting', tries: 1 })
+    failAt = null
+    sent.length = 0
+    await flushQueue(deps, true)
+    expect(sent.map((x) => x.match(/p\dof3/)![0])).toEqual(['p1of3', 'p2of3', 'p3of3'])
+    expect(l[0].state).toBe('sent')
   })
 
   it('鍵が違うと言われたら、そこでやめる', async () => {

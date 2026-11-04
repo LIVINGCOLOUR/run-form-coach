@@ -146,17 +146,33 @@ export interface RunLog {
   full?: boolean
   // 自作のセンサー（Bluefy などでつないだとき）。つながなかった走りと、古い記録にはない
   sensors?: SensorLog
+  // 走っている間に、少しずつ端末（IndexedDB）へ書き出した記録（core/logChunks.ts）。paths の配列（rows など）は、
+  // 端末の中では n 個のかたまりに分けてあり、読むとき・送るときにつなぐ。送った記録（npm run logs で取ってきたもの）ではつないである。前の記録にはない
+  chunks?: { n: number; paths: string[] }
+  recording?: boolean // 走っている途中で書き出したまま（アプリが止まった・落ちた）。走り終わって書いたら false
+  updatedAt?: number // 最後に書き出したふつうの時刻（ms）
+  // 走り始めたときの端末の入れ物の様子（navigator.storage。使えないブラウザではない）。usage・quota はバイト
+  storage?: { usage?: number; quota?: number; persisted?: boolean }
 }
 
 // センサーの記録（src/modes/sensor/log.ts の SensorRecorder で作り、decodeBlock で戻す）。時刻 t は rows と同じ時計の秒
 export interface SensorLog {
   version: 1
   nodes: { place: string; name: string; fw?: string; lost?: number; battery?: number }[] // lost：抜けた件数、battery：終わりの電圧（V）
-  stride: number // 100Hz のうち、通し番号がこの数で割り切れる件だけ残した
+  stride: number // 100Hz のうち、通し番号がこの数で割り切れる件だけ残した（strides があれば、そちらが場所ごとの値）
+  // 場所ごと（nodes と同じ並び）の、100Hz のうち何件に1件を残したか。mean の場所は、通し番号が割り切れる件から次の件の前までの平均
+  // （通し番号と時刻は、その先頭の件）。場所ごとに変える前の記録にはない（すべて stride）
+  strides?: number[]
+  mean?: boolean[]
   // [ブロックの先頭の件が届いた t, nodes の何番目か, base64]。中身は 先頭の通し番号 uint16・先頭の時刻 uint32 ms・加速度の範囲 uint8 g、
   // 続けて1件14バイト（前の件からの通し番号の差 uint8、時刻の差 uint8 ms、ジャイロ xyz int16、加速度 xyz int16。すべてリトルエンディアン。先頭の件の差は 0）
   blocks: [number, number, string][]
-  cappedAt?: number // 上限（SENSOR_LOG.maxChars）に達して、値を残すのをやめた t
+  cappedAt?: number // 前の記録だけ：上限（約35分）に達して、値を残すのをやめた t
+  // 1秒ごとのまとめ（secCols の並び）。長い走りの、どこで崩れたかを見るため。値がない欄は null。前の記録にはない
+  secCols?: string[]
+  sec?: (number | null)[][]
+  bat?: [number, number, number][] // 電池の電圧 [t, nodes の何番目か, V]（SENSOR_LOG.batteryEvery 秒ごと）。前の記録にはない
+  bends?: [number, number][] // 体を曲げた（物を拾うなど）とみなして、胸と頭で知らせなかった [t, 胸の傾き（度）]。前の記録にはない
   stand?: { t: number; base: [number, number, number] } // 立った姿勢を覚えた t と、胸の重力の向き
   runLean?: { t: number; deg: number } // 走る前傾を覚えた t と角度（度）
   cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]

@@ -5,7 +5,7 @@ import { sensors } from './ble'
 import { ContactCoach } from './contactCoach'
 import { LeanDetector } from './lean'
 import { SensorRecorder } from './log'
-import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SLOTS, type LeanParams } from './params'
+import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
 
 // 1回の走りの間、つないだセンサーの値を記録し、胸で猫背を、頭で頭が前に出たのを見て、その場所を震わせる（カメラ版の Live から使う）。
 // 区切りはカメラのものを使う：立った姿勢 = カメラの直立の基準を取った3秒（stand）、走っている = カメラが歩数で決めた「走っている」（tick）。
@@ -23,6 +23,12 @@ const partsFor = (level?: Level): { key: Key; p: LeanParams; ev: Names }[] => [
 const SLIP = 'sensor:slip'
 
 const r2 = (x: number) => Math.round(x * 100) / 100
+const r1n = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? null : Math.round(x * 10) / 10)
+const r3n = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000)
+
+// 1秒ごとのまとめ（SensorLog の sec）の欄：t・走っているか（1/0）・胸の傾きと基準（度）・頭の傾きと基準・体を曲げている（1/0）・
+// 接地の割合・左右の接地時間（ms）・見積もった速さ（km/h）・ピッチ（歩/分）。値がなければ null
+export const SEC_COLS = ['t', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad']
 
 export class SensorSession {
   private rec: SensorRecorder | null = null
@@ -35,6 +41,9 @@ export class SensorSession {
   private contact = new ContactCoach()
   private ankle = { L: SLOTS.findIndex((s) => s.place === ANKLES.L), R: SLOTS.findIndex((s) => s.place === ANKLES.R) }
   private nextSteps = 0
+  private nextSec = 0
+  private nextBat = 0
+  private lastLean: Record<Key, { tilt: number | null; ref: number | null; bent: boolean }> = { chest: { tilt: null, ref: null, bent: false }, head: { tilt: null, ref: null, bent: false } }
   voice = true
 
   // onEvent：区切り（覚えた・知らせた）を、カメラの記録の events にも残す。level：ランナーのレベル（胸の線を選ぶ）
@@ -78,7 +87,15 @@ export class SensorSession {
   // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」
   tick(t: number, running: boolean) {
     for (const x of this.parts) {
-      const r = x.d.update(t, running)
+      // 頭は、胸で体を曲げたと分かっていれば止める（胸を先に見る）
+      const chest = this.parts.find((y) => y.key === 'chest')
+      const r = x.d.update(t, running, x.key !== 'chest' && !!chest && chest.d.bent(t))
+      this.lastLean[x.key] = { tilt: r.tilt, ref: r.ref ?? null, bent: !!r.bent }
+      // 体を曲げた（物を拾うなど）：走る姿勢ではないので知らせない。記録だけ
+      if (r.bend !== undefined) {
+        this.rec?.bend(t, r.bend)
+        this.onEvent(t, `sensor:bend ${x.p.place} ${r.bend.toFixed(1)}`)
+      }
       if (r.learned !== undefined && this.rec) {
         this.slot(x.key).runLean = { t: r2(t), deg: Math.round(r.learned * 10) / 10 }
         this.onEvent(t, `${x.ev.lean} ${r.learned.toFixed(1)}`)
@@ -99,6 +116,46 @@ export class SensorSession {
       }
     }
     this.tickContact(t, running)
+    this.tickLog(t, running)
+  }
+
+  // 1秒ごとのまとめと、電池の電圧を記録に残す
+  private tickLog(t: number, running: boolean) {
+    if (!this.rec) return
+    if (t >= this.nextSec) {
+      this.nextSec = t + SENSOR_LOG.secEvery
+      const c = this.lastLean.chest
+      const h = this.lastLean.head
+      const m = this.contact.last
+      this.rec.second(SEC_COLS, [
+        r2(t), running ? 1 : 0, r1n(c.tilt), r1n(c.ref), r1n(h.tilt), r1n(h.ref), c.bent || h.bent ? 1 : 0,
+        r3n(m?.df), r1n(m ? m.ctL * 1000 : null), r1n(m ? m.ctR * 1000 : null), r1n(m?.v), r1n(m?.cad),
+      ])
+    }
+    if (t >= this.nextBat) {
+      this.nextBat = t + SENSOR_LOG.batteryEvery
+      sensors.snapshot().forEach((v, i) => {
+        if (v.status === 'connected' && v.battery !== null) this.rec!.battery(t, i, v.battery)
+      })
+    }
+  }
+
+  // 走っている途中の記録（端末へ少しずつ書き出すため。blocks・sec は書き出したら空にしてよい）。まだ値が届いていなければ undefined
+  current(): SensorLog | undefined {
+    if (!this.rec) return undefined
+    this.fillNodes(this.rec.log)
+    return this.rec.log
+  }
+
+  private fillNodes(log: SensorLog) {
+    const views = sensors.snapshot()
+    log.nodes.forEach((n, i) => {
+      const v = views[i]
+      if (!v?.name) return
+      if (v.fw) n.fw = v.fw
+      n.lost = v.lost
+      if (v.battery !== null) n.battery = v.battery
+    })
   }
 
   // 接地時間：しくみ（engine.ts）が決めた知らせを、足首の振動と声にする。値の移り変わりは CONTACT_LOG.every 秒ごとに events に残す
@@ -125,14 +182,7 @@ export class SensorSession {
     this.offStatus()
     if (!this.rec) return undefined
     this.rec.finish()
-    const views = sensors.snapshot()
-    this.rec.log.nodes.forEach((n, i) => {
-      const v = views[i]
-      if (!v?.name) return
-      if (v.fw) n.fw = v.fw
-      n.lost = v.lost
-      if (v.battery !== null) n.battery = v.battery
-    })
+    this.fillNodes(this.rec.log)
     return this.rec.log
   }
 }

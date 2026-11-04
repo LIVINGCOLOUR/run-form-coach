@@ -43,7 +43,7 @@
 - 言葉を足したり変えたりしたら、音声も作る（`npm run voices -- female <id>`、Vertex のプロジェクトは runrun1010）。
 - コメントと画面の言葉は、やさしい日本語で、周りの書き方に合わせる。文書は経緯ではなく今の正しい内容を書く。
 - 終わりの確認：`npx tsc --noEmit -p tsconfig.app.json`、`npx vitest run`、`npm run build`。
-- 走った記録を Mac へ送る（テスト期間用）：走り終わったら `src/core/upload/` が記録を gzip にして Vercel Blob（runs/）へ直接送る。送る鍵はテスト期間の既定（`uploads.ts` の `TEST_UPLOAD_KEY`）があり、端末で鍵を入れなくても送る（ホーム画面のアプリと Safari のタブは localStorage が別で、鍵を入れ忘れた側の記録が送られなかったため）。ほかの人に使ってもらう前に、この既定を外して Vercel の `UPLOAD_KEY` も変える。電波がなければ端末に残し、ホームを開いたとき・つながったときに送り直す。開いたときには、端末に残っている直近14日の記録のうち、まだ順番待ちにないものも入れる。Mac では `npm run logs` で一覧を出し、まだのものを `RFC_RUNS_DIR`（既定 ~/Developer/research-data/runs/）に取ってくる（`npm run compare` にそのまま渡せる形）
+- 走った記録を Mac へ送る（テスト期間用）：走り終わったら `src/core/upload/` が記録を gzip にして Vercel Blob（runs/）へ直接送る。送る鍵はテスト期間の既定（`uploads.ts` の `TEST_UPLOAD_KEY`）があり、端末で鍵を入れなくても送る（ホーム画面のアプリと Safari のタブは localStorage が別で、鍵を入れ忘れた側の記録が送られなかったため）。ほかの人に使ってもらう前に、この既定を外して Vercel の `UPLOAD_KEY` も変える。電波がなければ端末に残し、ホームを開いたとき・つながったときに送り直す。開いたときには、端末に残っている直近14日の記録のうち、まだ順番待ちにないものも入れる。Mac では `npm run logs` で一覧を出し、まだのものを `RFC_RUNS_DIR`（既定 ~/Developer/research-data/runs/）に取ってくる（`npm run compare` にそのまま渡せる形）。カメラ版の記録（骨格の行・センサーの値）は走っている間60秒ごとに端末へ書き出し（`src/core/logChunks.ts`。上限なし、7時間まで確かめた）、2時間より長い記録は2時間ごとのファイル（`…-p1of4.json.gz`）に分けて送り、`npm run logs` が全部そろってから1つにつなぐ
 - 仮想実験は `sim/`（`npx vitest run --config sim/vitest.config.ts`）。研究データはリポジトリに入れず、置き場所を環境変数で渡す。
 
 ## 守ること

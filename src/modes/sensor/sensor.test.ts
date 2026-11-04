@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseBattery, parsePacket, type Vec3 } from './parse'
 import { LeanDetector, type LeanStep } from './lean'
 import { batteryPercent } from './battery'
-import { decodeBlock, SensorRecorder } from './log'
+import { decodeBlock, nodeHz, SensorRecorder } from './log'
 import { HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG } from './params'
 import { slipNotes } from './slipText'
 import type { RunLog } from '../../core/types'
@@ -24,7 +24,7 @@ function build(seq: number, samples: Raw[], range = 16) {
   })
   return v
 }
-const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThan(1e-9)
+const near = (a: number, b: number, tol = 1e-9) => expect(Math.abs(a - b)).toBeLessThan(tol)
 
 describe('センサーの通知を読む', () => {
   it('MTU 247 の18件：値・時刻・通し番号（65535 の次は 0）', () => {
@@ -308,6 +308,86 @@ describe('頭のセンサーで、頭が前に出たのを見る', () => {
   })
 })
 
+describe('体を曲げた（物を拾う）ときは、胸も頭も知らせない', () => {
+  // 2026-11-04 の3回に似せた形：頭が先に下を向き（0.8秒で +55°）、胸は 1.2秒で 90° まで曲げて1秒、2秒かけて戻る
+  const bendAt = 60
+  const ramp = (t: number, t0: number, t1: number, a: number, b: number) => (t <= t0 ? a : t >= t1 ? b : a + ((b - a) * (t - t0)) / (t1 - t0))
+  const chestOf = (t: number) => (t < bendAt + 2.2 ? ramp(t, bendAt, bendAt + 1.2, 14, 90) : ramp(t, bendAt + 2.2, bendAt + 4.2, 90, 14))
+  const headOf = (t: number) => (t < bendAt + 2.2 ? ramp(t, bendAt - 0.8, bendAt + 0.4, 6, 62) : ramp(t, bendAt + 2.2, bendAt + 4.2, 62, 6))
+  // 胸と頭を同じ時計で流す（アプリと同じく胸を先に見て、胸で曲げたと分かれば頭も止める）
+  const both = (chest: LeanDetector, head: LeanDetector, from: number, to: number, c: (t: number) => number, h: (t: number) => number) => {
+    const out: { t: number; chest: LeanStep; head: LeanStep }[] = []
+    for (let i = Math.round(from * 100); i < Math.round(to * 100); i++) {
+      const t = i / 100
+      chest.sample(t, lean(c(t)))
+      head.sample(t, lean(h(t)))
+      if (i % 10 === 0) {
+        const rc = chest.update(t, true)
+        out.push({ t, chest: rc, head: head.update(t, true, chest.bent(t)) })
+      }
+    }
+    return out
+  }
+  const setup = () => {
+    const chest = new LeanDetector(HUNCH)
+    const head = new LeanDetector(HEAD)
+    both(chest, head, 0, 5, () => 0, () => 0)
+    expect(chest.stand(5, 3) && head.stand(5, 3)).toBe(true)
+    both(chest, head, 5, 50, () => 14, () => 6)
+    expect(chest.runLean!).toBeCloseTo(14, 0)
+    return { chest, head }
+  }
+
+  it('曲げて戻る間は、胸も頭も震えない。曲げたことは1回だけ返す。そのあとの猫背は知らせる', () => {
+    const { chest, head } = setup()
+    const out = both(chest, head, 50, 90, (t) => (t < 75 ? chestOf(t) : 27), (t) => (t < 75 ? headOf(t) : 6))
+    expect(out.filter((o) => o.t < 75 && (o.chest.cue || o.head.cue))).toEqual([])
+    const bends = out.filter((o) => o.chest.bend !== undefined)
+    expect(bends.length).toBe(1)
+    expect(bends[0].t).toBeGreaterThan(bendAt)
+    expect(bends[0].t).toBeLessThan(bendAt + 1.5)
+    expect(out.find((o) => o.t >= bendAt + 6)!.chest.bent).toBe(true) // 戻ってから bendAfter 秒は見ない
+    expect(out.some((o) => o.t > 75 && o.chest.cue)).toBe(true)
+    expect(chest.slips + head.slips).toBe(0)
+  })
+
+  it('見張りを外すと、前と同じく胸も頭も震える（2026-11-04 の形）', () => {
+    const chest = new LeanDetector({ ...HUNCH, bend: 0, confirmAbove: 0 })
+    const head = new LeanDetector({ ...HEAD, confirmAbove: 0 })
+    both(chest, head, 0, 5, () => 0, () => 0)
+    chest.stand(5, 3)
+    head.stand(5, 3)
+    both(chest, head, 5, 50, () => 14, () => 6)
+    const out = both(chest, head, 50, 75, chestOf, headOf)
+    expect(out.some((o) => o.chest.cue)).toBe(true)
+    expect(out.some((o) => o.head.cue)).toBe(true)
+  })
+
+  it('曲げている間は、基準を寄せず、越えていた時間も数えない（ずれの見張りに入れない）', () => {
+    const { chest } = setup()
+    const ref = chest.ref!
+    for (let k = 0; k < 20; k++) both(chest, new LeanDetector(HEAD), 50 + k * 10, 60 + k * 10, (t) => ramp(t % 10, 1, 2, 14, 90) * (t % 10 < 4 ? 1 : 0) || 14, () => 6)
+    expect(chest.slips).toBe(0)
+    expect(Math.abs(chest.ref! - ref)).toBeLessThan(1)
+  })
+
+  it('わざとの大きな猫背（基準 +36°、11-03 のテストの大きさ）は曲げたとみなさず、1秒待って知らせる', () => {
+    const { chest, head } = setup()
+    const out = both(chest, head, 50, 70, (t) => (t < 55 ? 14 : 50), () => 6)
+    expect(out.some((o) => o.chest.bend !== undefined || o.chest.bent)).toBe(false)
+    const first = out.find((o) => o.chest.cue)!
+    expect(first.t).toBeGreaterThan(55 + HUNCH.hold + HUNCH.confirmSec - 0.3)
+    expect(first.t).toBeLessThan(55 + HUNCH.hold + HUNCH.confirmSec + 0.6)
+  })
+
+  it('ふつうの猫背（+10°）は、前と同じく待たずに知らせる', () => {
+    const { chest, head } = setup()
+    const out = both(chest, head, 50, 60, (t) => (t < 52 ? 14 : 24), () => 6)
+    const first = out.find((o) => o.chest.cue)!
+    expect(first.t).toBeLessThan(52 + HUNCH.hold + 0.6)
+  })
+})
+
 describe('センサーの記録', () => {
   const sample = (seq: number, t: number, k: number) => {
     const raw = new Uint8Array(12)
@@ -316,13 +396,14 @@ describe('センサーの記録', () => {
     return { seq, t, g: [0, 0, 0] as Vec3, a: [0, 0, 0] as Vec3, raw }
   }
 
-  it('1件おきを残し、戻すと元の値・通し番号・時刻になる（通し番号 65535 をまたぐ）', () => {
-    const r = new SensorRecorder([{ place: '胸', name: 'RFC-IMU-2' }])
+  it('足首は1件おきをそのまま残し、戻すと元の値・通し番号・時刻になる（通し番号 65535 をまたぐ）', () => {
+    const r = new SensorRecorder([{ place: '左足首', name: 'RFC-IMU-3' }])
+    expect(r.log.strides).toEqual([2])
     const all = Array.from({ length: 300 }, (_, k) => sample((65400 + k) & 0xffff, 5000 + k * 10, k))
     for (let i = 0; i < all.length; i += 3) r.add(0, 10 + i / 100, 16, all.slice(i, i + 3)) // 3件ずつ、届いた順に
     r.finish()
     const got = r.log.blocks.flatMap((b) => decodeBlock(b[2]))
-    const kept = all.filter((s) => s.seq % SENSOR_LOG.stride === 0)
+    const kept = all.filter((s) => s.seq % SENSOR_LOG.rates['左足首'].every === 0)
     expect(got.length).toBe(kept.length)
     got.forEach((s, i) => {
       expect(s.seq).toBe(kept[i].seq)
@@ -333,10 +414,40 @@ describe('センサーの記録', () => {
       near(s.a[1], -k * 3 * 0.000488)
     })
     expect(r.log.blocks.length).toBe(3) // 約1秒ずつ
+    expect(nodeHz(r.log, 0)).toBe(50)
+  })
+
+  it('胸は4件ずつの平均（25Hz）を残す。通し番号と時刻は窓の先頭の件', () => {
+    const r = new SensorRecorder([{ place: '胸', name: 'RFC-IMU-2' }])
+    expect(SENSOR_LOG.rates['胸']).toEqual({ every: 4, mean: true })
+    const all = Array.from({ length: 200 }, (_, k) => sample(k + 3, 5000 + k * 10, k)) // 3 から始まる（最初の窓 0〜3 は 3 だけ）
+    for (let i = 0; i < all.length; i += 7) r.add(0, 10 + i / 100, 16, all.slice(i, i + 7))
+    r.finish()
+    const got = r.log.blocks.flatMap((b) => decodeBlock(b[2]))
+    expect(got.length).toBe(51) // 0、4、…、200（200〜202 の3件）
+    expect(got[0]).toMatchObject({ seq: 0, t: 5000 })
+    near(got[0].g[0], 0)
+    expect(got[1]).toMatchObject({ seq: 4, t: 5010 })
+    near(got[1].g[0], 2.5 * 0.07, 0.036) // k = 1〜4 の平均（1未満は丸め）
+    near(got[1].a[0], 2048 * 0.000488)
+    near(got[1].a[1], -7.5 * 0.000488, 0.000245)
+    expect(got[50]).toMatchObject({ seq: 200, t: 5000 + 197 * 10 })
+    expect(r.log.mean).toEqual([true])
+    expect(nodeHz(r.log, 0)).toBe(25)
+  })
+
+  it('平均の窓は、抜けがあっても通し番号で区切る（65535 をまたいでも）', () => {
+    const r = new SensorRecorder([{ place: '頭', name: 'RFC-IMU-1' }])
+    r.add(0, 1, 16, [sample(65532, 100, 4), sample(65534, 120, 8), sample(65535, 130, 8)])
+    r.add(0, 1.1, 16, [sample(1, 150, 0)])
+    r.finish()
+    const got = r.log.blocks.flatMap((b) => decodeBlock(b[2]))
+    expect(got.map((s) => s.seq)).toEqual([65532, 0])
+    near(got[0].g[0], (20 / 3) * 0.07, 0.036)
   })
 
   it('抜けで間があいても、新しいブロックにして時刻を保つ', () => {
-    const r = new SensorRecorder([{ place: '胸', name: 'RFC-IMU-2' }])
+    const r = new SensorRecorder([{ place: '左足首', name: 'RFC-IMU-3' }])
     r.add(0, 1, 16, [sample(0, 1000, 1), sample(2, 1020, 2)])
     r.add(0, 1.5, 16, [sample(600, 7000, 3)]) // 通し番号が 598 飛んだ
     r.finish()
@@ -344,20 +455,24 @@ describe('センサーの記録', () => {
     expect(decodeBlock(r.log.blocks[1][2])).toMatchObject([{ seq: 600, t: 7000 }])
   })
 
-  it('上限を超えたら値は残さず、知らせた記録は残す', () => {
-    const r = new SensorRecorder([{ place: '胸', name: 'RFC-IMU-2' }], { ...SENSOR_LOG, maxChars: 1000 })
-    for (let i = 0; i < 2000; i += 2) r.add(0, i / 100, 16, [sample(i, i * 10, 0)])
+  it('上限はなく、長く走っても最後まで残す', () => {
+    const r = new SensorRecorder([{ place: '左足首', name: 'RFC-IMU-3' }])
+    for (let i = 0; i < 200_000; i += 2) r.add(0, i / 100, 16, [sample(i & 0xffff, i * 10, 0)])
     r.cue(30, 27.34, true)
     r.finish()
-    const chars = r.log.blocks.reduce((n, b) => n + b[2].length, 0)
-    expect(chars).toBeLessThanOrEqual(1000)
-    expect(r.log.cappedAt).toBeDefined()
+    expect(r.log.cappedAt).toBeUndefined()
+    expect(r.log.blocks.reduce((n, b) => n + decodeBlock(b[2]).length, 0)).toBe(100_000)
     expect(r.log.cues).toEqual([[30, 27.3, 1]])
   })
 
-  it('30分・5個の大きさが上限に収まる', () => {
-    const perSec = 5 * (100 / SENSOR_LOG.stride) * 14 + 5 * 7 // 1秒ぶんのバイト（ブロックの頭を足す）
-    expect(Math.ceil((perSec * 1800 * 4) / 3)).toBeLessThan(SENSOR_LOG.maxChars)
+  it('1時間の大きさ：5か所（頭・胸・左手首・両足首）で約12MB（前の 50Hz × 5か所は約17MB）', () => {
+    const perHour = (every: (place: string) => number) =>
+      ['頭', '胸', '左手首', '左足首', '右足首'].reduce((n, p) => n + (((100 / every(p)) * 14 + 9) * 3600 * 4) / 3, 0) // ブロックの頭 9バイト/秒
+    const now = perHour((p) => SENSOR_LOG.rates[p].every)
+    const before = perHour(() => 2)
+    expect(before / 1e6).toBeGreaterThan(16.5)
+    expect(now / 1e6).toBeLessThan(12.5)
+    expect(now / 1e6).toBeGreaterThan(11.5)
   })
 
   it('頭で知らせた記録は head に、胸は前と同じ cues に入る', () => {

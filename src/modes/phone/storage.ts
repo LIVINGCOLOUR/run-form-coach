@@ -1,6 +1,6 @@
 import { shareJson } from '../../core/exportLog'
 import { allRecords, PHONE_LOGS, PHONE_SESSIONS, putRecord } from '../../core/storage'
-import type { UploadPayload } from '../../core/upload/queue'
+import type { DataPayload } from '../../core/upload/queue'
 import type { PhoneLog } from './log'
 import type { PhoneSession, PhoneWhere } from './session'
 
@@ -27,7 +27,7 @@ export async function exportPhoneLog(logId?: string): Promise<boolean> {
 }
 
 // 書き出しと、Mac へ送る記録（core/upload）の中身。npm run compare にそのまま渡せる形
-export async function phoneLogPayload(logId?: string): Promise<UploadPayload | undefined> {
+export async function phoneLogPayload(logId?: string): Promise<DataPayload | undefined> {
   const log = await loadPhoneLog(logId)
   if (!log) return undefined
   const session = (await loadPhoneSessions()).find((s) => s.logId === log.id)
