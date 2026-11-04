@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
@@ -23,6 +23,9 @@ import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/s
 import { flushUploads } from '../core/upload/uploads'
 import { UploadKeyButton, UploadPanel } from '../ui/Upload'
 import { SensorPanel } from '../modes/sensor/SensorPanel'
+import { sensors } from '../modes/sensor/ble'
+import { SENSOR_RUN_NAME } from '../modes/sensor/name'
+import { requestWakeLock as keepScreenOn } from '../core/wake'
 
 const ITEM_LABEL: Record<ItemKey, string> = { hunch: '背中の丸まり', head: '頭の前への出', trunk: '体幹の前傾', trunkBack: '体幹の起きすぎ', body: '体全体の前傾', bodyBack: '体全体の起きすぎ', hip: '腰の下がり', landing: '着地の位置' }
 const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
@@ -56,6 +59,34 @@ const WHERE_NOTE: Record<PhoneWhere, string> = {
   treadmill: 'GPS は使いません。速さは一定とみなします',
 }
 
+// 走り方（入り口）。ホームのいちばん上で選び、「はじめる」1つで始める。選んだものは端末に覚えておく
+type RunMode = 'treadmill' | 'waist' | 'sensor'
+const MODE_KEY = 'rfc.runMode'
+const MODES: { key: RunMode; label: string; note: string }[] = [
+  { key: 'treadmill', label: 'トレッドミル', note: '横に置いたカメラで全身を見て、声で知らせます。センサーをつなげば、いっしょに使います' },
+  { key: 'waist', label: '腰スマホ', note: 'スマホを腰のベルトに付けて外を走り、ピッチが落ちたら声で知らせます。センサーをつなげば、いっしょに使います（振動だけ）' },
+  {
+    key: 'sensor',
+    label: SENSOR_RUN_NAME,
+    note: 'センサーだけで外を走ります（マラソンにも）。スマホはポケットかアームバンドに入れ、画面は消さずに見ません。崩れたら、その場所が震えます。始めたら、まっすぐ立って3秒止まってください',
+  },
+]
+const loadMode = (): RunMode => {
+  try {
+    const v = localStorage.getItem(MODE_KEY)
+    return v === 'waist' || v === 'sensor' ? v : 'treadmill'
+  } catch {
+    return 'treadmill'
+  }
+}
+const saveMode = (m: RunMode) => {
+  try {
+    localStorage.setItem(MODE_KEY, m)
+  } catch {
+    /* 保存できない環境では何もしない */
+  }
+}
+
 const linkStyle = { background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 } as const
 
 export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]; phoneSessions?: PhoneSession[]; go: (s: Screen) => void }) {
@@ -65,6 +96,13 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   const fileRef = useRef<HTMLInputElement>(null)
   const slowRef = useRef<HTMLInputElement>(null)
   const k = useMorph(ideal)
+  const [mode, setMode] = useState<RunMode>(loadMode)
+  const chooseMode = (m: RunMode) => {
+    setMode(m)
+    saveMode(m)
+  }
+  const sensorNodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
+  const sensorsOn = sensorNodes.filter((n) => n.status === 'connected').length
   // ホームを開いたら、送れていない記録を送ってみる
   useEffect(() => {
     void flushUploads()
@@ -139,7 +177,6 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   const drillMin = (o: DrillOptions) => Math.round(drillPlan(o).total / 60)
   const testDue = testDays !== null && testDays >= FORM_TEST.everyDays
   const phoneActions = [
-    { title: '走る', note: 'ピッチが落ちたら、声で知らせます', start: () => startPhone(where) },
     {
       title: 'ピッチを上げる練習',
       note: practice.n === 1 ? `メトロノームに合わせて走ります。2週間で${PRACTICE.runs}回` : `${practice.n} / ${PRACTICE.runs} 回目。メトロノームに合わせて走ります`,
@@ -296,46 +333,72 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
       <div style={{ flexGrow: 1 }} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+          <div className="seg" role="group" aria-label="走り方" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            {MODES.map((m) => (
+              <button key={m.key} aria-pressed={mode === m.key} onClick={() => chooseMode(m.key)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">
+            {MODES.find((m) => m.key === mode)!.note}
+          </div>
+        </div>
         <button
           className="primary"
+          disabled={mode === 'sensor' && sensorsOn === 0}
+          style={mode === 'sensor' && sensorsOn === 0 ? { opacity: 0.4 } : undefined}
           onClick={() => {
             unlockVoice()
+            if (mode === 'waist') return void startPhone(where)
+            if (mode === 'sensor') {
+              void keepScreenOn()
+              return go({ name: 'sensorRun' })
+            }
             startGravity()
             go({ name: 'live' })
           }}
         >
           はじめる
         </button>
-        {fullFrames() && (
+        {mode === 'sensor' && sensorsOn === 0 && <div style={{ fontSize: 12, color: 'var(--warn)' }}>{SENSOR_RUN_NAME}は、センサーを1つ以上つないでから始めます</div>}
+        {mode === 'treadmill' && fullFrames() && (
           <div style={{ fontSize: 12, color: 'var(--accent)' }}>全コマ記録（検証用）：走っている間も間引かず、毎コマ骨格を取って残します</div>
         )}
-        <SensorPanel />
-        <div style={{ fontSize: 12 }} className="muted">
-          走る前に、まっすぐ立って基準を取ります
-          {' · '}
-          <button onClick={() => fileRef.current?.click()} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
-            動画で試す
-          </button>
-          {' · '}
-          <button onClick={() => exportLog().then((ok) => ok || alert('まだ記録がありません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
-            直近の記録を書き出す
-          </button>
-          {' · '}
-          <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>
-            フォームの見方
-          </a>
-        </div>
+        <SensorPanel key={mode === 'sensor' ? 'open' : 'closed'} defaultOpen={mode === 'sensor' && sensorsOn === 0} />
+        {mode === 'treadmill' && (
+          <div style={{ fontSize: 12 }} className="muted">
+            走る前に、まっすぐ立って基準を取ります
+            {' · '}
+            <button onClick={() => fileRef.current?.click()} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
+              動画で試す
+            </button>
+            {' · '}
+            <button onClick={() => exportLog().then((ok) => ok || alert('まだ記録がありません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
+              直近の記録を書き出す
+            </button>
+            {' · '}
+            <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>
+              フォームの見方
+            </a>
+          </div>
+        )}
+        {mode === 'treadmill' && (
         <button className="card" onClick={() => slowRef.current?.click()} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>スロー動画で詳しく見る</div>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
             iPhone のカメラの「スロー」で、真横から1〜1.5m離れて、足元まで入れて数歩撮った動画を選びます。接地時間・着地のすね・上下動を測ります。
           </div>
         </button>
+        )}
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {mode === 'waist' && (
+          <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>スマホ版（腰に付けて走る）</div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>腰スマホ</div>
             <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-              スマホを腰のベルトに付けて走ります。加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。
+              加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。走る場所を選んでから、上の「はじめる」か、下の練習・テストを押します。
             </div>
           </div>
 
@@ -394,6 +457,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
             <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={{ ...linkStyle, alignSelf: 'flex-start', fontSize: 13 }}>
               前回の結果を見る（{fmtDate(lastPhone.startedAt)}）
             </button>
+          )}
+          </>
           )}
           <UploadPanel />
 

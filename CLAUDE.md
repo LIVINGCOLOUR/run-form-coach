@@ -1,7 +1,7 @@
 # ランフォームコーチ
 
 走っている最中にフォームの崩れを見つけ、その場で声（センサー版は振動）で直すアプリ。
-入り口は3つ（トレッドミルのカメラ＝本線、無料のスマホ1台、別売りのセンサー）で、声かけのしくみは共通にしている。
+入り口は3つ（トレッドミルのカメラ＝本線、無料のスマホ1台を腰に、別売りのセンサーだけで外を走る「センサーラン」）で、声かけのしくみは共通にしている。ホームのいちばん上で選ぶ。
 
 ## フォルダの形
 
@@ -10,7 +10,7 @@
 | `src/core/` | 入り口に共通：声かけのしくみ（`engine.ts`）、しくみの数字（`params.ts`）、言葉と声、記録、レベル |
 | `src/modes/camera/` | カメラ版（トレッドミル）：骨格の推定、測り方、カメラの数字（`params.ts`）、撮る画面、スロー分析 |
 | `src/modes/phone/` | スマホ版（腰・外）：見る役、付け方の確認。決まりは `src/modes/phone/CLAUDE.md` |
-| `src/modes/sensor/` | 自作のセンサーのアプリ側：Web Bluetooth でつなぐ（`ble.ts`）、通知のパーサ、胸の猫背と頭が前に出たのの見分け（`lean.ts`）、足首の接地時間と左右差（`contact.ts`・`contactCoach.ts`）、記録、ホームの「センサーをつなぐ」の枠。付ける場所とセンサーの対応・数字は `params.ts`。いまはカメラ版がいっしょに使う（iPhone では Bluefy で開く） |
+| `src/modes/sensor/` | 自作のセンサーのアプリ側：Web Bluetooth でつなぐ（`ble.ts`）、通知のパーサ、胸の猫背と頭が前に出たのの見分け（`lean.ts`）、足首の接地時間と左右差（`contact.ts`・`contactCoach.ts`）、記録、ホームの「センサーをつなぐ」の枠、動かす役（`runner.ts`。カメラ版・腰スマホ・センサーランで共通）、カメラなしの「立っている・走っている」（`gate.ts`）、センサーランの画面と記録。付ける場所とセンサーの対応・数字は `params.ts`。iPhone では Bluefy で開く |
 | `hardware/sensor/` | センサーの機器（ファームウェア・書き込みの道具・作り方）。決まりは `hardware/sensor/CLAUDE.md` |
 | `src/screens/`・`src/ui/`・`src/theory/` | アプリ全体の画面（ホーム・結果）と、フォームの見方のページ |
 | `docs/`・`sim/`・`video/`・`scripts/` | 文書、仮想実験、紹介動画、音声などを作るスクリプト |
@@ -43,7 +43,7 @@
 - 言葉を足したり変えたりしたら、音声も作る（`npm run voices -- female <id>`、Vertex のプロジェクトは runrun1010）。
 - コメントと画面の言葉は、やさしい日本語で、周りの書き方に合わせる。文書は経緯ではなく今の正しい内容を書く。
 - 終わりの確認：`npx tsc --noEmit -p tsconfig.app.json`、`npx vitest run`、`npm run build`。
-- 走った記録を Mac へ送る（テスト期間用）：走り終わったら `src/core/upload/` が記録を gzip にして Vercel Blob（runs/）へ直接送る。送る鍵はテスト期間の既定（`uploads.ts` の `TEST_UPLOAD_KEY`）があり、端末で鍵を入れなくても送る（ホーム画面のアプリと Safari のタブは localStorage が別で、鍵を入れ忘れた側の記録が送られなかったため）。ほかの人に使ってもらう前に、この既定を外して Vercel の `UPLOAD_KEY` も変える。電波がなければ端末に残し、ホームを開いたとき・つながったときに送り直す。開いたときには、端末に残っている直近14日の記録のうち、まだ順番待ちにないものも入れる。Mac では `npm run logs` で一覧を出し、まだのものを `RFC_RUNS_DIR`（既定 ~/Developer/research-data/runs/）に取ってくる（`npm run compare` にそのまま渡せる形）。カメラ版の記録（骨格の行・センサーの値）は走っている間60秒ごとに端末へ書き出し（`src/core/logChunks.ts`。上限なし、7時間まで確かめた）、2時間より長い記録は2時間ごとのファイル（`…-p1of4.json.gz`）に分けて送り、`npm run logs` が全部そろってから1つにつなぐ
+- 走った記録を Mac へ送る（テスト期間用）：走り終わったら `src/core/upload/` が記録を gzip にして Vercel Blob（runs/）へ直接送る。送る鍵はテスト期間の既定（`uploads.ts` の `TEST_UPLOAD_KEY`）があり、端末で鍵を入れなくても送る（ホーム画面のアプリと Safari のタブは localStorage が別で、鍵を入れ忘れた側の記録が送られなかったため）。ほかの人に使ってもらう前に、この既定を外して Vercel の `UPLOAD_KEY` も変える。電波がなければ端末に残し、ホームを開いたとき・つながったときに送り直す。開いたときには、端末に残っている直近14日の記録のうち、まだ順番待ちにないものも入れる。Mac では `npm run logs` で一覧を出し、まだのものを `RFC_RUNS_DIR`（既定 ~/Developer/research-data/runs/）に取ってくる（`npm run compare` にそのまま渡せる形）。カメラ版・スマホ版・センサーの記録は走っている間60秒ごとに端末へ書き出し（`src/core/logChunks.ts`。上限なし、7時間まで確かめた）。端末に残すのは新しい20本（`uploads.ts` の `KEEP_RUNS`。テスト期間の決まり）で、それより古いものは Mac へ送れたものだけ消す、2時間より長い記録は2時間ごとのファイル（`…-p1of4.json.gz`）に分けて送り、`npm run logs` が全部そろってから1つにつなぐ
 - 仮想実験は `sim/`（`npx vitest run --config sim/vitest.config.ts`）。研究データはリポジトリに入れず、置き場所を環境変数で渡す。
 
 ## 守ること

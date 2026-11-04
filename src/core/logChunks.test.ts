@@ -197,3 +197,31 @@ describe('切れはしのまま縮める（packPieces）', () => {
     expect(JSON.parse(await p.body.text())).toEqual({ a: [1, 2] })
   })
 })
+
+describe('スマホ版の記録も同じしくみで少しずつ書き出す（phone/storage.ts の PHONE_LOG_PATHS）', () => {
+  it('生の値・1秒ごとの値・GPS を分けて書き、つなぐと元どおり。前の上限（40万行）を越えても切らない', async () => {
+    const { PhoneLogRecorder } = await import('../modes/phone/log')
+    const { PHONE_LOG_PATHS } = await import('../modes/phone/storage')
+    const rec = new PhoneLogRecorder({ perfMs: 0, epochMs: 1_000 }, { userAgent: 'test', intervalMs: 16 }, 'outdoor')
+    const sink = new MemSink()
+    const saver = new LogSaver(rec.log, sink as never, PHONE_LOG_PATHS)
+    const want = { rows: 0, gps: 0 }
+    for (let c = 0; c < 3; c++) {
+      for (let i = 0; i < 150_000; i++) {
+        rec.raw({ t: want.rows / 60, ax: 0, ay: 0, az: 9.8 }, 'running')
+        want.rows++
+      }
+      rec.gps({ t: c, accuracy: 5, speed: 3, altitude: null, altitudeAccuracy: null } as never, { stepM: 3, raw: 3, speed: 3, used: true } as never)
+      want.gps++
+      await saver.flush()
+      expect(rec.log.rows.length).toBe(0) // 手元には残さない
+    }
+    await saver.flush(true)
+    const full = JSON.parse(await joinPieces(logPieces(sink.meta!, undefined, async (n) => sink.chunks.get(n))))
+    expect(full.log.rows).toHaveLength(450_000)
+    expect(full.log.gps).toHaveLength(3)
+    expect(full.log.truncated).toBeUndefined()
+    expect(full.log.recording).toBe(false)
+    expect(full.log.rows[449_999][0]).toBeCloseTo(449_999 / 60, 2)
+  })
+})

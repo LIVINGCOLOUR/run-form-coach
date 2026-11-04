@@ -1,4 +1,3 @@
-import type { RunLog } from './types'
 
 // 長い走り（マラソンで7時間まで）の記録を、1つの大きな配列や1つの大きな IndexedDB の件にしないためのしくみ。
 // 走っている間、every 秒ごとに、大きくなる配列（paths：カメラの骨格の行・センサーの値・1秒ごとのまとめ）の中身を手元から取り出して
@@ -14,6 +13,14 @@ export const LOG_CHUNK = {
   perPart: 120,
   paths: ['rows', 'sensors.blocks', 'sensors.sec'],
   staleMs: 3 * 60_000, // recording のままこれより長く書き出していなければ、止まった（落ちた）記録とみなして送ってよい
+}
+
+// 少しずつ書き出す記録に要る形（カメラ版・センサーランの RunLog、スマホ版の PhoneLog）
+export interface ChunkedLog {
+  id: string
+  chunks?: { n: number; paths: string[] }
+  recording?: boolean
+  updatedAt?: number
 }
 
 export interface LogChunk {
@@ -47,7 +54,7 @@ function arrayAt(o: Obj, path: string, make = false): unknown[] | undefined {
 }
 
 // 記録の paths の配列の中身を取り出して（記録の配列は空になる）、n 番目のかたまりにする。どれも空なら null
-export function takeChunk(log: RunLog, n: number, paths = LOG_CHUNK.paths): LogChunk | null {
+export function takeChunk(log: ChunkedLog, n: number, paths = LOG_CHUNK.paths): LogChunk | null {
   const data: Record<string, unknown[]> = {}
   let any = false
   for (const p of paths) {
@@ -60,7 +67,7 @@ export function takeChunk(log: RunLog, n: number, paths = LOG_CHUNK.paths): LogC
 }
 
 // 書き出せなかったかたまりを、記録の配列の先頭へ戻す（次の書き出しで、もう一度書く）
-export function restoreChunk(log: RunLog, c: LogChunk) {
+export function restoreChunk(log: ChunkedLog, c: LogChunk) {
   for (const [p, items] of Object.entries(c.data)) {
     const a = arrayAt(log as unknown as Obj, p, true)
     if (a) a.unshift(...items)
@@ -68,7 +75,7 @@ export function restoreChunk(log: RunLog, c: LogChunk) {
 }
 
 // かたまりを記録の配列のうしろへ足す（読むときにつなぐ）
-export function appendChunk(log: RunLog, c: LogChunk) {
+export function appendChunk(log: ChunkedLog, c: LogChunk) {
   for (const [p, items] of Object.entries(c.data)) {
     const a = arrayAt(log as unknown as Obj, p, true)
     if (a) for (const x of items) a.push(x)
@@ -78,7 +85,7 @@ export function appendChunk(log: RunLog, c: LogChunk) {
 // 書き出すときの入れ物（storage.ts の IndexedDB。テストでは作り物）
 export interface ChunkSink {
   // かたまり（なければ記録の頭だけ）と記録の頭を、1回で書く
-  write(meta: RunLog, chunk: LogChunk | null): Promise<void>
+  write(meta: ChunkedLog, chunk: LogChunk | null): Promise<void>
 }
 
 // 走っている間の記録を、少しずつ書き出す。flush は重ねて呼んでも順に1つずつ書く
@@ -86,11 +93,11 @@ export class LogSaver {
   private n = 0
   private chain: Promise<void> = Promise.resolve()
   failures = 0 // 書き出せなかった回数（中身は手元に戻して、次にもう一度書く）
-  private readonly log: RunLog
+  private readonly log: ChunkedLog
   private readonly sink: ChunkSink
   private readonly paths: string[]
 
-  constructor(log: RunLog, sink: ChunkSink, paths = LOG_CHUNK.paths) {
+  constructor(log: ChunkedLog, sink: ChunkSink, paths = LOG_CHUNK.paths) {
     this.log = log
     this.sink = sink
     this.paths = paths
@@ -121,7 +128,7 @@ export class LogSaver {
 }
 
 // 端末の記録の頭と、かたまりを1つずつ読む口から、{ log, session } をつないだもの
-export async function assembleLog(meta: RunLog, get: (n: number) => Promise<LogChunk | undefined>): Promise<RunLog> {
+export async function assembleLog<L extends ChunkedLog>(meta: L, get: (n: number) => Promise<LogChunk | undefined>): Promise<L> {
   if (!meta.chunks?.n) return meta
   // 頭に残っていた中身（書き出す前のもの）は、かたまりのあとに来る
   const tail: LogChunk = { id: '', logId: meta.id, n: -1, data: {} }
@@ -138,14 +145,14 @@ export async function assembleLog(meta: RunLog, get: (n: number) => Promise<LogC
 }
 
 // 送るときのファイルの数
-export const partCount = (meta: RunLog, perPart = LOG_CHUNK.perPart) => Math.max(1, Math.ceil((meta.chunks?.n ?? 0) / perPart))
+export const partCount = (meta: ChunkedLog, perPart = LOG_CHUNK.perPart) => Math.max(1, Math.ceil((meta.chunks?.n ?? 0) / perPart))
 
 const MARK = (p: string) => `\u0000chunk:${p}`
 
 // { log, session } の JSON を、1つの大きな文字列を作らずに切れはしで流す。
 // part（0 から）を渡すと、そのファイルに入るかたまりだけ（記録の頭はどのファイルにも入れ、session は最初のファイルだけ）。
 // 2つ以上に分けるときは "part": [何番目（1 から）, いくつ] を付ける（npm run logs が chunks.paths の配列をつなぐ）
-export async function* logPieces(meta: RunLog, session: unknown, get: (n: number) => Promise<LogChunk | undefined>, part?: number, perPart = LOG_CHUNK.perPart): AsyncGenerator<string> {
+export async function* logPieces(meta: ChunkedLog, session: unknown, get: (n: number) => Promise<LogChunk | undefined>, part?: number, perPart = LOG_CHUNK.perPart): AsyncGenerator<string> {
   const total = meta.chunks?.n ?? 0
   const parts = partCount(meta, perPart)
   const [from, to] = part === undefined ? [0, total] : [part * perPart, Math.min(total, (part + 1) * perPart)]
@@ -192,7 +199,7 @@ export async function* logPieces(meta: RunLog, session: unknown, get: (n: number
 }
 
 // 分けて送ったファイル（logPieces の part ごと）を、1つの { log, session } に戻す（npm run logs と同じ計算。テスト用）
-export function mergeParts(parts: { part?: [number, number]; log: RunLog; session?: unknown }[]): { log: RunLog; session?: unknown } {
+export function mergeParts<L extends ChunkedLog>(parts: { part?: [number, number]; log: L; session?: unknown }[]): { log: L; session?: unknown } {
   const sorted = [...parts].sort((a, b) => (a.part?.[0] ?? 1) - (b.part?.[0] ?? 1))
   const base = sorted[0]
   for (const x of sorted.slice(1)) {

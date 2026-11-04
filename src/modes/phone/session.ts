@@ -58,6 +58,7 @@ export interface PhoneSession {
   mount: MountIssue | null // 付け方の問題（見つけたら、その走りでは判定を止めた。ゆるいときはピッチだけ判定を続けた）
   mountAt?: number // 見つけた秒
   logId?: string
+  sensorLogId?: string // いっしょに使ったセンサーの記録（テスト期間。sensor/runLog.ts の SensorRunLog）
   kind?: 'practice' | 'test' | 'drill' // ないのはふつうの走り
   practice?: PracticeResult // ピッチを上げる練習の回の結果
   test?: FormTestResult // フォームのテストの値

@@ -52,40 +52,8 @@ export function listenMotion(cb: (e: MotionLike, interval: number | null) => voi
   return () => window.removeEventListener('devicemotion', h)
 }
 
-// 画面が消えないようにする。画面を切り替えて戻ると外れるので、戻ったときに取り直す（keepAwake の中で）
-type Sentinel = { released?: boolean; release: () => Promise<void> }
-let sentinel: Sentinel | null = null
-
-export async function requestWakeLock(): Promise<boolean> {
-  const wl = (navigator as unknown as { wakeLock?: { request: (t: 'screen') => Promise<Sentinel> } }).wakeLock
-  if (!wl) return false
-  if (sentinel && !sentinel.released) return true
-  try {
-    sentinel = await wl.request('screen')
-    return true
-  } catch {
-    sentinel = null
-    return false
-  }
-}
-
-export function wakeLockHeld(): boolean {
-  return !!sentinel && !sentinel.released
-}
-
-// 走っている画面の間、画面が消えないようにしておく。やめるための関数を返す
-export function keepAwake(onChange: (held: boolean) => void): () => void {
-  const again = () => {
-    if (document.visibilityState === 'visible') requestWakeLock().then(onChange)
-  }
-  document.addEventListener('visibilitychange', again)
-  requestWakeLock().then(onChange)
-  return () => {
-    document.removeEventListener('visibilitychange', again)
-    sentinel?.release().catch(() => {})
-    sentinel = null
-  }
-}
+// 画面が消えないようにする仕組みは、センサーランと共通なので core/wake.ts に置いた
+export { keepAwake, requestWakeLock, wakeLockHeld } from '../../core/wake'
 
 // 位置情報（外で走るとき、GPS の速さで判定を止めるため。speed.ts）
 //   許可は、ホームで外を選んでスマホ版のボタンを押したときに、動きのセンサーの許可とまとめて求める（requestLocation）。

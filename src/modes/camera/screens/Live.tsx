@@ -20,9 +20,8 @@ import { PHRASES } from '../../../core/phrases'
 import { capBaseline, median, standingDecision, type Standing, type StandingIssue } from '../standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
 import { fullFrames } from '../fullFrames'
-import { SensorSession } from '../../sensor/session'
+import { SensorRunner } from '../../sensor/runner'
 import { sensors } from '../../sensor/ble'
-import { HUNCH } from '../../sensor/params'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -119,13 +118,18 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let tickMoving = false
     // ランナーのレベルと、今日注意する項目（走り終わったら、続いて声がかからなかったかで次の段階へ）
     const progress = loadProgress()
-    // 自作のセンサー（つないであるとき）：値を記録し、胸で猫背を見て震わせる。区切りはカメラの直立の基準と「走っている」を使う。胸の線はレベルごと
-    const sensorRun = !file && sensors.supported ? new SensorSession((t, text) => rec.event(t, text), progress.level) : null
-    const sensorTimer = sensorRun
-      ? setInterval(() => {
-          const coach = coachRef.current
-          sensorRun.tick(performance.now() / 1000, phase === 'run' && !!coach && coach.state === 'running' && coach.stepping)
-        }, HUNCH.tick * 1000)
+    // 自作のセンサー（つないであるとき）：値を記録し、胸で猫背・頭で前に出たの・足首で接地を見て震わせる（sensor/runner.ts。腰スマホ・センサーランと共通）。
+    // 区切りはカメラの直立の基準と「走っている」を使う。胸の線はレベルごと。トレッドミルでは接地の知らせを声でも言う
+    const sensorRun = !file && sensors.supported
+      ? new SensorRunner({
+          onEvent: (t, text) => rec.event(t, text),
+          level: progress.level,
+          voice: true,
+          running: () => {
+            const coach = coachRef.current
+            return phase === 'run' && !!coach && coach.state === 'running' && coach.stepping
+          },
+        })
       : null
     const logTimer = setInterval(() => {
       const cur = sensorRun?.current()
@@ -141,7 +145,6 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     const closeSensors = () => {
       if (sensorsClosed) return
       sensorsClosed = true
-      if (sensorTimer) clearInterval(sensorTimer)
       const log = sensorRun?.finish()
       if (log) rec.log.sensors = log
     }

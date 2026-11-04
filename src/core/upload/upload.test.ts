@@ -1,7 +1,7 @@
 import { gunzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { packJson, type Packed } from './pack'
-import { addEntry, backfillEntries, backoffMs, dueEntries, flushQueue, markResult, resetWaits, UPLOAD, uploadPathname, type SendResult, type UploadEntry } from './queue'
+import { addEntry, backfillEntries, backoffMs, dueEntries, flushQueue, logsToPrune, markResult, resetWaits, UPLOAD, uploadPathname, type SendResult, type UploadEntry } from './queue'
 
 const big = { log: { id: 'phone-log-1', rows: Array.from({ length: 3000 }, (_, i) => [i / 50, 0.1, -9.8, 0.2, 0.01, 0.02, 0.03]) }, session: { id: 'phone-1' } }
 
@@ -218,3 +218,25 @@ describe('まとめて送る（flushQueue）', () => {
     expect(s.list().every((e) => e.state === 'waiting')).toBe(true)
   })
 })
+
+describe('端末から消してよい記録（logsToPrune）', () => {
+  const e = (kind: string, logId: string, startedAt: number, state: UploadEntry['state']): UploadEntry => ({ id: `${kind}:${logId}`, kind, logId, startedAt, state, tries: 0 })
+  it('新しいものから keep 本は残し、それより古いもののうち送れた（sent）ものだけ。待っている・消えた・順番待ちにないものは残す', () => {
+    const logs = [
+      { kind: 'phone', logId: 'p1', startedAt: 1 },
+      { kind: 'camera', logId: 'c2', startedAt: 2 },
+      { kind: 'sensor', logId: 's3', startedAt: 3 },
+      { kind: 'camera', logId: 'c4', startedAt: 4 },
+      { kind: 'phone', logId: 'p5', startedAt: 5 },
+    ]
+    const list = [e('phone', 'p1', 1, 'sent'), e('camera', 'c2', 2, 'waiting'), e('camera', 'c4', 4, 'sent'), e('phone', 'p5', 5, 'sent')]
+    expect(logsToPrune(logs, list, 2).map((l) => l.logId)).toEqual(['p1'])
+    expect(logsToPrune(logs, list, 0).map((l) => l.logId)).toEqual(['p5', 'c4', 'p1'])
+    expect(logsToPrune(logs, list, 5)).toEqual([])
+    expect(logsToPrune(logs, [], 0)).toEqual([])
+  })
+  it('順番待ちに残す数は、端末に残す数より十分多い（送れた印が先に消えると、記録を消せなくなる）', () => {
+    expect(UPLOAD.keep).toBeGreaterThanOrEqual(60)
+  })
+})
+

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from './core/types'
-import { loadLogStamps, loadSessions } from './core/storage'
+import { CAMERA_LOGS, deleteLog, loadLogStamps, loadSessions } from './core/storage'
 import { Home } from './screens/Home'
 import { Live } from './modes/camera/screens/Live'
 import { Result } from './screens/Result'
@@ -8,7 +8,10 @@ import { Posture } from './modes/camera/screens/Posture'
 import { Slow } from './modes/camera/screens/Slow'
 import { PhoneLive } from './modes/phone/screens/PhoneLive'
 import { PhoneResult } from './modes/phone/screens/PhoneResult'
-import { loadPhoneLogStamps, loadPhoneSessions, phoneLogPayload } from './modes/phone/storage'
+import { deletePhoneLog, loadPhoneLogStamps, loadPhoneSessions, phoneLogPayload } from './modes/phone/storage'
+import { deleteSensorLog, loadSensorLogStamps, sensorLogPayload } from './modes/sensor/runLog'
+import { SensorLive } from './modes/sensor/screens/SensorLive'
+import { SensorResult } from './modes/sensor/screens/SensorResult'
 import { cameraLogPayload } from './core/exportLog'
 import { rebuildOldStrides } from './modes/camera/rebuild'
 import { registerUploadSource, startUploads } from './core/upload/uploads'
@@ -20,11 +23,16 @@ export type Screen = { name: 'home' } | { name: 'live'; video?: File } | { name:
   // location：外のとき、位置情報を許可されたか。sim は模擬データで試す速さ（倍。模擬データは速さ一定なのでトレッドミル扱い）
   | { name: 'phone'; where: PhoneWhere; location?: LocationPermission; sim?: number; kind?: PhoneKind }
   | { name: 'phoneResult'; id: string }
+  // センサーラン（カメラなし・腰にスマホなし。センサーだけで外を走る）。結果は記録の id で開く
+  | { name: 'sensorRun' }
+  | { name: 'sensorResult'; logId: string }
 
 // 走った記録を Mac へ送るしくみ（テスト期間用。鍵を入れていない端末も、テスト期間の既定の鍵で送る）。
 // どの入り口の記録をどう取り出すかと、端末に残っている記録の一覧（開いたときに、まだ送っていないものを入れる）
-registerUploadSource('phone', (id) => phoneLogPayload(id), loadPhoneLogStamps)
-registerUploadSource('camera', (id) => cameraLogPayload(id), loadLogStamps)
+// remove：端末に残す数（uploads.ts の KEEP_RUNS）を超えて、送れた記録を消すとき
+registerUploadSource('phone', (id) => phoneLogPayload(id), loadPhoneLogStamps, deletePhoneLog)
+registerUploadSource('camera', (id) => cameraLogPayload(id), () => loadLogStamps(), (id) => deleteLog(CAMERA_LOGS, id))
+registerUploadSource('sensor', (id) => sensorLogPayload(id), loadSensorLogStamps, deleteSensorLog)
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' })
@@ -90,6 +98,10 @@ export default function App() {
       const s = phoneSessions.find((x) => x.id === screen.id)
       return s ? <PhoneResult session={s} sessions={phoneSessions} onHome={() => setScreen({ name: 'home' })} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
     }
+    case 'sensorRun':
+      return <SensorLive onDone={(logId) => setScreen(logId ? { name: 'sensorResult', logId } : { name: 'home' })} />
+    case 'sensorResult':
+      return <SensorResult logId={screen.logId} onHome={() => setScreen({ name: 'home' })} />
     case 'slow':
       return <Slow video={screen.video} go={setScreen} />
     case 'posture': {

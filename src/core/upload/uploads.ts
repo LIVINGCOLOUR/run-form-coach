@@ -2,7 +2,7 @@
 // 送る鍵がある端末でだけ、走り終わった記録を順番待ちに入れる（鍵がなければ何もしない）。
 // 記録の中身は入り口ごとに持っているので、入り口が registerUploadSource で取り出し方と、端末に残っている記録の一覧を渡す
 import { packJson, packPieces } from './pack'
-import { addEntry, backfillEntries, entryId, flushQueue, resetWaits, type LocalLog, type UploadEntry, type UploadPayload } from './queue'
+import { addEntry, backfillEntries, entryId, flushQueue, logsToPrune, resetWaits, type LocalLog, type UploadEntry, type UploadPayload } from './queue'
 import { sendRun } from './send'
 
 const LIST_KEY = 'rfc.uploads'
@@ -13,13 +13,51 @@ const KEY_KEY = 'rfc.uploadKey'
 // ほかの人に使ってもらう前に、必ず null にする（Vercel の UPLOAD_KEY も変える）。手で入れた鍵があれば、そちらを使う
 export const TEST_UPLOAD_KEY: string | null = 'run'
 
+// 端末に残す走りの記録の数（テスト期間の決まり）。どの入り口の記録も合わせて、新しいものからこの数を残し、
+// それより古いものは Mac へ送れたものだけ消す（送れていない記録は、いくつあっても消さない）。
+// 腰スマホとセンサーを同時に使った走りは、記録が2本（スマホ版とセンサー）になる。
+// ほかの人に使ってもらうときの決まり（何本残すか・送らない人の記録をどうするか）は、あとで決める
+export const KEEP_RUNS = 20
+
 interface UploadSource {
   load: (logId: string) => Promise<UploadPayload | undefined>
-  list?: () => Promise<Omit<LocalLog, 'kind'>[]> // 端末に残っている記録（まだ順番待ちにないものを、開いたときに入れる）
+  list?: () => Promise<Omit<LocalLog, 'kind'>[]> // 端末に残っている記録（まだ順番待ちにないものを、開いたときに入れる。残す数を数える）
+  remove?: (logId: string) => Promise<void> // 端末から記録を消す（KEEP_RUNS を超えて、送れたものだけ）
 }
 const sources = new Map<string, UploadSource>()
-export const registerUploadSource = (kind: string, load: UploadSource['load'], list?: UploadSource['list']) => {
-  sources.set(kind, { load, list })
+export const registerUploadSource = (kind: string, load: UploadSource['load'], list?: UploadSource['list'], remove?: UploadSource['remove']) => {
+  sources.set(kind, { load, list, remove })
+}
+
+// 端末に残っている記録（入り口ごとの一覧をまとめたもの）。読めない入り口は飛ばす
+async function localLogs(): Promise<LocalLog[]> {
+  const logs: LocalLog[] = []
+  for (const [kind, s] of sources) {
+    if (!s.list) continue
+    try {
+      for (const l of await s.list()) logs.push({ ...l, kind })
+    } catch {
+      /* 記録を読めない入り口は飛ばす */
+    }
+  }
+  return logs
+}
+
+// KEEP_RUNS より古く、Mac へ送れた記録を端末から消す。消し方を持たない入り口の記録は消さない
+let pruning: Promise<void> | null = null
+export function pruneSentLogs(): Promise<void> {
+  pruning ??= (async () => {
+    for (const l of logsToPrune(await localLogs(), getList(), KEEP_RUNS)) {
+      try {
+        await sources.get(l.kind)?.remove?.(l.logId)
+      } catch {
+        /* 消せなければ、次の機会に */
+      }
+    }
+  })().finally(() => {
+    pruning = null
+  })
+  return pruning
 }
 
 const read = <T>(key: string, fallback: T): T => {
@@ -119,6 +157,8 @@ export function flushUploads(force = false): Promise<void> {
     force,
   ).finally(() => {
     running = null
+    // 送れたら、残す数より古い記録を消す
+    void pruneSentLogs()
   })
   return running
 }
@@ -127,15 +167,7 @@ export function flushUploads(force = false): Promise<void> {
 // 送れたもの・消えたものは入れ直さない
 export async function backfillUploads(now = Date.now()): Promise<void> {
   if (!getUploadKey()) return
-  const logs: LocalLog[] = []
-  for (const [kind, s] of sources) {
-    if (!s.list) continue
-    try {
-      for (const l of await s.list()) logs.push({ ...l, kind })
-    } catch {
-      /* 記録を読めない入り口は飛ばす */
-    }
-  }
+  const logs = await localLogs()
   const before = getList()
   const after = backfillEntries(before, logs, now)
   if (after !== before) setList(after)

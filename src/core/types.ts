@@ -151,6 +151,12 @@ export interface RunLog {
   chunks?: { n: number; paths: string[] }
   recording?: boolean // 走っている途中で書き出したまま（アプリが止まった・落ちた）。走り終わって書いたら false
   updatedAt?: number // 最後に書き出したふつうの時刻（ms）
+  // センサーラン（カメラなし）か、腰スマホといっしょに使ったセンサーの記録（src/modes/sensor/runLog.ts）。カメラ版の記録にはない。
+  // rows はなく、走っていたかはセンサーの1秒ごとのまとめ（sensors.sec の run）と events の sensor:run on/off で見る
+  mode?: 'sensor'
+  with?: 'phone' // 腰スマホといっしょに使った（スマホ版の記録は別のファイル。時刻は clock で合わせる）
+  // 走り終わりのまとめ（センサーランの結果の画面）。runSec：走っていた秒、gaps：アプリが2秒より止まっていた回数（画面が消えた・裏に回った）
+  summary?: { runSec: number; gaps: number; stood: boolean; trunk?: boolean } // trunk：胸か頭がつながっていた
   // 走り始めたときの端末の入れ物の様子（navigator.storage。使えないブラウザではない）。usage・quota はバイト
   storage?: { usage?: number; quota?: number; persisted?: boolean }
 }

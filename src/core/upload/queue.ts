@@ -22,7 +22,9 @@ export interface UploadEntry {
 export const UPLOAD = {
   firstWaitMs: 30_000, // 1回目の失敗のあと、次に送るまで
   maxWaitMs: 30 * 60_000, // 待つ間の上限
-  keep: 30, // 順番待ちに残す数（送れたもの・消えたものから捨てる）
+  // 順番待ちに残す数（送れたもの・消えたものから捨てる）。端末に残す記録の数（uploads.ts の KEEP_RUNS）より十分多くする：
+  // 送れた印が先に捨てられると、その記録が送れたか分からなくなり、端末から消せなくなる（消さない側に倒れるので、たまり続ける）
+  keep: 100,
   backfillDays: 14, // 開いたときに順番待ちに入れる、端末に残っている記録の古さの上限（日）
 }
 
@@ -58,6 +60,15 @@ export function backfillEntries(list: UploadEntry[], logs: LocalLog[], now: numb
     out = addEntry(out, l.kind, l.logId, l.startedAt)
   }
   return out
+}
+
+// 端末から消してよい記録：新しいものから keep 本より古く、Mac へ送れた（sent）もの。送れていない記録（待っている・順番待ちにない）は消さない
+export function logsToPrune(logs: LocalLog[], list: UploadEntry[], keep: number): LocalLog[] {
+  const sent = new Set(list.filter((e) => e.state === 'sent').map((e) => e.id))
+  return [...logs]
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(Math.max(0, keep))
+    .filter((l) => sent.has(entryId(l.kind, l.logId)))
 }
 
 function trim(list: UploadEntry[]): UploadEntry[] {

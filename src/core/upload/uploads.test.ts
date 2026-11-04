@@ -80,4 +80,32 @@ describe('記録を送るしくみ（uploads）', () => {
     await u.flushUploads()
     expect(sent).toHaveLength(1)
   })
+
+  it('端末に残すのは新しい KEEP_RUNS 本。それより古いものは、送れたものだけ消す（送れていないものは消さない）', async () => {
+    const now = Date.now()
+    const u = await load()
+    expect(u.KEEP_RUNS).toBe(20)
+    // カメラ版 15本・センサー 10本（合わせて25本）。いちばん古い5本のうち、送れたのは3本
+    const cam = Array.from({ length: 15 }, (_, i) => ({ logId: `log-${i}`, startedAt: now - (40 - i) * 3600_000 }))
+    const sen = Array.from({ length: 10 }, (_, i) => ({ logId: `sensor-log-${i}`, startedAt: now - (10 - i) * 3600_000 }))
+    const list = cam.map((l, i) => ({ id: `camera:${l.logId}`, kind: 'camera', logId: l.logId, startedAt: l.startedAt, state: i === 1 ? 'waiting' : 'sent', tries: 0 }))
+    store.set('rfc.uploads', JSON.stringify(list.filter((e) => e.logId !== 'log-3'))) // log-3 は順番待ちにない（送ったか分からない）
+    const removed: string[] = []
+    const local = new Map([...cam.map((l) => [l.logId, l] as const), ...sen.map((l) => [l.logId, l] as const)])
+    u.registerUploadSource('camera', (id) => payload(id)(), async () => cam.filter((l) => local.has(l.logId)), async (id) => {
+      removed.push(id)
+      local.delete(id)
+    })
+    u.registerUploadSource('sensor', (id) => payload(id)(), async () => sen.filter((l) => local.has(l.logId)), async (id) => {
+      removed.push(id)
+      local.delete(id)
+    })
+    await u.pruneSentLogs()
+    // 古い5本：log-0（送れた）・log-1（待っている）・log-2（送れた）・log-3（順番待ちにない）・log-4（送れた）
+    expect(removed.sort()).toEqual(['log-0', 'log-2', 'log-4'])
+    expect(local.size).toBe(22)
+    // もう一度呼んでも、送れていないものは消さない
+    await u.pruneSentLogs()
+    expect(removed).toHaveLength(3)
+  })
 })

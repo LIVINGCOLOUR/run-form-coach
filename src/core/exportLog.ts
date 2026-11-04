@@ -34,7 +34,7 @@ export async function shareJson(name: string, data: unknown): Promise<boolean> {
   return shareFile(new File([JSON.stringify(data)], name, { type: 'application/json' }))
 }
 
-async function shareFile(file: File): Promise<boolean> {
+export async function shareFile(file: File): Promise<boolean> {
   const name = file.name
   const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean }
   if (nav.canShare?.({ files: [file] })) {

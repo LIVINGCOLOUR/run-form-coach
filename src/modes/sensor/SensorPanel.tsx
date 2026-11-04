@@ -9,8 +9,9 @@ import { ANKLES, BATTERY_LOW, HEAD, HUNCH } from './params'
 // 「震わす」で試せる場所（走っている間に震える場所）
 const TEST_BUZZ = [HUNCH.place, HEAD.place, ANKLES.L, ANKLES.R]
 
-export function SensorPanel() {
-  const [open, setOpen] = useState(false)
+// defaultOpen：はじめから開いておく（センサーランはセンサーが要るので）
+export function SensorPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
   const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
   const on = nodes.filter((n) => n.status === 'connected').length
   // 電池が少ない（BATTERY_LOW % 以下）センサー。閉じていても見えるように、ボタンにも出す
@@ -40,7 +41,7 @@ export function SensorPanel() {
       </div>
       {!sensors.supported ? (
         <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-          このブラウザはセンサーにつなげません（iPhone の Safari は Bluetooth に対応していません）。iPhone では Bluefy というブラウザでこのページを開くと、つなげます。センサーなしでも、カメラだけでいつもどおり走れます。
+          このブラウザはセンサーにつなげません（iPhone の Safari は Bluetooth に対応していません）。iPhone では Bluefy というブラウザでこのページを開くと、つなげます。センサーなしでも、トレッドミル（カメラ）と腰スマホはいつもどおり使えます。
         </div>
       ) : (
         <>

@@ -7,8 +7,9 @@ import { LeanDetector } from './lean'
 import { SensorRecorder } from './log'
 import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
 
-// 1回の走りの間、つないだセンサーの値を記録し、胸で猫背を、頭で頭が前に出たのを見て、その場所を震わせる（カメラ版の Live から使う）。
-// 区切りはカメラのものを使う：立った姿勢 = カメラの直立の基準を取った3秒（stand）、走っている = カメラが歩数で決めた「走っている」（tick）。
+// 1回の走りの間、つないだセンサーの値を記録し、胸で猫背を、頭で頭が前に出たのを見て、その場所を震わせる（runner.ts の SensorRunner から使う）。
+// 区切りは外から渡す：立った姿勢を取った時刻（stand）と、走っているか（tick）。カメラ版はカメラの直立の基準と歩数で決めた「走っている」、
+// センサーランと腰スマホは、センサーの揺れ（gate.ts）で決める。
 // センサーがつながっていなければ何もしない（記録にも sensors を付けない）
 
 // 見る崩れごとの、記録とできごとの名前（胸は前からの名前のまま。古い記録と同じ形で残す）。
@@ -75,13 +76,17 @@ export class SensorSession {
     return key === 'chest' ? log : (log.head ??= { cues: [] })
   }
 
-  // カメラが直立の基準を取り終えた t。止まっていた最後の sec 秒の、胸と頭の向きを覚える
-  stand(t: number, sec: number) {
+  // 直立の基準を取り終えた t（カメラ版はカメラの直立の基準、センサーランは胸と頭がじっとした3秒。runner.ts）。
+  // 止まっていた最後の sec 秒の、胸と頭の向きを覚える。どれか1つでも覚えたら true
+  stand(t: number, sec: number): boolean {
+    let any = false
     for (const x of this.parts) {
       if (!x.d.stand(t, sec) || !this.rec) continue
+      any = true
       this.slot(x.key).stand = { t: r2(t), base: x.d.base!.map((v) => Math.round(v * 1e4) / 1e4) as [number, number, number] }
       this.onEvent(t, x.ev.stand)
     }
+    return any
   }
 
   // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」

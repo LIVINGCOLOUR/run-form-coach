@@ -1,3 +1,5 @@
+import { SlipNote } from '../../sensor/SlipNote'
+import { SENSOR_LOGS } from '../../../core/storage'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../../../core/quiet'
 import { ShareBar } from '../../../ui/ShareBar'
 import type { FatigueBlock, FatigueResult } from '../fatigue'
@@ -53,6 +55,9 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
       </div>
 
       {s.mount && <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>{MOUNT_TEXT[s.mount]}</div>}
+
+      {/* いっしょに使ったセンサーがずれたとき（テスト期間） */}
+      <SlipNote logId={s.sensorLogId} store={SENSOR_LOGS} />
 
       {s.practice && <PracticeCard s={s} sessions={sessions} />}
       {s.test && <FormTestCard s={s} sessions={sessions} />}

@@ -14,7 +14,12 @@ import { prevFormTest } from '../formtest'
 import type { SpeedGate } from '../speed'
 import type { DrillPhase } from '../drill'
 import { demoDrill, demoRun } from '../simulate'
-import { savePhoneLog, savePhoneSession } from '../storage'
+import { phoneLogSaver, savePhoneSession } from '../storage'
+import { LOG_CHUNK } from '../../../core/logChunks'
+import { loadProgress } from '../../../core/storage'
+import { sensors } from '../../sensor/ble'
+import { SensorRunner } from '../../sensor/runner'
+import { SensorRunLog } from '../../sensor/runLog'
 import { queueUpload } from '../../../core/upload/uploads'
 
 // スマホ版の走る画面（ウェブ）。スマホを腰のベルトに付けて走る。画面はつけたまま使う（消えないようにしておく）
@@ -94,6 +99,20 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
     let lastWait = perf0 / 1000
     let arrivals: number[] = [] // 値が届いた時刻（直近1秒）
     let wake = false
+    // 長い走り（マラソンで7時間まで）でも記録を手元に溜めこまない：LOG_CHUNK.every 秒ごとに端末へ書き出す（アプリが落ちても、そこまでは残る）
+    const saver = phoneLogSaver(run.log)
+    const logTimer = setInterval(() => void saver.flush(), LOG_CHUNK.every * 1000)
+    // テスト期間：自作のセンサーがつながっていれば、スマホ版とは別に動かす（立った姿勢と走っているかはセンサーで決め、振動だけで知らせる。
+    // 声はスマホ版の声と重ねないので出さない）。記録もスマホ版とは別のファイル（runs/sensor/。時刻は clock で合わせる）
+    const sensorRec = !sim && sensors.supported && sensors.connected > 0 ? new SensorRunLog({ perfMs: perf0, epochMs: run.log.clock.epochMs }, 'phone') : null
+    if (sensorRec) {
+      sensorRec.start(new SensorRunner({ onEvent: sensorRec.event, level: loadProgress().level }))
+      run.log.events.push([Math.round((perf0 / 1000) * 1000) / 1000, `sensor:log ${sensorRec.log.id}`])
+    }
+    const saveAll = () => {
+      clearInterval(logTimer)
+      return Promise.all([saver.flush(true).catch(() => {}), sensorRec?.finish()])
+    }
 
     const now = () => (sim ? perf0 / 1000 + ((performance.now() - perf0) / 1000) * sim : performance.now() / 1000)
     const say = (text: string, t: number, log = false) => {
@@ -109,10 +128,12 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       metronome.stop()
       run.stopDrill(now())
       const { session, log } = run.finish()
+      if (session && sensorRec) session.sensorLogId = sensorRec.log.id
       if (session) await savePhoneSession(session).catch(() => {})
       // 走りが始まらなかったときこそ調整に使うので、記録は残す
-      await savePhoneLog(log).catch(() => {})
+      await saveAll()
       queueUpload('phone', log.id, log.startedAt)
+      if (sensorRec) queueUpload('sensor', sensorRec.log.id, sensorRec.log.startedAt)
       onDone(session?.id)
     }
     finishRef.current = finish
@@ -264,7 +285,8 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       if (!finished) {
         stopVoice()
         run.stopDrill(now())
-        savePhoneLog(run.finish().log).catch(() => {})
+        run.finish()
+        void saveAll()
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

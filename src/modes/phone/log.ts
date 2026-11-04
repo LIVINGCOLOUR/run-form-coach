@@ -25,9 +25,6 @@ export const PHONE_GPS_COLUMNS = ['t', 'wallMs', 'accuracy', 'speedDevice', 'ste
 export const PHONE_STATES: readonly CoachState[] = ['waiting', 'running', 'paused', 'ended']
 export const PHONE_MOUNTS = [null, 'notWaist', 'loose', 'shifted'] as const
 
-// 生の値は長く走ると多くなるので、ここまでで止める（毎秒60回で約110分）
-const MAX_RAW = 400000
-
 export interface PhoneLog {
   id: string
   mode: 'phone'
@@ -43,7 +40,11 @@ export interface PhoneLog {
   events: [number, string][] // [t, 話した言葉やしくみの状態の切り替え]
   gpsColumns?: readonly string[]
   gps?: (number | null)[][] // 位置が届くたびの値（PHONE_GPS_COLUMNS）。外だけ
-  truncated?: boolean // 生の値が多すぎて途中で止めた
+  truncated?: boolean // 前の記録だけ：生の値が多すぎて途中で止めた（いまは上限を置かず、少しずつ端末へ書き出す）
+  // 走っている間に少しずつ端末へ書き出した記録（core/logChunks.ts。rows・seconds・gps は、端末の中ではかたまりに分けてある）
+  chunks?: { n: number; paths: string[] }
+  recording?: boolean
+  updatedAt?: number
   fatigue?: FatigueResult | null // 疲れの見分けの結果（走り終わったときに fatigue.ts で出す）。基準を作れなければ null
   sessionId?: string
 }
@@ -98,7 +99,7 @@ export class PhoneLogRecorder {
   }
 
   gps(f: GpsFix, o: FixOut) {
-    if (!this.log.gps || this.log.gps.length >= MAX_RAW) return
+    if (!this.log.gps) return
     this.log.gps.push([r(f.t, 1000), this.wallMs(f.t), n(f.accuracy, 10), n(f.speed, 100), n(o.stepM, 100), n(o.raw, 100), n(o.speed, 100), o.used ? 1 : 0, n(f.altitude, 10), n(f.altitudeAccuracy, 10)])
   }
 
@@ -107,10 +108,6 @@ export class PhoneLogRecorder {
   }
 
   raw(m: PhoneMeasure, state: CoachState) {
-    if (this.log.rows.length >= MAX_RAW) {
-      this.log.truncated = true
-      return
-    }
     if (m.gx !== undefined) this.log.device.gyro = true
     // 角速度がないコマは null にする
     this.log.rows.push([r(m.t, 1000), this.wallMs(m.t), r(m.ax, 1000), r(m.ay, 1000), r(m.az, 1000), n(m.gx, 10000), n(m.gy, 10000), n(m.gz, 10000), PHONE_STATES.indexOf(state)])

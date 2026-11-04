@@ -16,4 +16,4 @@
 
 ## アプリとのつなぎ
 
-アプリ側は `src/modes/sensor/`（カメラ版の走りにセンサーをつなぎ、胸の傾きで猫背を見て胸を震わせる。iPhone は Web Bluetooth に対応した Bluefy で開く。仕様は `docs/sensor-mode.md`）。入り口の足し方は `docs/modes.md`。
+アプリ側は `src/modes/sensor/`（カメラ版・腰スマホといっしょに、またはセンサーだけの「センサーラン」で、崩れた場所を震わせる。iPhone は Web Bluetooth に対応した Bluefy で開く。仕様は `docs/sensor-mode.md`）。入り口の足し方は `docs/modes.md`。
