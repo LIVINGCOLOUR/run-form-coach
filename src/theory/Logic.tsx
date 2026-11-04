@@ -83,7 +83,7 @@ export function Logic() {
           この立ち姿勢は、走っているときの頭の判定には使わない。走ると上体だけが前に傾くので、首の角度は立ったときより平均8.8°小さく、人によって−24〜+13°と違う（研究データ Riglet 2024、23人）。立った姿勢と比べると、頭を前に出しても2割しか気づけなかった。
         </Row>
         <Row>
-          猫背のチェック：肩→耳の前傾が{BASELINE.standingHead}°以下、腰→肩の前傾が{BASELINE.standingTrunk}°以下。越えていたら、大きくずれている1つだけ直し方を言って測り直す（{BASELINE.retries}回まで）。
+          猫背のチェック：肩→耳の前傾が{BASELINE.standingHead}°以下、腰→肩の前傾が{BASELINE.standingTrunk}°以下。今日の基準ではなく、この決まった線と比べる（猫背で立つと、それが胸・頭のセンサーの立った姿勢になってしまうため）。越えていたら「{PHRASES.baseHunch}」と言って測り直す（{BASELINE.retries}回まで。それでも越えていたら、その姿勢で始めて、結果の画面に出す）。
         </Row>
       </Step>
 

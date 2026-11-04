@@ -1,9 +1,10 @@
 // 記録したセンサーの値を、アプリの崩れの見分け（src/modes/sensor/lean.ts の LeanDetector、数字は params.ts の HUNCH・HEAD）に流し直す
-// 使い方: npm run replay:sensor -- <rfc-….json | Mac の記録のフォルダ> … [--chest '{"follow":0}'] [--head '{"margin":10}']
+// 使い方: npm run replay:sensor -- <rfc-….json | Mac の記録のフォルダ> … [--level advanced] [--chest '{"follow":0}'] [--head '{"margin":10}']
 //   rfc-….json：カメラ版といっしょに走った記録（ファイル名だけなら RFC_RUNS_DIR、既定 ~/Developer/research-data/runs/ から読む）。
 //     立った姿勢は記録の stand（なければ phase:run の直前3秒）、走っているかはカメラの段階 run と歩数（アプリと同じ区切り）。
 //     カメラの答え（camera/params.ts の FORM：上体 > trunk.max、首 > head.neck かつ 頭の位置 > head.headLean）と、知らせた時刻・5秒の窓で比べる
 //   Mac の記録のフォルダ（hardware/sensor/tools の記録。imu.csv と phases.csv）：区切りごとに知らせた回数を出す（わざと崩したテストの確かめ）
+//   --level：胸の線のレベル（beginner / intermediate / advanced。params.ts の HUNCH_BY_LEVEL。なければ HUNCH＝中級）
 //   --chest / --head：数字を JSON で上書きして試す（params.ts は変えない）
 // 記録の中身は画面に出すだけで、どこにも書かない
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -22,6 +23,7 @@ const opt = (name) => {
   return v
 }
 const over = { chest: JSON.parse(opt('--chest') ?? '{}'), head: JSON.parse(opt('--head') ?? '{}') }
+const level = opt('--level')
 const WIN = 5
 const HOLD = 20 // 行のない間を、前の行のまま「走っている」とみる長さの上限（秒）
 if (!args.length) {
@@ -38,20 +40,24 @@ writeFileSync(
   [
     `export { decodeBlock } from '${join(root, 'src/modes/sensor/log.ts')}'`,
     `export { LeanDetector } from '${join(root, 'src/modes/sensor/lean.ts')}'`,
-    `export { HUNCH, HEAD, SLOTS } from '${join(root, 'src/modes/sensor/params.ts')}'`,
+    `export { HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS } from '${join(root, 'src/modes/sensor/params.ts')}'`,
     `export { FORM, BASELINE } from '${join(root, 'src/modes/camera/params.ts')}'`,
   ].join('\n'),
 )
 const bundle = join(tmp, 'replay-sensor.mjs')
 await build({ input: entry, platform: 'node', logLevel: 'warn', output: { file: bundle, format: 'esm' } })
-const { decodeBlock, LeanDetector, HUNCH, HEAD, SLOTS, FORM, BASELINE } = await import(pathToFileURL(bundle).href)
+const { decodeBlock, LeanDetector, HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS, FORM, BASELINE } = await import(pathToFileURL(bundle).href)
+if (level && !HUNCH_BY_LEVEL[level]) {
+  console.error(`--level は beginner / intermediate / advanced のどれか（${level}）`)
+  process.exit(1)
+}
 
 const runsDir = process.env.RFC_RUNS_DIR ?? join(homedir(), 'Developer/research-data/runs')
 const f1 = (x) => (Number.isFinite(x) ? x.toFixed(1) : '-')
 const pc = (x) => (Number.isFinite(x) ? `${Math.round(x * 100)}%` : '-')
 const say = (s = '') => console.log(s)
 const KINDS = [
-  { key: 'chest', name: '胸（猫背）', p: { ...HUNCH, ...over.chest } },
+  { key: 'chest', name: '胸（猫背）', p: { ...(level ? HUNCH_BY_LEVEL[level] : HUNCH), ...over.chest } },
   { key: 'head', name: '頭（前に出る）', p: { ...HEAD, ...over.head } },
 ]
 say(`胸：${JSON.stringify(KINDS[0].p)}`)

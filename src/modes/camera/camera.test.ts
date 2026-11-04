@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
 import { itemScore, postureScore } from './scoring'
 import { Coach, headForward, hunchOf, toScale } from './coach'
-import { applyStrictness, FORM, GOOD, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
+import { applyStrictness, BASELINE, FORM, GOOD, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
 import { formOver, formScale } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
-import { capBaseline, standingIssue } from './standing'
+import { capBaseline, standingDecision, standingIssue, STANDING_LIMITS } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
 import { fullFrames } from './fullFrames'
 import { analyzeRun, type TimedFrame } from './slowmo'
@@ -458,9 +458,33 @@ describe('直立の基準', () => {
 
 describe('立ち姿勢（猫背）のチェック', () => {
   it('まっすぐなら問題なし、頭が前・背中が丸いを見分ける', () => {
-    expect(standingIssue({ head: 10, trunk: 2 })).toBeNull()
-    expect(standingIssue({ head: 30, trunk: 2 })).toBe('head')
-    expect(standingIssue({ head: 15, trunk: 12 })).toBe('back')
+    expect(standingIssue({ head: 10, trunk: -4 })).toBeNull()
+    expect(standingIssue({ head: 30, trunk: -4 })).toBe('head')
+    expect(standingIssue({ head: 15, trunk: 6 })).toBe('back')
+  })
+
+  it('今日の基準ではなく決まった線と比べる：自分のまっすぐ（頭 13.5〜19.6°・上体 −7.9〜−3.7°）は通り、丸めた形は止める', () => {
+    expect(STANDING_LIMITS).toEqual({ head: BASELINE.standingHead, trunk: BASELINE.standingTrunk })
+    for (const s of [
+      { head: 14.2, trunk: -3.7 },
+      { head: 19.6, trunk: -7.9 },
+      { head: 15.8, trunk: -6.9 },
+      { head: 13.5, trunk: -4.2 },
+      { head: 17.2, trunk: -4.3 },
+    ])
+      expect(standingIssue(s)).toBeNull()
+    // 自分のまっすぐに、10° 丸めた増え（仮想実験で 頭 +11.6°・上体 +5.0°）を足した形
+    expect(standingIssue({ head: 16.1 + 11.6, trunk: -5.4 + 5.0 })).not.toBeNull()
+    // 上体が線を越えた（肩が腰より前に落ちた）
+    expect(standingIssue({ head: 18, trunk: 1.5 })).toBe('back')
+  })
+
+  it('猫背なら測り直す。retries 回まで直してもらい、それでもだめならその姿勢で始める（issue は残す）', () => {
+    const hunched = { head: 26, trunk: 2 }
+    for (let tries = 0; tries < BASELINE.retries; tries++) expect(standingDecision(hunched, tries)).toEqual({ issue: 'back', retry: true })
+    expect(standingDecision(hunched, BASELINE.retries)).toEqual({ issue: 'back', retry: false })
+    expect(standingDecision({ head: 16, trunk: -5 }, 0)).toEqual({ issue: null, retry: false })
+    expect(PHRASES.baseHunch.startsWith('猫背になっています。背筋をまっすぐ伸ばしてください。')).toBe(true)
   })
 })
 

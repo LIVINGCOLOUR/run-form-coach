@@ -1,3 +1,5 @@
+import type { Level } from '../../core/level'
+
 // 自作のセンサー（hardware/sensor の 03_ble_imu）で使う数字は、すべてここに置く
 // しくみの数字（CUE・QUIET・SCORE など）は src/core/params.ts のものをそのまま使い、ここでは決めない
 
@@ -72,9 +74,26 @@ const LEAN = {
 // follow：2026-11-02 20:23 の走り（カメラの上体は 2〜8° でまっすぐ）で、胸の傾きがベルトのずれで3分半に約15°増え、寄せないと2分すぎから鳴り続けた（16回）。
 // 60秒で寄せると3回（そのうち2回は、カメラの上体も +4〜5° 動いた数秒）。わざとの猫背（Mac のテスト、40秒・+14°）は寄せても同じく9回鳴る。
 // その代わり、ゆっくり進む崩れは吸ってしまう：+12° なら約50秒、+15° なら約75秒、+20° なら約2分より時間をかけて進むと鳴らない
-// slipDrift 8（margin と同じ）：20:23 の走りで 500秒、2026-11-03 15:08 の走り（胸のセンサーがずれて、715秒から傾きが +12° 前後のまま。上体は 3〜6°）で 851秒に、
-// ずれとみなす。ふつうに走っている間の基準の動きは、15:08 の前半で +4° まで（npm run replay:sensor）
-export const HUNCH: LeanParams = { ...LEAN, place: CHEST, margin: 8, slipDrift: 8 }
+// slipDrift 8：20:23 の走りで 500秒、2026-11-03 15:08 の走り（胸のセンサーがずれて、715秒から傾きが +12° 前後のまま。上体は 3〜6°）で 851秒に、
+// ずれとみなす（線を下げたいまは、15:08 は約795秒で、線を越えていた時間 slipSec で）。ふつうに走っている間の基準の動きは、15:08 の前半で +4° まで、
+// 2026-11-04 の走り（32分）で 12.9° → 19.5°（約 +6.5°。npm run replay:sensor）。それより小さくすると、ふつうの走りの基準の動きでずれとみなしてしまうので、線を下げても 8° のまま
+// margin（線）はレベルごと（下の HUNCH_BY_LEVEL。カメラの猫背の線 camera/params.ts の STRICT と同じく、初心者 やさしめ・上級 きびしめ）。
+//   カメラが「背中が丸まっています」と言ったときに胸も震えるように、カメラ寄りに決めた（2026-11-04、本人「カメラはもともと甘いので、センサーはカメラ側に寄せたい」）。
+//   記録した3本をコーチと胸の見分けに通し直した（sim/chest-camera.sim.ts、結果は sim/result-chest-camera.md）：
+//   ・カメラの猫背（6秒平均）と胸の増えは、わざとの猫背のある 11-03 で 相関 0.61・胸 ≈ 1.9 + 1.36 × カメラ。カメラの線 4°・3.5°・3° は胸の +7.3°・+6.7°・+6.0° にあたり、
+//     胸は 1.5秒続けば震えるので（6秒平均より揺れる）、その 1° ほど下に置くと、カメラより少し早く震える
+//   ・ふつうの区間で、カメラの猫背の声から ±15秒より離れて震えたのは、10分あたり +8° 1.4回（上級のカメラと比べて 0.8回）→ 初心者 +6° 2.2回・中級 +5.5° 2.7回・
+//     上級 +5° 2.7回（11-04 の32分と 11-03 の前半5分）。カメラの声（あわせて 初心者・中級 4回、上級 5回）に合ったのは 初心者・中級 3 → 4回、上級 4 → 4回
+//     11-04 に走ったときのカメラの猫背の声 3回（胸の値がある間）には、+8° は1回、+5〜6° は2回合った（残る1回は胸が +3° しか動かず、+3° まで下げないと合わない。+3° では外れが 5.8回）
+//   ・その代わり、センサーがずれて線を越えたままの間は、見張り（slipSec）が置き直すまで鳴る回数が増える（ずれの間の震え 10分あたり +8° 6回 → +5° 22回。11-03 は 715秒にずれ、約795秒に置き直す）。
+//     わざとの猫背 60秒（2回でも）はずれとみなさないこと、急なずれを約75秒で黙らせることは変わらない（sim/result-lean-slip.md）
+// HUNCH は、レベルが分からないときの線（中級＝カメラの既定 DEFAULT_STRICT と同じ）
+export const HUNCH_BY_LEVEL: Record<Level, LeanParams> = {
+  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8 },
+  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8 },
+  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8 },
+}
+export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 
 // 頭が前に出る（頭のセンサー）。頭の前への傾きはカメラの首の角度・頭の位置とよく合う（5秒の窓で r 0.8〜0.9、顎とは −0.97）。
 // margin は、2026-11-02 の2本（18:43・20:23）を npm run replay:sensor に通し、カメラの答え（FORM.head：首 > 48° かつ 頭の位置 > 52°）と
@@ -99,3 +118,117 @@ export const BATTERY_CURVE: [number, number][] = [
   [4.2, 100], [4.1, 90], [4.0, 80], [3.92, 70], [3.87, 60], [3.82, 50], [3.79, 40], [3.77, 30], [3.74, 20], [3.68, 10], [3.45, 5], [3.3, 0],
 ]
 export const BATTERY_LOW = 20 // これ以下（%）なら、充電を促す
+
+// ---- 接地時間（足首のセンサー。contact.ts）----
+export const ANKLES = { L: '左足首', R: '右足首' } as const
+
+// 1歩ごとの着地・離地の見つけ方（contact.ts の StepDetector）。ずらす量は RBDS（Fukuchi 2017、秒速2.5・3.5・4.5m、床反力つき。読めた22人）の
+// すねの印の角速度を床反力の接地と比べて決めた（sim/contact.sim.ts、結果は sim/result-contact.md）
+export interface StepParams {
+  keep: number // ためておく長さ（秒）。1歩き（1秒まで）と、その前の谷を見られる長さ
+  axisLearn: number // 走り出してから、前後の面の回転の軸を決めるのに使う長さ（秒）
+  axisSteps: number // その間に、決めた向きでこれだけの1歩が見つからなければ、決めずに取り直す
+  peakMin: number // 振り出しの山とみなす、前後の面の回転の速さ（dps）。RBDS の秒速2.5m でいちばん低い人で 474、実機の時速8〜10kmで約 400
+  peakSep: number // 山と山は、これ（秒）より離れている（1歩きは 0.5秒より長い）
+  look: number // 山を決めるのに先を見る長さ（秒）
+  icSearch: number // 山のあと、0 を下へ切るのを探す長さ（秒）
+  icDelay: number // 0 を下へ切ってから着地まで（秒）。RBDS で 25〜29ms（ばらつき 9〜12ms）
+  swingBack: number // 山の前で、0 を上へ切るのを探す長さ（秒）
+  troughWin: number // 0 を上へ切る前の、この長さ（秒）の谷を、立脚の終わりの谷とする
+  troughAfterIc: number // 谷は、着地からこれ（秒）よりあと（着地の直後の衝撃の揺れを谷と取らない）
+  toLead: number // 谷から離地まで（秒）。RBDS で 90〜93ms（ばらつき 15〜19ms）。速さでほとんど変わらない
+  ctMin: number // 接地時間の範囲（秒）。外れた1歩は捨てる
+  ctMax: number
+  strideMin: number // 1歩きの時間の範囲（秒）。ピッチ 120〜240歩/分
+  strideMax: number
+  dfMax: number // 接地の割合がこれより大きい1歩は歩き（両足が着いている間がある）なので捨てる
+  impactBefore: number // 着地の衝撃を探す範囲（着地の前後、秒）
+  impactAfter: number
+  speedA: number // 速さ（m/s）= speedA + speedB × すねの振れ幅（度）÷ 1歩きの時間（秒）。RBDS の 54本で r 0.91、ばらつき 0.30 m/s
+  speedB: number
+}
+export const STEP: StepParams = {
+  keep: 3,
+  axisLearn: 10,
+  axisSteps: 5,
+  peakMin: 200,
+  peakSep: 0.4,
+  look: 0.35,
+  icSearch: 0.3,
+  icDelay: 0.026,
+  swingBack: 0.5,
+  troughWin: 0.25,
+  troughAfterIc: 0.1,
+  toLead: 0.09,
+  ctMin: 0.12,
+  ctMax: 0.45,
+  strideMin: 0.5,
+  strideMax: 1.0,
+  dfMax: 0.5,
+  impactBefore: 0.03,
+  impactAfter: 0.06,
+  speedA: -0.183,
+  speedB: 0.02416,
+}
+
+// 接地時間が長い（腰が落ちている）・左右差の線（contact.ts の ContactJudge と coach の項目）。
+// 線は今日の走り出しとくらべず、研究データの市民ランナーとくらべて決める（2026-11-04 本人「走り出しから腰が低い人もいる」）
+export interface ContactParams {
+  // 速さ（km/h）ごとの、市民ランナーの接地の割合（duty factor）の平均と標準偏差。
+  // Patoz ら 2022（Front Physiol 13:1044363、市民ランナー115人、トレッドミル）：時速9km 37.7 ± 3.1%、11km 34.7 ± 2.5%、13km 32.6 ± 2.2%。
+  // RBDS（読めた22人）の床反力でも、秒速2.5m（9km）で真ん中 37.1%（上から1割 39.2%）、秒速3.5m で 31.9%、4.5m で 29.9%
+  norm: [number, number, number][]
+  // その速さの平均から、標準偏差のこの倍より上なら「接地が長い（腰が落ちている）」。2 は市民ランナーの上から約2%。
+  // RBDS の22人は床反力の本当の値で誰も越えない（いちばん高い人で z 1.2）。自分の記録4本（判定した54分）では、ふつうの走りの z は上から1%で 0.8〜1.1。
+  // 見つけ方のずれ（人・足ごとに ±17ms、接地の割合で ±0.023 ≒ 0.8 標準偏差。sim/result-contact.md）があるので、それより低い線にはしない
+  z: number
+  win: number // 接地の割合を見る、直近の長さ（秒）。短いほど早く知らせ、戻ったのも早くわかる（ほめるのは知らせてから25秒まで。core/params.ts の CUE.recoverWithin）
+  winSi: number // 左右差を見る、直近の長さ（秒）。片足ずつなので長め（12秒では、11-04 の走りで知らせが 1 → 6回に増えた）
+  keep: number // ためておく長さ（秒）
+  minSteps: number // 両足あわせて、これだけの1歩がなければ判定しない
+  minSide: number // 左右差は、片足ずつこれだけの1歩がなければ出さない
+  steadySec: number // この長さ（秒）の間、速さとピッチが変わっていなければ判定する
+  steadyV: number // 変わっていない：見積もった速さの差がこの割合まで
+  steadyCad: number // かつ、ピッチの差がこの割合まで
+  vMin: number // 見積もった速さがこの範囲（km/h）の外なら判定しない（見積もりが外れている）
+  vMax: number
+  // 接地時間の左右差（%）がこれより大きければ、長いほうの足を知らせる。RBDS の床反力では どの人も 10% 未満（いちばん大きくて 9.3%）、
+  // Garmin の左右のバランスで「悪い」（上から5%）は 52.2% より偏った（左右差 約9%）とき。見つけ方のずれでも RBDS で 9% まで出るので、その上に置いた。
+  // 自分の記録：11-02・11-03 の3本は 2% 以内、11-04 は左が 8% 長く、20秒の窓で 17% まで出て1回知らせた（付け方か本当の差かは分けられない）
+  si: number
+  impSi: number // 着地の衝撃の左右差（%）。付け方で大きく変わるので、声と振動にはしない（記録だけ）
+  peakRatio: number // 両足の振り出しの山（dps）の比がこれより大きければ、付け方が左右で違うとみて、左右差を出さない
+  stale: number // その足の1歩がこれ（秒）より来ていなければ、その足は使わない（切れた・止まった）
+  warmup: number // 走り出してから、これ（秒）は判定しない（歩きから走りへ、速さを上げている間）
+  stopReset: number // 「走っている」がこれ（秒）より長く途切れたら、ためた1歩を捨てて、走り出しからやり直す（短い途切れでは捨てない）
+}
+export const CONTACT: ContactParams = {
+  norm: [
+    [9, 0.377, 0.031],
+    [11, 0.347, 0.025],
+    [13, 0.326, 0.022],
+  ],
+  z: 2,
+  win: 12,
+  winSi: 20,
+  keep: 30,
+  minSteps: 16,
+  minSide: 8,
+  steadySec: 20,
+  steadyV: 0.1,
+  steadyCad: 0.1,
+  vMin: 4,
+  vMax: 20,
+  si: 15,
+  impSi: 30,
+  peakRatio: 1.25,
+  stale: 3,
+  warmup: 30,
+  stopReset: 5,
+}
+
+// 足首の振動（ble.ts の buzz。回数と長さ ms）。足首で走りながら感じ取れるかは、まだ試していない（hardware/sensor/docs/haptic.md）
+//   知らせ：胸・頭と同じ 1秒1回。ほめる：短く2回（ずれの 0.3秒×3回と分ける）
+// 走った記録の events に、接地時間の値を残す間隔（秒。sensor:steps）
+export const CONTACT_LOG = { every: 30 }
+export const CONTACT_BUZZ = { cueCount: 1, cueMs: 1000, praiseCount: 2, praiseMs: 150 }

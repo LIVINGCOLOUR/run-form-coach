@@ -10,7 +10,7 @@
 | `src/core/` | 入り口に共通：声かけのしくみ（`engine.ts`）、しくみの数字（`params.ts`）、言葉と声、記録、レベル |
 | `src/modes/camera/` | カメラ版（トレッドミル）：骨格の推定、測り方、カメラの数字（`params.ts`）、撮る画面、スロー分析 |
 | `src/modes/phone/` | スマホ版（腰・外）：見る役、付け方の確認。決まりは `src/modes/phone/CLAUDE.md` |
-| `src/modes/sensor/` | 自作のセンサーのアプリ側：Web Bluetooth でつなぐ（`ble.ts`）、通知のパーサ、胸の猫背と頭が前に出たのの見分け（`lean.ts`）、記録、ホームの「センサーをつなぐ」の枠。付ける場所とセンサーの対応・数字は `params.ts`。いまはカメラ版がいっしょに使う（iPhone では Bluefy で開く） |
+| `src/modes/sensor/` | 自作のセンサーのアプリ側：Web Bluetooth でつなぐ（`ble.ts`）、通知のパーサ、胸の猫背と頭が前に出たのの見分け（`lean.ts`）、足首の接地時間と左右差（`contact.ts`・`contactCoach.ts`）、記録、ホームの「センサーをつなぐ」の枠。付ける場所とセンサーの対応・数字は `params.ts`。いまはカメラ版がいっしょに使う（iPhone では Bluefy で開く） |
 | `hardware/sensor/` | センサーの機器（ファームウェア・書き込みの道具・作り方）。決まりは `hardware/sensor/CLAUDE.md` |
 | `src/screens/`・`src/ui/`・`src/theory/` | アプリ全体の画面（ホーム・結果）と、フォームの見方のページ |
 | `docs/`・`sim/`・`video/`・`scripts/` | 文書、仮想実験、紹介動画、音声などを作るスクリプト |

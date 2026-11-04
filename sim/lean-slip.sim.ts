@@ -5,13 +5,15 @@
 import { expect, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { LeanDetector } from '../src/modes/sensor/lean'
-import { HEAD, HUNCH, type LeanParams } from '../src/modes/sensor/params'
+import { HEAD, HUNCH, HUNCH_BY_LEVEL, type LeanParams } from '../src/modes/sensor/params'
+import { LEVEL_LABEL, type Level } from '../src/core/level'
 import type { Vec3 } from '../src/modes/sensor/parse'
 import { rng } from './camera'
 
 const HZ = 100
 const END = 700 // 走る長さ（秒）
 const SEEDS = 20
+const LEVELS: Level[] = ['beginner', 'intermediate', 'advanced']
 
 const lean = (deg: number): Vec3 => {
   const r = Math.PI / 180
@@ -87,7 +89,7 @@ const f0 = (x: number) => (Number.isFinite(x) ? x.toFixed(0) : '—')
 
 it('ずれの見張り：わざとの崩れ（60秒まで）は知らせ続け、ずれたセンサーは置き直して黙る', () => {
   const kinds = [
-    { name: '胸（猫背）', p: HUNCH, base: 18, d: 13 },
+    ...LEVELS.map((lv) => ({ name: `胸（猫背・${LEVEL_LABEL[lv]}）`, p: HUNCH_BY_LEVEL[lv], base: 18, d: 13 })),
     { name: '頭（前に出る）', p: HEAD, base: 6, d: 22 },
   ]
   const lines: string[] = [

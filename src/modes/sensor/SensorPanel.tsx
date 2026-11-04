@@ -1,12 +1,13 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { sensors, type NodeView } from './ble'
 import { batteryPercent } from './battery'
-import { BATTERY_LOW, HEAD, HUNCH } from './params'
+import { ANKLES, BATTERY_LOW, HEAD, HUNCH } from './params'
 
 // 走る前に、自作のセンサーをつなぐ小さな枠（ホームの「はじめる」の下）。つながなくてもカメラ版はいつもどおり使える。
-// 胸のセンサーがつながっていれば、走っている間に猫背になったとき胸が、頭のセンサーなら頭が前に出たとき頭が震える（lean.ts）
+// 胸のセンサーがつながっていれば、走っている間に猫背になったとき胸が、頭のセンサーなら頭が前に出たとき頭が震える（lean.ts）。
+// 両足首なら、接地が長い・左右差で足首が震える（contactCoach.ts）
 // 「震わす」で試せる場所（走っている間に震える場所）
-const TEST_BUZZ = [HUNCH.place, HEAD.place]
+const TEST_BUZZ = [HUNCH.place, HEAD.place, ANKLES.L, ANKLES.R]
 
 export function SensorPanel() {
   const [open, setOpen] = useState(false)
@@ -44,7 +45,7 @@ export function SensorPanel() {
       ) : (
         <>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。走っている間に、猫背が {HUNCH.hold} 秒続くと胸が、頭が前に出たのが {HEAD.hold} 秒続くと頭が震えます（その場所がつながっているとき）。センサーがずれたとみたときは、その場所が短く {HUNCH.slipBuzzCount} 回震え、走ったあとの結果の画面でも知らせます。
+            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。走っている間に、猫背が {HUNCH.hold} 秒続くと胸が、頭が前に出たのが {HEAD.hold} 秒続くと頭が震えます（その場所がつながっているとき）。両足首がつながっていれば、接地が長い（腰が落ちている）と両足首が、接地の長さが左右でずれると長いほうの足首が震え、直ると短く2回震えます。センサーがずれたとみたときは、その場所が短く {HUNCH.slipBuzzCount} 回震え、走ったあとの結果の画面でも知らせます。
           </div>
           {low.length > 0 && (
             <div style={{ color: 'var(--warn)', fontSize: 13, fontWeight: 700, lineHeight: 1.6 }}>

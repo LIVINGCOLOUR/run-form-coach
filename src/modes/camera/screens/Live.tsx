@@ -16,7 +16,7 @@ import { todayFocus } from '../nextStep'
 import { LogRecorder } from '../log'
 import { preloadVoice, speak, stopVoice } from '../../../core/voice'
 import { PHRASES } from '../../../core/phrases'
-import { capBaseline, median, standingIssue, type Standing, type StandingIssue } from '../standing'
+import { capBaseline, median, standingDecision, type Standing, type StandingIssue } from '../standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
 import { fullFrames } from '../fullFrames'
 import { SensorSession } from '../../sensor/session'
@@ -111,8 +111,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     if (full || file) rec.log.full = true
     let nowT = 0
     let tickMoving = false
-    // 自作のセンサー（つないであるとき）：値を記録し、胸で猫背を見て震わせる。区切りはカメラの直立の基準と「走っている」を使う
-    const sensorRun = !file && sensors.supported ? new SensorSession((t, text) => rec.event(t, text)) : null
+    // ランナーのレベルと、今日注意する項目（走り終わったら、続いて声がかからなかったかで次の段階へ）
+    const progress = loadProgress()
+    // 自作のセンサー（つないであるとき）：値を記録し、胸で猫背を見て震わせる。区切りはカメラの直立の基準と「走っている」を使う。胸の線はレベルごと
+    const sensorRun = !file && sensors.supported ? new SensorSession((t, text) => rec.event(t, text), progress.level) : null
     const sensorTimer = sensorRun
       ? setInterval(() => {
           const coach = coachRef.current
@@ -139,8 +141,6 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       captionAt = t
     }
 
-    // ランナーのレベルと、今日注意する項目（走り終わったら、続いて声がかからなかったかで次の段階へ）
-    const progress = loadProgress()
     // 今日意識すること（ホームの「今日の意識」と同じ1つ。nextStep.ts の todayFocus）
     const focus = todayFocus(sessions, progress)
 
@@ -416,12 +416,13 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           const left = Math.max(1, Math.ceil(BASELINE.settle + BASELINE.collect - el))
           setHud((hh) => (hh.countdown === left ? hh : { ...hh, countdown: left }))
           if (el > BASELINE.settle + BASELINE.collect && baseNecks.length > 10) {
-            // 猫背のチェック。崩れていたら1つだけ直し方を言って取り直す（2回まで。それでもだめならその姿勢で始める）
+            // 猫背のチェック：決まった線（今日の基準ではない）と比べ、越えていたら背筋を伸ばしてもらって取り直す
+            // （BASELINE.retries 回まで。それでもだめならその姿勢で始める。standing.ts の standingDecision）
             const st = { head: median(baseStands.map((x) => x.head)), trunk: median(baseStands.map((x) => x.trunk)) }
-            const issue = standingIssue(st)
-            if (issue && baseTries < BASELINE.retries) {
+            const { issue, retry } = standingDecision(st, baseTries)
+            if (retry) {
               baseTries++
-              say(issue === 'head' ? PHRASES.baseHead : PHRASES.baseBack, t)
+              say(PHRASES.baseHunch, t)
               lastNextSay = t
               stillSince = null
               baseNecks = []
@@ -436,7 +437,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
               say(!issue ? PHRASES.baseGood : issue === 'head' ? PHRASES.baseHeadLeft : PHRASES.baseBackLeft, t)
               say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
               lastNextSay = t
-              sensorRun?.stand(t, BASELINE.collect) // 胸のセンサーの、立った姿勢の向き（基準に使った3秒）
+              sensorRun?.stand(t, BASELINE.collect) // 胸・頭のセンサーの立った姿勢の向き（線の内側に入った3秒。測り直しを使い切ったときは、その3秒）
               setPhase('run')
             }
           }

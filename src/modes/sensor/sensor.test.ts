@@ -3,7 +3,7 @@ import { parseBattery, parsePacket, type Vec3 } from './parse'
 import { LeanDetector, type LeanStep } from './lean'
 import { batteryPercent } from './battery'
 import { decodeBlock, SensorRecorder } from './log'
-import { HEAD, HUNCH, SENSOR_LOG } from './params'
+import { HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG } from './params'
 import { slipNotes } from './slipText'
 import type { RunLog } from '../../core/types'
 
@@ -143,10 +143,10 @@ describe('胸のセンサーで猫背を見る', () => {
     expect(cues[cues.length - 1]).toBeLessThan(71)
   })
 
-  it('線のすぐ下（走る前傾 + 7°）や、走っていない間は知らせない', () => {
+  it('線のすぐ下（走る前傾 + margin − 1°）や、走っていない間は知らせない', () => {
     const d = setup()
     play(d, 5, 50, () => 14, () => true)
-    expect(play(d, 50, 70, () => 21, () => true).some((o) => o.cue)).toBe(false)
+    expect(play(d, 50, 70, () => 14 + HUNCH.margin - 1, () => true).some((o) => o.cue)).toBe(false)
     expect(play(d, 70, 90, () => 30, () => false).some((o) => o.cue)).toBe(false) // 止まって前かがみ（ベルトを止めたあと）
   })
 
@@ -252,6 +252,34 @@ describe('胸のセンサーで猫背を見る', () => {
     const out = play(d, 50, 70, () => 14, () => true, () => 20)
     expect(out.some((o) => o.cue)).toBe(false)
     expect(out[out.length - 1].tilt!).toBeCloseTo(14, 0)
+  })
+})
+
+describe('胸の線はレベルごと（カメラの猫背の線に合わせる）', () => {
+  const run = (p: typeof HUNCH, deg: number) => {
+    const d = new LeanDetector(p)
+    play(d, 0, 5, () => 0, () => false)
+    d.stand(5, 3)
+    play(d, 5, 50, () => 14, () => true)
+    return play(d, 50, 60, () => 14 + deg, () => true).some((o) => o.cue)
+  }
+
+  it('上級ほどきびしい（線が低い）。どのレベルも前の線（+8°）より低く、ずれの見張りは 8° のまま', () => {
+    const { beginner, intermediate, advanced } = HUNCH_BY_LEVEL
+    expect(beginner.margin).toBeGreaterThan(intermediate.margin)
+    expect(intermediate.margin).toBeGreaterThan(advanced.margin)
+    for (const p of [beginner, intermediate, advanced]) {
+      expect(p.margin).toBeLessThan(8)
+      expect(p.slipDrift).toBe(8)
+      expect(p.place).toBe(HUNCH.place)
+    }
+    expect(HUNCH).toEqual(intermediate) // レベルが分からないときは中級（カメラの既定と同じ）
+  })
+
+  it('同じ +5.5° の猫背に、上級は震え、初心者は震えない。+7° ならどのレベルも震える', () => {
+    expect(run(HUNCH_BY_LEVEL.advanced, 5.5)).toBe(true)
+    expect(run(HUNCH_BY_LEVEL.beginner, 5.5)).toBe(false)
+    for (const p of Object.values(HUNCH_BY_LEVEL)) expect(run(p, 7)).toBe(true)
   })
 })
 
