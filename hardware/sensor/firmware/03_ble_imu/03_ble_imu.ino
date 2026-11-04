@@ -75,7 +75,7 @@ constexpr uint16_t MAX_PAYLOAD = 244; // MTU 247 - 3
 
 BLEDfu bledfu; // 無線での書き換え（次からは USB につながずに、Mac やスマホから書き込めるように）
 BLEDis bledis; // 機器の情報（0x180A）。受ける側が、どの版のファームかを読めるように
-const char* FW_VERSION = "2026-11-02.2"; // 振動（0xFFE3）・無線での書き換え・動いたら起きる
+const char* FW_VERSION = "2026-11-05.1"; // 振動（0xFFE3）・無線での書き換え・動いたら起きる・LED を点けない
 BLEService imuService(0xFFE0);
 BLECharacteristic imuChar(0xFFE1);
 BLECharacteristic batChar(0xFFE2);
@@ -279,6 +279,7 @@ void startAdvertising() {
 void setup() {
   batteryInit(); // P0.14 を LOW にする（上の説明）。ほかのことより先に
   pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH); // LED は消しておく（LOW で点くので、OUTPUT にしただけだと点きっぱなしになり電池を使う）
   pinMode(MOTOR_PIN, OUTPUT);
   digitalWrite(MOTOR_PIN, LOW);
   Serial.begin(115200); // Mac につないでいなくても動く（シリアルを待たない）
@@ -293,6 +294,7 @@ void setup() {
 
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX); // MTU 247 まで。1回の接続の間に何通も送れるように
   Bluefruit.begin();
+  Bluefruit.autoConnLed(false); // 接続の青い LED も点けない（体に付けている間は見ないので、電池の無駄）
   Bluefruit.setName(DEVICE_NAME);
   Bluefruit.Periph.setConnInterval(12, 24); // 希望：15〜30ミリ秒（単位 1.25ミリ秒）
   Bluefruit.Periph.setConnectCallback(onConnect);
