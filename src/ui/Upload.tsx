@@ -25,15 +25,14 @@ export function UploadPanel() {
   const v = useUploads()
   if (!v.hasKey) return null
   const waiting = v.list.filter((e) => e.state === 'waiting')
-  const lastSent = v.list.filter((e) => e.state === 'sent').sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0))[0]
   const badKey = waiting.some((e) => e.badKey)
   const lastError = waiting.find((e) => e.error)?.error
   let text: string
   if (v.sending) text = `記録を送っています（${v.pct}%）`
   else if (badKey) text = '送る鍵が違います。入れ直してください'
   else if (waiting.length) text = `まだ送れていない記録が ${waiting.length} 件${lastError ? `（${lastError}）` : ''}。つながったら送ります`
-  else if (lastSent?.sentAt) text = `記録はすべて送りました（最後は ${hm(lastSent.sentAt)}）`
-  else text = '走り終わると、記録を自動で送ります'
+  // 送れているときは何も出さない（ふだんのホームに出すのは、送れていないときだけ）
+  else return null
   return (
     <div style={{ fontSize: 12, lineHeight: 1.6, color: badKey || waiting.length ? 'var(--warn)' : undefined }} className={badKey || waiting.length ? undefined : 'muted'}>
       {text}

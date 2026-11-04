@@ -59,6 +59,10 @@ const WHERE_NOTE: Record<PhoneWhere, string> = {
   treadmill: 'GPS は使いません。速さは一定とみなします',
 }
 
+// 開発用の入り口（動画で試す・スロー動画・腰スマホの練習とテスト・記録の書き出しなど）は、URL に ?dev=1 を付けたときだけ出す。
+// ふだんのホームは、走り方・はじめる・フォームの見方だけにする（本人の希望。2026-11-05）
+const dev = typeof location !== 'undefined' && new URLSearchParams(location.search).has('dev')
+
 // 走り方（入り口）。ホームのいちばん上で選び、「はじめる」1つで始める。選んだものは端末に覚えておく
 type RunMode = 'treadmill' | 'waist' | 'sensor'
 const MODE_KEY = 'rfc.runMode'
@@ -167,7 +171,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
   const lastTest = prevFormTest(phoneSessions, Date.now())
   const testDays = lastTest ? Math.floor((Date.now() - lastTest.startedAt) / (24 * 3600 * 1000)) : null
   // どこで走るかを先に選び、やること（走る・練習・テスト）は同じ形のボタンで並べる。選んだ場所は端末に覚えておく
-  const [where, setWhere] = useState<PhoneWhere>(loadPhoneWhere)
+  const [where, setWhere] = useState<PhoneWhere>(() => (dev ? loadPhoneWhere() : 'outdoor'))
   const chooseWhere = (w: PhoneWhere) => {
     setWhere(w)
     savePhoneWhere(w)
@@ -367,24 +371,25 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           <div style={{ fontSize: 12, color: 'var(--accent)' }}>全コマ記録（検証用）：走っている間も間引かず、毎コマ骨格を取って残します</div>
         )}
         <SensorPanel key={mode === 'sensor' ? 'open' : 'closed'} defaultOpen={mode === 'sensor' && sensorsOn === 0} />
-        {mode === 'treadmill' && (
-          <div style={{ fontSize: 12 }} className="muted">
-            走る前に、まっすぐ立って基準を取ります
-            {' · '}
-            <button onClick={() => fileRef.current?.click()} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
-              動画で試す
-            </button>
-            {' · '}
-            <button onClick={() => exportLog().then((ok) => ok || alert('まだ記録がありません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
-              直近の記録を書き出す
-            </button>
-            {' · '}
-            <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>
-              フォームの見方
-            </a>
-          </div>
-        )}
-        {mode === 'treadmill' && (
+        <div style={{ fontSize: 12 }} className="muted">
+          {mode === 'treadmill' && <>走る前に、まっすぐ立って基準を取ります{' · '}</>}
+          <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>
+            フォームの見方
+          </a>
+          {dev && mode === 'treadmill' && (
+            <>
+              {' · '}
+              <button onClick={() => fileRef.current?.click()} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
+                動画で試す
+              </button>
+              {' · '}
+              <button onClick={() => exportLog().then((ok) => ok || alert('まだ記録がありません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
+                直近の記録を書き出す
+              </button>
+            </>
+          )}
+        </div>
+        {dev && mode === 'treadmill' && (
         <button className="card" onClick={() => slowRef.current?.click()} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>スロー動画で詳しく見る</div>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -392,16 +397,20 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           </div>
         </button>
         )}
+        <UploadPanel />
+        {(mode === 'waist' || dev) && (
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {mode === 'waist' && (
           <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ fontSize: 15, fontWeight: 700 }}>腰スマホ</div>
             <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-              加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。走る場所を選んでから、上の「はじめる」か、下の練習・テストを押します。
+              加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。
             </div>
           </div>
 
+          {dev && (
+          <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ fontSize: 13 }} className="muted">どこで走る？</div>
             <div className="seg" role="group" aria-label="どこで走る？" style={{ gridTemplateColumns: '1fr 1fr' }}>
@@ -452,6 +461,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
               </Fragment>
             ))}
           </div>
+          </>
+          )}
 
           {lastPhone && (
             <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={{ ...linkStyle, alignSelf: 'flex-start', fontSize: 13 }}>
@@ -460,8 +471,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           )}
           </>
           )}
-          <UploadPanel />
-
+          {dev && (
           <details className="dev">
             <summary>開発用</summary>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, paddingTop: 10 }}>
@@ -489,7 +499,9 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
               <UploadKeyButton />
             </div>
           </details>
+          )}
         </div>
+        )}
         <input
           ref={slowRef}
           type="file"
