@@ -15,7 +15,7 @@ import { LOG_CHUNK, LogSaver } from '../../../core/logChunks'
 import { activeItems, afterRun } from '../../../core/level'
 import { todayFocus } from '../nextStep'
 import { LogRecorder } from '../log'
-import { preloadVoice, speak, stopVoice } from '../../../core/voice'
+import { preloadVoice, speak, stopVoice, voicePending } from '../../../core/voice'
 import { PHRASES } from '../../../core/phrases'
 import { capBaseline, median, standingDecision, type Standing, type StandingIssue } from '../standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
@@ -423,7 +423,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         // 骨格の推定は止まっていても少し揺れるので、1秒続けて動いたときだけ数え直す
         if (moving) baseMovingSince ??= t
         else baseMovingSince = null
-        if (baseMovingSince !== null && t - baseMovingSince > BASELINE.movingTolerance) {
+        // 案内（「まっすぐ立って、3秒止まって」や測り直しの声）を言い終えるまでは測らない。聞きながら姿勢を直すため
+        if (voicePending() || (baseMovingSince !== null && t - baseMovingSince > BASELINE.movingTolerance)) {
           stillSince = null
           baseNecks = []
           baseStands = []

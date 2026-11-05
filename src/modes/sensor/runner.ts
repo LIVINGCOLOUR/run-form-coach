@@ -26,6 +26,7 @@ export interface SensorRunnerOptions {
   running?: () => boolean // カメラの「走っている」。渡さなければセンサーで見分ける
   camera?: () => CamValues | null // カメラ版：いまのカメラの上体と頭の位置（胸のずれの見分けに使う。lean.ts）。なければ null
   say?: (text: string) => void // カメラなしの案内を声で言う
+  speaking?: () => boolean // 声を話している（待っている）間か。立った姿勢は、言い終えてから STILL.sec 秒じっとしたぶんで覚える
   onChange?: () => void // 段階が変わった（画面を直す）
 }
 
@@ -46,6 +47,7 @@ export class SensorRunner {
   private lastTick: number
   private lastSay: number
   private started = false // 一度でも走り出した
+  private quietSince: number | null = null // 案内の声が終わった t
   private wasRunning = false
   private closed = false
   private result: SensorLog | undefined
@@ -107,7 +109,11 @@ export class SensorRunner {
       if (running) this.started = true
     }
     // 立った姿勢：まだ覚えていなくて、止まっている間に胸と頭が3秒じっとしたら覚える
-    if (this.stoodAt === null && !running && gate.still(t) && this.session.stand(t, STILL.sec)) {
+    // 案内を聞いている間に姿勢を直すので、言い終える前の3秒は使わない
+    if (this.o.speaking?.()) this.quietSince = null
+    else this.quietSince ??= t
+    const quiet = this.quietSince !== null && t - this.quietSince >= STILL.sec
+    if (this.stoodAt === null && !running && quiet && gate.still(t) && this.session.stand(t, STILL.sec)) {
       this.stoodAt = t
       this.o.onEvent(t, 'sensor:autoStand')
       if (!this.started) this.speak(t, PHRASES.baseDone)

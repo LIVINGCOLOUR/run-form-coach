@@ -20,6 +20,8 @@ let timer: ReturnType<typeof setTimeout> | null = null
 export const audioContext = () => ctx
 // 声を話している間（言い終えて GAP_MS たつまで）か
 export const voiceBusy = () => performance.now() < busyUntil
+// 話している間か、まだ話す言葉が待っているか（直立の基準は、案内を言い終えてから測る）
+export const voicePending = () => voiceBusy() || queued.length > 0 || timer !== null
 
 const url = (k: VoiceKind, id: PhraseId) => `${import.meta.env.BASE_URL}voices/${k}/${id}.m4a`
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { loadProgress, loadSettings } from '../../../core/storage'
-import { preloadVoice, speak, stopVoice } from '../../../core/voice'
+import { preloadVoice, speak, stopVoice, voicePending } from '../../../core/voice'
 import { PHRASES } from '../../../core/phrases'
 import { keepAwake } from '../../../core/wake'
 import { queueUpload } from '../../../core/upload/uploads'
@@ -45,6 +45,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       onEvent: rec.event,
       level: loadProgress().level,
       say: (text) => speak(text),
+      speaking: voicePending,
       onChange: () => setPhase(runner.phase),
     })
     setPhase(runner.phase)

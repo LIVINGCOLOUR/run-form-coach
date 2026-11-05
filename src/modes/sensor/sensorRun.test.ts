@@ -192,6 +192,20 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     )
   })
 
+  it('案内の声を話している間にじっとしても、立った姿勢を覚えない（言い終えてから3秒で覚える）', () => {
+    connect(['胸'])
+    let speaking = true
+    const r = new SensorRunner({ onEvent: () => {}, say: () => {}, speaking: () => speaking })
+    let t = performance.now() / 1000
+    t = send('胸', 'stand', t, 6, r)
+    expect(r.stoodAt).toBe(null)
+    speaking = false
+    t = send('胸', 'stand', t, 2, r)
+    expect(r.stoodAt).toBe(null)
+    send('胸', 'stand', t, 2, r)
+    expect(r.stoodAt).not.toBe(null)
+  })
+
   it('アプリが止まっていた（画面が消えた）間を events に残す。足首だけなら立つ案内は出さない', () => {
     connect(['左足首'])
     const events: string[] = []
