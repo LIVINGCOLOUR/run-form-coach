@@ -16,10 +16,11 @@ import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, ty
 // 見る崩れごとの、記録とできごとの名前（胸は前からの名前のまま。古い記録と同じ形で残す）。
 // 胸の線はランナーのレベルごと（params.ts の HUNCH_BY_LEVEL。カメラの猫背の線と同じく、レベルで厳しさを変える）。分からなければ HUNCH
 type Key = 'chest' | 'head'
-type Names = { stand: string; lean: string; cue: string }
+// ok：知らせたあと直った（ほめた。2つの立ち方で見ていて、posePraise があるときだけ。いまは頭だけ）
+type Names = { stand: string; lean: string; cue: string; ok: string }
 const partsFor = (level?: Level): { key: Key; p: LeanParams; ev: Names }[] => [
-  { key: 'chest', p: level ? HUNCH_BY_LEVEL[level] : HUNCH, ev: { stand: 'sensor:stand', lean: 'sensor:runLean', cue: 'sensor:hunch' } },
-  { key: 'head', p: HEAD, ev: { stand: 'sensor:headStand', lean: 'sensor:headLean', cue: 'sensor:head' } },
+  { key: 'chest', p: level ? HUNCH_BY_LEVEL[level] : HUNCH, ev: { stand: 'sensor:stand', lean: 'sensor:runLean', cue: 'sensor:hunch', ok: 'sensor:hunchOk' } },
+  { key: 'head', p: HEAD, ev: { stand: 'sensor:headStand', lean: 'sensor:headLean', cue: 'sensor:head', ok: 'sensor:headOk' } },
 ]
 // ずれとみなしたとき（胸も頭も同じ名前で、場所を付ける）：sensor:slip 胸 18.2→34.6（ずれを測るもとの基準 → 置き直した基準）
 const SLIP = 'sensor:slip'
@@ -201,6 +202,11 @@ export class SensorSession {
           this.rec?.cue(t, tilt, ok, x.key)
           this.onEvent(t, `${x.ev.cue} ${tilt.toFixed(1)}${ok ? '' : ' (no buzz)'}`)
         })
+      }
+      // 知らせたあと直った：短く2回震わせる（知らせの1秒1回・ずれの0.3秒×3回と分ける）
+      if (r.praise) {
+        void sensors.buzz(x.p.place, x.p.praiseBuzzCount, x.p.praiseBuzzMs)
+        this.onEvent(t, `${x.ev.ok}${r.tilt !== null ? ` ${r.tilt.toFixed(1)}` : ''}`)
       }
     }
     this.tickContact(t, running)

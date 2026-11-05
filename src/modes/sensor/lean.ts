@@ -26,6 +26,10 @@ import type { Vec3 } from './parse'
 //   走る前傾（その向きに沿った、走り出し30秒の真ん中）は、基準として poseCap 度まで（カメラ版は、カメラの上体の増え + poseCamSlack 度まで）しか差し引かない。
 //   線は「基準 + max(margin, poseFrac × a と b の角度)」。ほかのしくみ（寄せる・ずれの見張り・曲げた）は stand と同じ。
 //   a と b の角度が poseMin より小さければ覚えずに false（呼ぶ側が測り直すか、b を stand として今までの見方にする）
+//   2つの立ち方で見るときだけの、場所ごとの決まり（0 なら今までと同じ。params.ts の HEAD の説明）：
+//     線の幅の下限 poseMargin（0 なら margin）・続いたら知らせる長さ poseHold（0 なら hold）・
+//     走り出して poseStart 秒から、走る前傾を覚え終わる前でも poseCap を基準にして知らせる（最初から崩れたまま走り出したのを、すぐ知らせる）・
+//     知らせたあと線の下に posePraise 秒続けていたら、ほめる（praise）
 // 2026-11-02 20:23 と 2026-11-03 15:08 の走りで、胸のセンサーがずれて傾きが +9〜13° 増えた（カメラの上体は変わらず）。わざとの猫背（60秒まで）は置き直さない
 
 // bent：体を曲げている（またはその直後）ので見ていない。bend：この tick で曲げ始めたと見た（そのときの傾き。胸の bend を越えたときだけ）
@@ -34,7 +38,8 @@ export type CamValues = { trunk: number; head: number }
 
 // learned：走る前傾を覚えた（度）。offset：2つの立ち方で見るとき、そのうち基準として差し引いた分（度）
 // plausible：2つの立ち方で見ているとき、線を越えている向きが猫背としてありうる（ずれの見張りに数えない）
-export type LeanStep = { tilt: number | null; cue: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number }
+// praise：知らせたあと、線の下に posePraise 秒続けていた（直った。2つの立ち方で見ているときだけ）
+export type LeanStep = { tilt: number | null; cue: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number }
 
 // 2つの立ち方で決めた物差し。deg：a と b の角度（猫背の大きさ）、margin：使う線の幅（度）、camB：カメラ版で b のときのカメラの上体の前傾（度）
 export type PoseScale = { deg: number; margin: number; camB: number | null }
@@ -84,6 +89,7 @@ export class LeanDetector {
   private sides: { t: number; v: number }[] = [] // 直近 slipRef 秒の横の傾き（2つの立ち方で見るとき）
   private streak = 0 // 続けて知らせた回数（2つの立ち方で見るときの、知らせ直す間隔をのばすため）
   private underSince: number | null = null // 線の下に入った t
+  private owed = false // 知らせたあと、まだほめていない（2つの立ち方で見るとき、posePraise）
   readonly p: LeanParams
 
   // keepSec：立った姿勢を覚えるのに、さかのぼる長さの上限（秒）
@@ -127,7 +133,7 @@ export class LeanDetector {
     if (!fwd) return false
     this.standDir(b)
     this.fwd = fwd
-    this.pose = { deg, margin: Math.max(this.p.margin, this.p.poseFrac * deg), camB: camB !== null && Number.isFinite(camB) ? camB : null }
+    this.pose = { deg, margin: Math.max(this.p.poseMargin > 0 ? this.p.poseMargin : this.p.margin, this.p.poseFrac * deg), camB: camB !== null && Number.isFinite(camB) ? camB : null }
     return true
   }
 
@@ -153,7 +159,7 @@ export class LeanDetector {
     return idx >= p.poseIdxMin && idx <= p.poseSlipIdx && side <= Math.max(p.poseSlipSide, p.poseSlipSideFrac * pose.deg)
   }
 
-  // 線の幅（度）：2つの立ち方で見ているときは max(margin, poseFrac × 角度)、そうでなければ margin
+  // 線の幅（度）：2つの立ち方で見ているときは max(poseMargin（0 なら margin）, poseFrac × 角度)、そうでなければ margin
   margin(): number {
     return this.pose?.margin ?? this.p.margin
   }
@@ -171,6 +177,7 @@ export class LeanDetector {
     this.camLearn = []
     this.streak = 0
     this.underSince = null
+    this.owed = false
     this.sides = []
     // 立ち直したら、前の向きと走る前傾も覚え直す
     this.fwd = null
@@ -294,10 +301,14 @@ export class LeanDetector {
         } else this.runSec = p.skip // 取れた傾きが足りない（値が途切れていた）：もう一度ためる
         this.learnUs = []
         this.camLearn = []
+        return out
       }
-      return out
+      // 2つの立ち方で見ていて poseStart 秒走ったら、覚え終わる前から知らせる（基準は差し引く上限の poseCap。覚えた基準はそれより大きくならない）
+      if (!(this.pose && p.poseStart > 0 && this.runSec >= p.poseStart)) return out
     }
-    const ref = this.ref ?? this.runLean
+    // learning：走る前傾を覚えている間（poseStart から）。基準を寄せず、ずれも見張らない
+    const learning = this.runLean === null
+    const ref = learning ? p.poseCap : (this.ref ?? this.runLean!)
     this.tilts.push({ t, v: tilt })
     while (t - this.tilts[0].t > p.slipRef) this.tilts.shift()
     if (this.pose) {
@@ -320,7 +331,8 @@ export class LeanDetector {
       if (!plausible) this.overAcc += dt
       // 知らせ直す間隔：2つの立ち方で見ているときは、続けて poseBackoffAfter 回知らせたら poseBackoffEvery 秒ごとにする
       const every = this.pose && this.streak >= p.poseBackoffAfter ? p.poseBackoffEvery : p.cooldown
-      if (t - this.overSince >= p.hold && t - this.lastCue >= every) {
+      const hold = this.pose && p.poseHold > 0 ? p.poseHold : p.hold
+      if (t - this.overSince >= hold && t - this.lastCue >= every) {
         // 越えて最初の知らせで大きく傾いているときは、曲げる途中かもしれないので少し待つ（越えたままの知らせ直しは待たない）
         const wait = p.confirmAbove > 0 && p.confirmSec > 0 && this.lastCue < this.overSince && tilt >= ref + p.confirmAbove
         if (wait) this.waitSince ??= t
@@ -329,6 +341,7 @@ export class LeanDetector {
           this.streak++
           this.waitSince = null
           out.cue = true
+          if (this.pose && p.posePraise > 0) this.owed = true
         }
       }
     } else {
@@ -338,9 +351,14 @@ export class LeanDetector {
       // 線の下に poseBackoffReset 秒いたら、続けて知らせた回数を数え直す（一瞬下に入っただけでは戻さない）
       this.underSince ??= t
       if (t - this.underSince >= p.poseBackoffReset) this.streak = 0
+      // 知らせたあと、線の下に posePraise 秒続けていたら、ほめる（1回の崩れに1回）
+      if (this.owed && t - this.underSince >= p.posePraise) {
+        this.owed = false
+        out.praise = true
+      }
       // 線の下にいる間だけ、基準を今の傾きへゆっくり寄せる（follow が 0 なら寄せない）
       // 2つの立ち方で見ているときは、向きが猫背としてありうる間は前へ寄せない（ゆっくり猫背になったのを基準に吸わない）。後ろへはいつも寄せる
-      if (p.follow > 0) {
+      if (p.follow > 0 && !learning) {
         const next = ref + (tilt - ref) * Math.min(1, dt / p.follow)
         if (!(this.pose && next > ref && this.plausible())) this.ref = next
       }
@@ -352,7 +370,7 @@ export class LeanDetector {
     // 崩れではなく、センサーがずれた：基準を今の傾きへ置き直し、ずれのせいで知らせ続けないようにする（slipSec・slipDrift が 0 なら見張らない）
     const long = p.slipSec > 0 && this.overAcc >= p.slipSec
     // 2つの立ち方で見ているときは、向きが猫背としてありうる間は、ずれとみなさない
-    const drift = p.slipDrift > 0 && this.ref !== null && this.ref - (this.anchor ?? this.runLean) >= p.slipDrift && !(this.pose && this.plausible())
+    const drift = p.slipDrift > 0 && this.ref !== null && this.ref - (this.anchor ?? this.runLean!) >= p.slipDrift && !(this.pose && this.plausible())
     // カメラ版：越えて camSlipSec 秒たち、カメラの値が camMin 件ずつあって、線の下にいた間より camRise 度も増えていなければ、ずれ
     const camSlip =
       p.camSlipSec > 0 &&
@@ -362,8 +380,8 @@ export class LeanDetector {
       this.camUnder.length >= p.camMin &&
       median(this.camOver.map((x) => x.trunk)) - median(this.camUnder.map((x) => x.v.trunk)) < p.camRise &&
       median(this.camOver.map((x) => x.head)) - median(this.camUnder.map((x) => x.v.head)) < p.camHeadRise
-    if (long || drift || camSlip) {
-      const from = this.anchor ?? this.runLean
+    if (!learning && (long || drift || camSlip)) {
+      const from = this.anchor ?? this.runLean!
       this.ref = median(this.tilts.map((x) => x.v))
       this.anchor = this.ref
       this.overAcc = 0
@@ -371,11 +389,12 @@ export class LeanDetector {
       this.waitSince = null
       this.camOver = []
       this.streak = 0
+      this.owed = false
       this.slips++
       out.cue = false
       out.slip = { from, to: this.ref }
     }
-    out.ref = this.ref
+    out.ref = learning ? ref : this.ref
     return out
   }
 }

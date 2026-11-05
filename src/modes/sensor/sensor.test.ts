@@ -736,10 +736,11 @@ describe('2つの立ち方で猫背を見る', () => {
     expect(d.margin()).toBe(HUNCH.margin)
   })
 
-  it('頭：差が HEAD.poseMin 以上なら同じ見方、線は max(頭の margin, poseFrac × 差)', () => {
+  it('頭：差が HEAD.poseMin 以上なら同じ見方、線は max(頭の poseMargin, poseFrac × 差)（今までの頭の margin 18° より狭い）', () => {
     const { d, ok } = setup(HEAD, null, 12)
     expect(ok).toBe(true)
-    expect(d.margin()).toBe(Math.max(HEAD.margin, HEAD.poseFrac * 12))
+    expect(d.margin()).toBe(Math.max(HEAD.poseMargin, HEAD.poseFrac * 12))
+    expect(d.margin()).toBeLessThan(HEAD.margin)
     expect(setup(HEAD, null, HEAD.poseMin - 1).ok).toBe(false)
   })
 
@@ -749,5 +750,128 @@ describe('2つの立ち方で猫背を見る', () => {
     const big = 30
     const m = (lv: keyof typeof HUNCH_BY_LEVEL) => setup(HUNCH_BY_LEVEL[lv], null, big).d.margin()
     expect(m('beginner')).toBeGreaterThan(m('advanced'))
+  })
+})
+
+// 頭のセンサーは、おでこにヘッドバンドで付ける（頭のてっぺんはセンサーの後ろ）。頭は固いので、どこに付けても頭の回り方（うなずき）は同じに見える
+describe('頭：最初から頭が前に出たまま走り出したのを、すぐ知らせ、直ったらほめる（2つの立ち方）', () => {
+  const HABIT = 12 // a（いつもの楽な立ち方）の頭の回り方（b から、度）
+  const BODY = 1 // 走ると頭が回る分（体ごとの前傾は頭にはほとんど出ない。params.ts の HEAD の説明）
+  // 体の向き（x 前・y 左・z 上）の重力 → センサーの読み。crown：頭のてっぺん（z が上）、forehead：おでこ（x が左・y が上・z が前。
+  // おでこは後ろへ約15°傾いている）、forehead90：おでこで、板を90°回して付けた
+  const r15 = (15 * Math.PI) / 180
+  const MOUNTS: Record<string, (v: Vec3) => Vec3> = {
+    crown: (v) => v,
+    forehead: ([x, y, z]) => [y, z * Math.cos(r15) - x * Math.sin(r15), x * Math.cos(r15) + z * Math.sin(r15)],
+    forehead90: ([x, y, z]) => [-(z * Math.cos(r15) - x * Math.sin(r15)), y, x * Math.cos(r15) + z * Math.sin(r15)],
+  }
+  const T0 = 6 // 走り出す t
+  const setup = (mount = MOUNTS.forehead, habit = HABIT) => {
+    const d = new LeanDetector(HEAD)
+    const feed = (from: number, to: number, deg: number, running: boolean) => {
+      const out: ({ t: number } & LeanStep)[] = []
+      for (let i = Math.round(from * 100); i < Math.round(to * 100); i++) {
+        const t = i / 100
+        d.sample(t, mount(lean(deg)))
+        if (i % 10 === 0) out.push({ t, ...d.update(t, running) })
+      }
+      return out
+    }
+    feed(0, 3, habit, false)
+    const da = d.dirOver(3, 3)!
+    feed(3, 6, 0, false)
+    const db = d.dirOver(6, 3)!
+    expect(d.setPoses(da, db)).toBe(true)
+    return { d, run: (from: number, to: number, deg: number) => feed(from, to, deg, true) }
+  }
+  const cueTimes = (xs: ({ t: number } & LeanStep)[]) => xs.filter((o) => o.cue).map((o) => o.t)
+
+  it('前に出たまま走り出すと、走る前傾を覚え終わる前（poseStart + poseHold 秒ごろ）から知らせ、直すと1回ほめる', () => {
+    const { d, run } = setup()
+    const habit = run(T0, T0 + 20, HABIT + BODY)
+    const cues = cueTimes(habit)
+    expect(cues.length).toBeGreaterThan(0)
+    expect(cues[0] - T0).toBeGreaterThanOrEqual(HEAD.poseStart + HEAD.poseHold - 0.2)
+    expect(cues[0] - T0).toBeLessThan(HEAD.poseStart + HEAD.poseHold + 1)
+    expect(d.runLean).toBeNull() // まだ覚えている途中
+    expect(habit.some((o) => o.praise)).toBe(false)
+    // 直す（顎を引く）：知らせが止まり、posePraise 秒たったら1回ほめる
+    const fixed = run(T0 + 20, T0 + 35, BODY)
+    expect(fixed.filter((o) => o.cue)).toHaveLength(0)
+    const praise = fixed.filter((o) => o.praise)
+    expect(praise).toHaveLength(1)
+    expect(praise[0].t - (T0 + 20)).toBeGreaterThanOrEqual(HEAD.posePraise)
+    expect(praise[0].t - (T0 + 20)).toBeLessThan(HEAD.posePraise + 1.5)
+  })
+
+  it('胸を開いて顎を引いたまま（b）走れば、知らせもほめもしない。差し引く走る前傾は頭の poseCap まで', () => {
+    const { d, run } = setup()
+    const out = run(T0, T0 + HEAD.skip + HEAD.learn + 60, BODY)
+    expect(out.some((o) => o.cue || o.praise)).toBe(false)
+    expect(d.offset!.deg).toBeCloseTo(BODY, 0)
+    // いつもの頭のまま走り出したときは、poseCap（3°）しか差し引かない（胸は10°）
+    const h = setup()
+    h.run(T0, T0 + HEAD.skip + HEAD.learn + 1, HABIT + BODY)
+    expect(h.d.offset!.deg).toBe(HEAD.poseCap)
+    expect(HEAD.poseCap).toBeLessThan(HUNCH.poseCap)
+  })
+
+  it('直したあと、いつもの頭に戻っていくと、また知らせる（直した頭を基準にし、いつもの頭へは寄せない）', () => {
+    const { d, run } = setup()
+    run(T0, T0 + 15, HABIT + BODY)
+    run(T0 + 15, T0 + HEAD.skip + HEAD.learn + 30, BODY) // 直して、走る前傾を覚え終わる
+    expect(d.runLean).not.toBeNull()
+    const t1 = T0 + HEAD.skip + HEAD.learn + 30
+    // 2分かけて、ゆっくりいつもの頭へ戻る（follow 60秒でも吸わない）
+    const drift: ({ t: number } & LeanStep)[] = []
+    for (let k = 0; k < 120; k++) drift.push(...run(t1 + k, t1 + k + 1, BODY + (HABIT * k) / 120))
+    drift.push(...run(t1 + 120, t1 + 150, HABIT + BODY))
+    expect(drift.some((o) => o.cue)).toBe(true)
+    expect(drift.some((o) => o.slip)).toBe(false)
+    expect(d.ref!).toBeLessThanOrEqual(HEAD.poseCap + 0.01)
+  })
+
+  it('前に出たまま3分走り続けても、知らせ続ける。はじめの poseBackoffAfter 回は cooldown ごと、そのあとは poseBackoffEvery 秒ごと（胸よりまばら）', () => {
+    const { run } = setup()
+    const out = run(T0, T0 + 180, HABIT + BODY)
+    expect(out.some((o) => o.slip)).toBe(false)
+    const cues = cueTimes(out)
+    // 0.1秒ごとに見るので、間隔は 0.1秒までずれる
+    cues.slice(1, HEAD.poseBackoffAfter).forEach((t, i) => expect(Math.abs(t - cues[i] - HEAD.cooldown)).toBeLessThan(0.15))
+    cues.slice(HEAD.poseBackoffAfter).forEach((t, i) => expect(Math.abs(t - cues[HEAD.poseBackoffAfter - 1 + i] - HEAD.poseBackoffEvery)).toBeLessThan(0.15))
+    expect(cues[cues.length - 1]).toBeGreaterThan(T0 + 180 - HEAD.poseBackoffEvery - 1)
+    expect(HEAD.poseBackoffEvery).toBeGreaterThan(HUNCH.poseBackoffEvery)
+    // 3分で 3 + 約5回（胸の間隔なら約14回）
+    expect(cues.length).toBeLessThan(10)
+  })
+
+  it('一瞬（poseHold 秒より短く）下を向いただけでは知らせない', () => {
+    const { run } = setup()
+    run(T0, T0 + 60, BODY)
+    const glance = run(T0 + 60, T0 + 60 + HEAD.poseHold - 1, 30)
+    const after = run(T0 + 60 + HEAD.poseHold - 1, T0 + 70, BODY)
+    expect([...glance, ...after].some((o) => o.cue)).toBe(false)
+  })
+
+  it('付け方（頭のてっぺん・おでこ・おでこで板を90°回す）によらず、同じ時刻に知らせ、ほめる', () => {
+    const times = Object.values(MOUNTS).map((m) => {
+      const { run } = setup(m)
+      const out = [...run(T0, T0 + 20, HABIT + BODY), ...run(T0 + 20, T0 + 35, BODY), ...run(T0 + 35, T0 + 50, HABIT + BODY)]
+      return { cue: cueTimes(out), praise: out.filter((o) => o.praise).map((o) => o.t) }
+    })
+    expect(times[0].cue.length).toBeGreaterThan(2)
+    expect(times[0].praise).toHaveLength(1)
+    for (const x of times.slice(1)) expect(x).toEqual(times[0])
+  })
+
+  it('今までの見方（stand。2つの立ち方がない・差が小さい）は変えない：覚え終わるまで知らせず、ほめない', () => {
+    const d = new LeanDetector(HEAD)
+    play(d, 0, 3, () => 0, () => false)
+    d.stand(3, 3)
+    const out = play(d, 3, 3 + HEAD.skip + HEAD.learn - 1, () => 30, () => true)
+    expect(out.some((o) => o.cue)).toBe(false)
+    const later = play(d, 3 + HEAD.skip + HEAD.learn - 1, 3 + HEAD.skip + HEAD.learn + 20, (t) => (t < 3 + HEAD.skip + HEAD.learn + 5 ? 30 : 60), () => true)
+    expect(later.some((o) => o.cue)).toBe(true)
+    expect(play(d, 63, 80, () => 30, () => true).some((o) => o.praise)).toBe(false)
   })
 })

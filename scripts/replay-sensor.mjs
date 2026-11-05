@@ -95,7 +95,7 @@ function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt, pose = n
     const r = d.update(t, running(t), !!bentBy?.[k], camAt?.(t) ?? null)
     ticks.push({ t, run: running(t), ...r, bentNow: d.bent(t), line: r.ref !== null && r.ref !== undefined ? r.ref + d.margin() : null })
   }
-  return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), slips: ticks.filter((x) => x.slip), bends: ticks.filter((x) => x.bend !== undefined), learnedAt: ticks.find((x) => x.learned !== undefined) }
+  return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), praises: ticks.filter((x) => x.praise).map((x) => x.t), slips: ticks.filter((x) => x.slip), bends: ticks.filter((x) => x.bend !== undefined), learnedAt: ticks.find((x) => x.learned !== undefined) }
 }
 
 // ずれとみなして基準を置き直した時刻と、基準の変わり方
@@ -183,6 +183,8 @@ function cameraLog(path) {
     const last = n.samples[n.samples.length - 1].tt
     say(`値 ${f1(n.samples[0].tt)}〜${f1(last)} 秒・走った ${f1(mins)} 分（この間に値があった分）・走る前傾 ${f1(r.d.runLean)}°（${f1(r.learnedAt?.t)} 秒）・前の向き ${r.d.fwd ? 'あり' : 'なし（向きによらない角度）'}`)
     if (r.d.pose) say(`2つの立ち方で見た：差 ${f1(r.d.pose.deg)}°・線の幅 ${f1(r.d.pose.margin)}°・差し引いた走る前傾 ${f1(r.d.offset?.deg)}°（${r.d.offset?.by ?? '-'}${r.d.offset?.cam !== null && r.d.offset?.cam !== undefined ? `、カメラの上体の増え ${f1(r.d.offset.cam)}°` : ''}）`)
+    // 2つの立ち方で見たときだけ：走る前傾を覚え終わる前（poseStart から）に知らせた回数と、直ってほめた回数（params.ts の poseStart・posePraise）
+    if (r.d.pose) say(`  覚え終わる前に知らせた ${r.cues.filter((t) => !r.learnedAt || t < r.learnedAt.t).length} 回・ほめた ${r.praises.length} 回：${r.praises.map(f1).join(' ') || 'なし'}`)
     // 知らせたとき、その前の5秒のカメラの答え
     const cueRows = r.cues.map((t) => {
       const rs = runRows.filter((x) => x.t > t - WIN && x.t <= t)

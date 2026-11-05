@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { MotionGate, windowStats } from './gate'
-import { HUNCH, POSE, RUN_GATE, SLOTS, STILL } from './params'
+import { HEAD, HUNCH, POSE, RUN_GATE, SLOTS, STILL } from './params'
 import type { Packet, Vec3 } from './parse'
 import { sensors } from './ble'
 import { SensorRunner } from './runner'
@@ -13,7 +13,8 @@ import type { RunLog } from '../../core/types'
 const HZ = 100
 // 1件ぶんの値。kind：立つ（ほぼ揺れない）・歩く（0.25g の揺れ）・走る（1g の揺れ。浮いている間と着地）
 // slouch：いつもの楽な立ち方（胸が前へ 15°。止まっている）
-type Kind = 'stand' | 'slouch' | 'walk' | 'run' | 'hunch'
+// runOpen：前へ傾かずに走る（頭：顎を引いた b のまま走る）
+type Kind = 'stand' | 'slouch' | 'walk' | 'run' | 'hunch' | 'runOpen'
 const SLOUCH = 15
 function imu(kind: Kind, t: number, k: number): { a: Vec3; g: Vec3 } {
   const jitter = ((k * 7919) % 13) / 13 - 0.5 // 決まった小さな揺れ（乱数を使わない）
@@ -27,7 +28,7 @@ function imu(kind: Kind, t: number, k: number): { a: Vec3; g: Vec3 } {
   const f = kind === 'walk' ? 1.9 : 2.8
   const m = 1 + amp * Math.sin(2 * Math.PI * f * t)
   // 走る：前へ約12°傾いた向き（胸の走る前傾）
-  const lean = kind === 'run' ? (12 * Math.PI) / 180 : 0
+  const lean = kind === 'run' ? (12 * Math.PI) / 180 : 0 // runOpen・walk は 0
   return { a: [Math.sin(lean) * m, 0, Math.cos(lean) * m], g: [120 * Math.sin(2 * Math.PI * f * t), 30, 10] }
 }
 
@@ -286,6 +287,34 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     return new Promise<void>((done) =>
       setTimeout(() => {
         expect(log.cues.length).toBeGreaterThan(3)
+        done()
+      }, 0),
+    )
+  })
+
+  it('頭だけ：いつもの頭（前へ15°）と顎を引いた頭で測り、前に出たまま走り出すと走る前傾を覚える前から震わせ、直すとほめる（声は出さない）', () => {
+    connect(['頭'])
+    const events: [number, string][] = []
+    const r = new SensorRunner({ onEvent: (t, text) => events.push([t, text]), say: () => {} })
+    let t = performance.now() / 1000
+    t = sendUntil('頭', 'slouch', t, r, () => r.stage === 'b')
+    t = sendUntil('頭', 'stand', t, r, () => r.stoodAt !== null)
+    expect(r.poseResult!.parts.find((p) => p.key === 'head')).toMatchObject({ mode: 'pose' })
+    // 前へ 12° のまま走り出す（いつもの頭 15° に近い）：差し引くのは HEAD.poseCap までなので、線 3 + 8 = 11° を越える
+    t = send('頭', 'run', t, 25, r)
+    const runOn = events.find((e) => e[1].startsWith('sensor:run on'))![0]
+    t = send('頭', 'runOpen', t, 10, r)
+    const log = r.current()!
+    expect(log.head!.runLean).toBeUndefined() // まだ覚えていない（走って40秒まで）
+    const ok = events.filter((e) => e[1].startsWith('sensor:headOk'))
+    expect(ok).toHaveLength(1)
+    return new Promise<void>((done) =>
+      setTimeout(() => {
+        const cues = events.filter((e) => e[1].startsWith('sensor:head ')).map((e) => e[0])
+        expect(cues.length).toBeGreaterThan(0)
+        expect(cues[0] - runOn).toBeLessThan(HEAD.poseStart + HEAD.poseHold + 1)
+        expect(ok[0][0]).toBeGreaterThan(cues[cues.length - 1])
+        r.finish()
         done()
       }, 0),
     )

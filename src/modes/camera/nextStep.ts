@@ -172,10 +172,18 @@ export const HEAD_NOTE = 'スマホが少し前側から撮っていたようで
 export const LANDING_NOTE =
   '試しの測り方です：足が一番前に出た瞬間の、かかとが腰より前に出た量（脚の長さに対する割合）を、走る速さから見込む量と比べた差。まだ声はかけず、線を越えた走りでは「整いました」と言いません'
 
+// 頭が声をかける線の外なのに、よい例の範囲（首の角度と頭の位置の両方が上の端を越えたら外）の内側になる走り。
+// 上級の頭の線（首 STRICT.advanced.form.neck）は、頭の位置ではよい例の上の端より内側にあるので、上体がよい例より起きていて、
+// 首の角度だけがよい例より前に出ている走り（自分のいつもの頭）がこうなる。「よい例の範囲です」とは書かず、首の角度のよい例からの差を出す
+export const HEAD_NECK_NOTE = '頭の位置そのものはよい例の範囲ですが、上体がよい例より起きていて、首の角度（上体に対する頭の前への出）がよい例より前に出ています'
+
 export function formRows(form: FormResult[]): FormRow[] {
   return form.map((r) => {
-    const { key, gap } = goodGap(r)
-    const state = gapState(r.group, gap)
+    const g0 = goodGap(r)
+    // 頭が線の外なら、首の角度のよい例の上の端からの差（線の首はよい例の上の端より上なので、必ず正）
+    const neckOut = r.group === 'head' && r.judged && r.over > 0 && gapState('head', g0.gap) === 'in'
+    const { key, gap } = neckOut ? { key: g0.key, gap: Math.max(0, r.value - GOOD.head.neck.max) } : g0
+    const state = neckOut ? 'off' : gapState(r.group, gap)
     const line = !r.judged
       ? r.group === 'landing'
         ? '比べていません（足の山が足りませんでした）'
@@ -189,12 +197,12 @@ export function formRows(form: FormResult[]): FormRow[] {
         : r.fixed
           ? '声をかけて、内側に入りました'
           : '内側でした'
-    const note = headMaybeLarge(r) ? HEAD_NOTE : r.group === 'landing' && !FORM.landing.say ? LANDING_NOTE : undefined
+    const note = [neckOut ? HEAD_NECK_NOTE : undefined, headMaybeLarge(r) ? HEAD_NOTE : r.group === 'landing' && !FORM.landing.say ? LANDING_NOTE : undefined].filter(Boolean).join('。') || undefined
     return {
       group: r.group,
       label: GROUP_LABEL[r.group],
       state,
-      gap: state === 'in' ? '' : gapOf(r.group, gap),
+      gap: state === 'in' ? '' : neckOut ? `首${gapOf(r.group, gap)}` : gapOf(r.group, gap),
       word: state === 'in' ? '' : GAP_WORD[key],
       you: valueText(r),
       youParts: valueParts(r),
@@ -209,7 +217,7 @@ export function formRows(form: FormResult[]): FormRow[] {
 // 次に意識することがないときの説明（結果の画面）。よい例から離れていても選ばなかった項目（大きく出ているかもしれない頭、
 // 試しの測り方の着地）があれば、そう書く
 export function noNextNote(rows: FormRow[]): string {
-  const head = rows.some((r) => r.state === 'off' && r.group === 'head' && r.note)
+  const head = rows.some((r) => r.state === 'off' && r.group === 'head' && r.note?.includes(HEAD_NOTE))
   const landing = rows.some((r) => r.state === 'off' && r.group === 'landing' && r.note)
   if (head && landing) return '頭と着地のほかは、よい例の範囲か、差はわずかでした（頭は大きく出ているかもしれず、着地は試しの測り方なので、次に意識することには選びません）'
   if (head) return '頭のほかは、よい例の範囲か、差はわずかでした（頭は大きく出ているかもしれないので、次に意識することには選びません）'

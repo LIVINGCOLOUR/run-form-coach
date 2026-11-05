@@ -5,7 +5,7 @@ import { Coach, headForward, hunchOf, toScale } from './coach'
 import { applyStrictness, BASELINE, FORM, GOOD, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
 import { formOver, formScale } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
-import { formRows, gapSentence, gapState, goodGap, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
+import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
 import { capBaseline, standingIssue, STANDING_LIMITS } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
 import { fullFrames } from './fullFrames'
@@ -370,6 +370,67 @@ describe('頭', () => {
   })
 })
 
+// 上級の頭の線：走り出しからいつも頭が前に出ている人（自分の 2026-11-03〜05 の真ん中 首 33°・頭の位置 37°）に、整える間に知らせる
+describe('頭（上級：走り出しから前に出ている頭）', () => {
+  const habit: Measure = { ...good, neck: 34, headLean: 38 }
+  const fixed: Measure = { ...good, neck: GOOD.head.neck.mid - 2, headLean: GOOD.head.headLean.mid - 2 }
+
+  it('線は、よい例9本のどれも越えず、いつもの頭は越える。上体が起きただけの形（頭の位置が低い）は越えない', () => {
+    applyStrictness('advanced')
+    // よい例の値（research-data/form-videos/notes/判定テスト.md の 2）。首の上の端 30.9° は線の首より下
+    const goods = [[22.0, 30.4], [29.0, 34.4], [29.5, 32.1], [29.2, 33.3], [27.4, 33.8], [30.9, 37.0], [29.2, 35.8], [25.0, 29.9], [29.3, 37.8]]
+    for (const [neck, headLean] of goods) expect(formOver('head', { trunk: 7, body: 9, neck, headLean }).over).toBeLessThanOrEqual(0)
+    expect(STRICT.advanced.form.neck).toBeGreaterThan(GOOD.head.neck.max)
+    for (const [neck, headLean] of [[33, 37], [34.8, 37.8], [32.5, 36.5]]) expect(formOver('head', { trunk: 4, body: 8, neck, headLean }).over).toBeGreaterThan(0)
+    expect(formOver('head', { trunk: 0, body: 2, neck: 41, headLean: 27.9 }).over).toBeLessThanOrEqual(0) // 腰落ち（上体 0°）：首だけ大きい
+    // 中級・初心者は、はっきり前に出たときだけ（いつもの頭には言わない）
+    for (const lv of ['intermediate', 'beginner'] as const) {
+      applyStrictness(lv)
+      expect(formOver('head', { trunk: 4, body: 8, neck: 34, headLean: 38 }).over).toBeLessThan(0)
+    }
+  })
+
+  it('いつもの頭のまま走り出すと、整える間に頭の声。直さなければ、整える間の3回のあとは5分に1回で、今日の基準の頭は線そのもの', () => {
+    const coach = new Coach({ pause: false, level: 'advanced' })
+    const a = feedSparse(coach, 0, 60, habit).speak
+    expect(a).toContain(PHRASES.cueHead)
+    expect(coach.cues.find((c) => c.item === 'head')!.lead).toBe(true)
+    feedSparse(coach, 60, 600, habit)
+    const head = coach.cues.filter((c) => c.item === 'head')
+    expect(head.filter((c) => c.t < 200).length).toBe(FORM.tries)
+    expect(head.filter((c) => c.t >= 200).length).toBeLessThanOrEqual(2) // 5分に1回
+    // いつもの頭を基準にしない：基準の頭は線そのもの（線の内側にいた秒がない）
+    expect(coach.leanRef!.neck).toBe(FORM.head.neck)
+    expect(coach.leanRef!.headLean).toBe(FORM.head.headLean)
+    expect(coach.finish().form!.find((r) => r.group === 'head')!.over).toBeGreaterThan(0)
+  })
+
+  it('声のあと直せば「その形です」。直した形が今日の基準になり、いつもの頭に戻るとまた言う', () => {
+    const coach = new Coach({ pause: false, level: 'advanced' })
+    const a = feedSparse(coach, 0, 45, habit).speak
+    expect(a).toContain(PHRASES.cueHead)
+    const b = feedSparse(coach, 45, 255, fixed).speak
+    expect(b).toContain(PHRASES.formOk)
+    expect(coach.leanRef!.neck).toBeCloseTo(fixed.neck, 5) // 直した形
+    expect(coach.leanRef!.headLean).toBeCloseTo(fixed.headLean, 5)
+    const c = feedSparse(coach, 300, 60, habit).speak
+    expect(c).toContain(PHRASES.cueHead)
+  })
+
+  it('前の上級の線（38°/42°）では、走り出しの頭がそのまま基準になり、声は出なかった', () => {
+    const coach = new Coach({ pause: false, level: 'advanced' })
+    FORM.head.neck = 38
+    FORM.head.headLean = 42
+    try {
+      const a = feedSparse(coach, 0, 300, habit).speak
+      expect(a).not.toContain(PHRASES.cueHead)
+      expect(coach.leanRef!.neck).toBeCloseTo(habit.neck, 5)
+    } finally {
+      applyStrictness('advanced')
+    }
+  })
+})
+
 describe('前かがみ', () => {
   it('整えたあとも、正しいフォームの線を越えて倒れたら声をかけ、戻せば伝える。一時停止を切っていれば、止まっても走り続ける扱い', () => {
     const coach = new Coach({ pause: false })
@@ -690,6 +751,19 @@ describe('よい例との差', () => {
     expect(head.judged).toBe(true) // 線と比べるのをやめる yawMax よりは小さい
     expect(formRows(form).find((r) => r.group === 'head')!.note).toBe(HEAD_NOTE)
     expect(form.find((r) => r.group === 'body')!.yaw).toBeUndefined()
+  })
+
+  it('頭が声をかける線の外なら、頭の位置がよい例の範囲でも「よい例の範囲です」とは書かず、首の角度の差を出す（上級のいつもの頭）', () => {
+    applyStrictness('advanced')
+    const r = formOf('head', 33, { value2: 37 })
+    expect(r.over).toBeGreaterThan(0)
+    expect(goodGap(r).gap).toBe(0) // 両方を見る差では、よい例の範囲
+    const row = formRows([r])[0]
+    expect(row).toMatchObject({ state: 'off', gap: `首${(33 - GOOD.head.neck.max).toFixed(1)}°`, word: '前に出ています', lineOut: true })
+    expect(row.note).toBe(HEAD_NECK_NOTE)
+    expect(gapSentence(row)).toBe(`よい例より 首${(33 - GOOD.head.neck.max).toFixed(1)}° 前に出ています`)
+    // 次の一歩は頭（線の外）
+    expect(nextItem(runOf(GOOD.body.mid, GOOD.trunk.mid, 33, 37))!.item).toBe('head')
   })
 })
 
