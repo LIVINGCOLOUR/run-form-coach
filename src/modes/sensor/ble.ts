@@ -7,7 +7,11 @@ import { SLOTS } from './params'
 // 一度選んだセンサーは、getDevices があれば選ぶ画面なしでつなぎ直す（restore）。
 // つないだものは画面をまたいで残す（ホームでつないで、カメラで走るため）ので、このファイルの sensors を1つだけ使う
 //   サービス 0xFFE0：値の通知 0xFFE1、電池 0xFFE2（uint16 mV）、振動 0xFFE3（回数 uint8、長さ uint8 × 10ms）
-//   機器の情報 0x180A：ファームの版 0x2A26
+//   機器の情報 0x180A：ファームの版 0x2A26、どのセンサーか 0x2A24（2026-11-05.2 から「RFC-IMU-4」の形。前は「RFC-IMU」だけ）
+// どのセンサーかは、つないでから 0x2A24 で確かめる。名前（device.name）は当てにしない：
+//   無線で書き換えた直後は、同じアドレスで「AdaDFU」と名乗るので、iPhone がその名前を覚えたままになる（再起動しても。2026-11-05 の4番）。
+//   名前で選ぶ画面を絞ると、その子が出てこなくなるので、選ぶ画面はサービス 0xFFE0 で絞り、名前は確かめられないときの代わりにだけ使う。
+//   シリアル番号 0x2A25 は Web Bluetooth の決まりで読めない（gatt_blocklist）ので使わない
 // 番号は 128 ビットの文字で渡す（数字の UUID を受け付けないブラウザがあるため。Bluefy で「つなぐ」がエラーになった 2026-11-02）
 const uuid = (n: number) => `0000${n.toString(16).padStart(4, '0')}-0000-1000-8000-00805f9b34fb`
 const SERVICE = uuid(0xffe0)
@@ -16,6 +20,8 @@ const BATTERY = uuid(0xffe2)
 const BUZZ = uuid(0xffe3)
 const DEVICE_INFO = uuid(0x180a)
 const FIRMWARE_REV = uuid(0x2a26)
+const MODEL = uuid(0x2a24)
+const IDS_KEY = 'rfc.sensorIds' // 選んだ機器（device.id）がどのセンサーだったか。名前が古いままでも、次から選ばずにつなげるように
 const RETRIES = 3 // 「つなぐ」を押してつなげなかったとき、押さずにやり直す回数（2秒おき）
 const REJOIN_SEC = 3 // 使っている途中で切れたときは、つながるまでこの間隔で押さずにつなぎ直す（走っている途中は押せないため）
 
@@ -37,6 +43,7 @@ interface BtServer {
   getPrimaryService(u: string): Promise<BtService>
 }
 interface BtDevice extends EventTarget {
+  id?: string
   name?: string
   gatt?: BtServer
 }
@@ -53,6 +60,44 @@ const describe = (e: unknown): string => {
     return typeof e === 'object' ? JSON.stringify(e) : String(e)
   } catch {
     return String(e)
+  }
+}
+
+// どのセンサーか（「RFC-IMU-4」の形）。0x2A24 を先に見て、なければ名前。どちらも違う形（AdaDFU など）なら null
+const SENSOR_NAME = /^RFC-IMU-\d+$/
+export function whose(model: string | null, name: string | undefined): string | null {
+  const m = model?.replace(/\0+$/, '').trim()
+  if (m && SENSOR_NAME.test(m)) return m
+  return name && SENSOR_NAME.test(name) ? name : null
+}
+
+// 「つなぐ」を押した枠（asked）に、つないだセンサー（id）をどうするか
+//   here：その枠で使う（id がわからないときも、選んだ本人を信じてここ）
+//   move：ほかの枠のセンサーだったので、そちらへ移す
+//   taken：ほかの枠で、もう別の（か同じ）機器を使っている
+//   unknown：どの枠にも割り当てていないセンサー
+export type Placement = { kind: 'here' } | { kind: 'move' | 'taken'; to: number } | { kind: 'unknown' }
+export function placeFor(slots: readonly { name: string | null; busy: boolean }[], asked: number, id: string | null): Placement {
+  if (!id || slots[asked]?.name === id) return { kind: 'here' }
+  const to = slots.findIndex((s) => s.name === id)
+  if (to < 0) return { kind: 'unknown' }
+  return slots[to].busy ? { kind: 'taken', to } : { kind: 'move', to }
+}
+
+const loadIds = (): Record<string, string> => {
+  try {
+    const v = JSON.parse(localStorage.getItem(IDS_KEY) ?? '{}')
+    return v && typeof v === 'object' ? v : {}
+  } catch {
+    return {}
+  }
+}
+const saveId = (device: BtDevice, name: string) => {
+  if (!device.id) return
+  try {
+    localStorage.setItem(IDS_KEY, JSON.stringify({ ...loadIds(), [device.id]: name }))
+  } catch {
+    /* 覚えられなくても、押せばつなげる */
   }
 }
 
@@ -102,6 +147,7 @@ class SensorHub {
   private views: NodeView[] = []
   private timer: ReturnType<typeof setInterval> | null = null
   private restored = false
+  private watched = new WeakSet<BtDevice>() // 切れたときの知らせを付けた機器（同じ機器に2回付けない）
 
   constructor() {
     this.nodes = SLOTS.map((s) => ({
@@ -158,26 +204,23 @@ class SensorHub {
       node.device = null
     }
     if (!node.device) {
+      // 名前では絞らない（iPhone が古い名前を覚えていると出てこない。上の説明）。センサーが全部出るので、どれかを選んでもらい、
+      // どのセンサーだったかは open で確かめて、違う枠のものならそちらへ移す。
       // ブラウザによって通らない頼み方があるので、通るまで形を変えて頼む（選ばずに閉じたときは、そこでやめる）
       const tries: RequestOptions[] = [
-        { filters: [{ name: node.name }], optionalServices: [SERVICE, DEVICE_INFO] },
-        { filters: [{ name: node.name }], optionalServices: [SERVICE] },
-        { filters: [{ namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE] },
+        { filters: [{ services: [SERVICE] }, { namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE, DEVICE_INFO] },
+        { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE, DEVICE_INFO] },
         { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE] },
+        { filters: [{ namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE] },
       ]
       const errors: string[] = []
       for (const opts of tries) {
         try {
-          const device = await bt.requestDevice(opts)
-          if (device.name && device.name !== node.name) {
-            this.set(node, 'error', `${device.name} を選びました。${node.name} を選んでください`)
-            return
-          }
-          this.attach(node, device)
+          this.attach(node, await bt.requestDevice(opts))
           break
         } catch (e) {
           if (e instanceof Error && e.name === 'NotFoundError') {
-            this.set(node, 'error', '見つからないか、選ばずに閉じました（電源と、10分たって眠っていないかを確かめる）')
+            this.set(node, 'error', `見つからないか、選ばずに閉じました（${node.name} を選ぶ。名前が AdaDFU などに見えることもある。電源と、10分たって眠っていないかも確かめる）`)
             return
           }
           errors.push(describe(e))
@@ -198,8 +241,11 @@ class SensorHub {
     this.restored = true
     try {
       const devices = await bt.getDevices()
+      const ids = loadIds()
       for (const d of devices) {
-        const node = this.nodes.find((n) => n.name && n.name === d.name)
+        // 前に確かめたセンサーを先に使う（名前は古いままのことがある）。違っていても open で確かめ直す
+        const name = (d.id && ids[d.id]) || whose(null, d.name)
+        const node = this.nodes.find((n) => n.name && n.name === name)
         if (!node || node.device) continue
         this.attach(node, d)
         void this.open(node)
@@ -227,16 +273,57 @@ class SensorHub {
 
   private attach(node: Node, device: BtDevice) {
     node.device = device
-    device.addEventListener('gattserverdisconnected', () => this.dropped(node))
+    if (this.watched.has(device)) return
+    this.watched.add(device)
+    // 枠を移すことがあるので、切れたときは今その機器を持っている枠を探す
+    device.addEventListener('gattserverdisconnected', () => {
+      for (const n of this.nodes) if (n.device === device) this.dropped(n)
+    })
+  }
+
+  // つないだセンサーが、この枠のものか確かめる。違えば正しい枠へ移すか、知らせて手放す。この枠で使うなら true
+  private claim(node: Node, device: BtDevice, id: string | null): boolean {
+    const i = this.nodes.indexOf(node)
+    const slots = this.nodes.map((n) => ({ name: n.name, busy: !!n.device && n.device !== device && (n.status === 'connected' || n.status === 'connecting') }))
+    const p = placeFor(slots, i, id)
+    if (p.kind === 'here') return true
+    node.device = null
+    node.wanted = false
+    if (p.kind === 'move') {
+      const to = this.nodes[p.to]
+      this.set(node, 'error', `選んだのは ${id}（${to.place}）だったので、${to.place}につなぎました。${node.place}は ${node.name} を選んでください`)
+      this.attach(to, device)
+      void this.open(to)
+      return false
+    }
+    // ほかの枠がこの機器を使っていなければ、切っておく
+    if (!this.nodes.some((n) => n.device === device)) device.gatt?.disconnect()
+    const where = p.kind === 'taken' ? `${this.nodes[p.to].place}で別のものを使っています` : 'どの場所にも割り当てていません'
+    this.set(node, 'error', `選んだのは ${id} でした（${where}）。${node.name} を選んでください`)
+    return false
   }
 
   private async open(node: Node, tries = 0, rejoin = false) {
-    const gatt = node.device?.gatt
-    if (!gatt) return
+    const device = node.device
+    const gatt = device?.gatt
+    if (!device || !gatt) return
     node.wanted = true
     this.set(node, 'connecting')
     try {
       const server = await gatt.connect()
+      // どのセンサーかを、値を受け始める前に確かめる（違う枠の値が混ざらないように）
+      let model: string | null = null
+      try {
+        const info = await server.getPrimaryService(DEVICE_INFO)
+        const text = async (u: string) => new TextDecoder().decode(await (await info.getCharacteristic(u)).readValue())
+        node.fw = await text(FIRMWARE_REV)
+        model = await text(MODEL).catch(() => null)
+      } catch {
+        node.fw = null // 機器の情報を読めないブラウザ・ファーム
+      }
+      const id = whose(model, device.name)
+      if (!this.claim(node, device, id)) return
+      saveId(device, node.name!)
       const service = await server.getPrimaryService(SERVICE)
       const data = await service.getCharacteristic(DATA)
       node.expected = null
@@ -263,12 +350,6 @@ class SensorHub {
         node.buzzChar = null // 振動のない古いファーム
       }
       node.canBuzz = !!node.buzzChar
-      try {
-        const info = await server.getPrimaryService(DEVICE_INFO)
-        node.fw = new TextDecoder().decode(await (await info.getCharacteristic(FIRMWARE_REV)).readValue())
-      } catch {
-        node.fw = null
-      }
       this.set(node, 'connected')
       this.tick()
     } catch (e) {

@@ -3,7 +3,7 @@ import type { SensorLog } from '../../core/types'
 import { speak, voiceBusy } from '../../core/voice'
 import { sensors } from './ble'
 import { ContactCoach } from './contactCoach'
-import { LeanDetector } from './lean'
+import { LeanDetector, type CamValues } from './lean'
 import { SensorRecorder } from './log'
 import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
 
@@ -89,12 +89,12 @@ export class SensorSession {
     return any
   }
 
-  // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」
-  tick(t: number, running: boolean) {
+  // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」。cam：カメラ版で、いまのカメラの上体と頭の位置（胸だけに渡す）
+  tick(t: number, running: boolean, cam: CamValues | null = null) {
     for (const x of this.parts) {
       // 頭は、胸で体を曲げたと分かっていれば止める（胸を先に見る）
       const chest = this.parts.find((y) => y.key === 'chest')
-      const r = x.d.update(t, running, x.key !== 'chest' && !!chest && chest.d.bent(t))
+      const r = x.d.update(t, running, x.key !== 'chest' && !!chest && chest.d.bent(t), x.key === 'chest' ? cam : null)
       this.lastLean[x.key] = { tilt: r.tilt, ref: r.ref ?? null, bent: !!r.bent }
       // 体を曲げた（物を拾うなど）：走る姿勢ではないので知らせない。記録だけ
       if (r.bend !== undefined) {
@@ -164,8 +164,9 @@ export class SensorSession {
   }
 
   // 接地時間：しくみ（engine.ts）が決めた知らせを、足首の振動と声にする。値の移り変わりは CONTACT_LOG.every 秒ごとに events に残す
-  //   sensor:contact sit 2.3（腰が落ちている。値は平均から標準偏差いくつぶん上か）・sensor:contact longL 16.9（左が長い左右差 %）
-  //   sensor:contactOk sit（直った）・sensor:steps df 0.38 ct 272 L 270 R 275 v 7.4 cad 168 imp 4.1/4.9
+  //   sensor:contact sit 2.3（腰が落ちている。値は平均から標準偏差いくつぶん上か）・sensor:contact longL 16.9（左が長い左右差 %）・
+  //   sensor:contact stride 8.2（オーバーストライド。同じ速さの走り出しからピッチが何 % 落ちたか）
+  //   sensor:contactOk sit（直った）・sensor:steps df 0.38 ct 272 L 270 R 275 v 7.4 cad 168 imp 4.1/4.9 drop 1.2（drop：走り出しからのピッチの落ち方 %）
   private tickContact(t: number, running: boolean) {
     for (const c of this.contact.tick(t, running)) {
       for (const place of c.places) void sensors.buzz(place, c.count, c.ms)
@@ -177,7 +178,7 @@ export class SensorSession {
     if (m && t >= this.nextSteps) {
       this.nextSteps = t + CONTACT_LOG.every
       const f = (x: number, d = 0) => (Number.isFinite(x) ? x.toFixed(d) : '-')
-      this.onEvent(t, `sensor:steps df ${f(m.df, 3)} ct ${f(m.ct * 1000)} L ${f(m.ctL * 1000)} R ${f(m.ctR * 1000)} v ${f(m.v, 1)} cad ${f(m.cad)} imp ${f(m.impL, 1)}/${f(m.impR, 1)}${m.steady ? '' : ' unsteady'}${m.mountDiff ? ' mount' : ''}`)
+      this.onEvent(t, `sensor:steps df ${f(m.df, 3)} ct ${f(m.ct * 1000)} L ${f(m.ctL * 1000)} R ${f(m.ctR * 1000)} v ${f(m.v, 1)} cad ${f(m.cad)} imp ${f(m.impL, 1)}/${f(m.impR, 1)} drop ${f(m.cadDrop, 1)}${m.steady ? '' : ' unsteady'}${m.mountDiff ? ' mount' : ''}`)
     }
   }
 

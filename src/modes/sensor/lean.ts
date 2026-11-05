@@ -7,7 +7,8 @@ import type { Vec3 } from './parse'
 //   stand：まっすぐ立って止まっていた間（カメラの直立の基準を取った3秒）の終わりに呼ぶ。その間の向きを「立った姿勢」として覚える
 //   update：tick 秒ごとに、走っているか（カメラ版は、カメラが歩数で決めた「走っている」）を渡す。知らせるときは cue が true
 // 傾きは「前への傾き」（符号つき）：走る前傾を覚えた30秒で、立った姿勢から傾いた向きを「前」とし、その向きに沿った角度を見る。
-// 横に傾いた（首をかしげた、体をひねった）だけでは増えない。前の向きが決まらないほど小さいときは、向きによらない角度を使う
+// 横に傾いた（首をかしげた、体をひねった）だけでは増えない。走る前傾が fwdMin 度より小さいときは、傾いた向きがほとんど揺れで決まって
+// 本当の前と大きくずれる（2026-11-05：頭 2.9°・胸 6.1° で前の向きが横向きになり、頭が前に出ても数えなかった）ので、向きによらない角度を使う
 // 基準（走る前傾）は、線を越えていない間だけ、follow 秒の時定数でゆっくり今の傾きに寄せる。
 // ベルトの上でセンサーが少しずつずれていく（2026-11-02 の走りで、胸の傾きが3分半で約15°ずつ増えた。カメラの上体は変わらず）のを吸い、
 // 数秒で起きた崩れは線を越えるので知らせる。線を越えている間は基準を動かさないので、崩れたままなら知らせ続ける
@@ -18,9 +19,14 @@ import type { Vec3 } from './parse'
 // 体を曲げた（物を拾う）：傾きが基準 + bend 以上（または、ほかの場所で曲げたと分かった：update の bentElsewhere）なら、走る姿勢ではない。
 //   その間と bendAfter 秒あとまでは、知らせず、基準も寄せず、ずれの見張りにも数えない。越え始めてから数えた分もなかったことにする。
 //   大きく傾いて知らせるとき（基準 + confirmAbove 以上）は confirmSec 秒待ち、その間に曲げたと分かれば知らせない
+//   ・（カメラ版）線を越えて camSlipSec 秒たっても、カメラの上体の前傾が camRise 度、頭の位置（肩→耳の前傾）が camHeadRise 度も、
+//     線の下にいた直近 camRef 秒より増えていない：カメラは崩れていないと見ているので、センサーがずれたとみなす（カメラの値がない間は数えず、上の slipSec を待つ）
 // 2026-11-02 20:23 と 2026-11-03 15:08 の走りで、胸のセンサーがずれて傾きが +9〜13° 増えた（カメラの上体は変わらず）。わざとの猫背（60秒まで）は置き直さない
 
 // bent：体を曲げている（またはその直後）ので見ていない。bend：この tick で曲げ始めたと見た（そのときの傾き。胸の bend を越えたときだけ）
+// カメラ版で、カメラが見たいまの値（度）：trunk＝上体（腰の中心→肩の中心）の前傾、head＝頭の位置（手前の肩→耳の前傾）
+export type CamValues = { trunk: number; head: number }
+
 export type LeanStep = { tilt: number | null; cue: boolean; learned?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number }
 
 const DEG = 180 / Math.PI
@@ -55,6 +61,8 @@ export class LeanDetector {
   private waitSince: number | null = null // 大きく傾いて知らせるのを待ち始めた t
   private bendUntil = -Infinity // この t までは曲げている（その直後）とみなす
   private bending = false // 前の tick で、曲げている間だった
+  private camUnder: { t: number; v: CamValues }[] = [] // 線の下にいた間のカメラの値（直近 camRef 秒）
+  private camOver: CamValues[] = [] // 線を越えてからのカメラの値
   slips = 0 // ずれとみなして基準を置き直した回数
   readonly p: LeanParams
 
@@ -90,6 +98,8 @@ export class LeanDetector {
     this.overAcc = 0
     this.tilts = []
     this.anchor = null
+    this.camUnder = []
+    this.camOver = []
     return true
   }
 
@@ -131,8 +141,8 @@ export class LeanDetector {
     return t < this.bendUntil
   }
 
-  // bentElsewhere：ほかの場所（胸）で、体を曲げたと分かっている
-  update(t: number, running: boolean, bentElsewhere = false): LeanStep {
+  // bentElsewhere：ほかの場所（胸）で、体を曲げたと分かっている。cam：カメラ版で、いまのカメラの値。なければ null
+  update(t: number, running: boolean, bentElsewhere = false, cam: CamValues | null = null): LeanStep {
     const dt = this.lastT === null ? 0 : Math.max(0, Math.min(1, t - this.lastT))
     this.lastT = t
     const u = t - this.lastSample > this.p.stale ? null : this.dir()
@@ -179,11 +189,14 @@ export class LeanDetector {
     const ref = this.ref ?? this.runLean
     this.tilts.push({ t, v: tilt })
     while (t - this.tilts[0].t > p.slipRef) this.tilts.shift()
+    const camOk = p.camSlipSec > 0 && cam !== null && Number.isFinite(cam.trunk) && Number.isFinite(cam.head)
     if (tilt > ref + p.margin) {
       if (this.overSince === null) {
         this.overSince = t
         this.overAccAtStart = this.overAcc
+        this.camOver = []
       }
+      if (camOk) this.camOver.push(cam!)
       this.overAcc += dt
       if (t - this.overSince >= p.hold && t - this.lastCue >= p.cooldown) {
         // 越えて最初の知らせで大きく傾いているときは、曲げる途中かもしれないので少し待つ（越えたままの知らせ直しは待たない）
@@ -201,17 +214,31 @@ export class LeanDetector {
       this.overAcc = Math.max(0, this.overAcc - dt * p.slipDecay)
       // 線の下にいる間だけ、基準を今の傾きへゆっくり寄せる（follow が 0 なら寄せない）
       if (p.follow > 0) this.ref = ref + (tilt - ref) * Math.min(1, dt / p.follow)
+      if (camOk) {
+        this.camUnder.push({ t, v: cam! })
+        while (t - this.camUnder[0].t > p.camRef) this.camUnder.shift()
+      }
     }
     // 崩れではなく、センサーがずれた：基準を今の傾きへ置き直し、ずれのせいで知らせ続けないようにする（slipSec・slipDrift が 0 なら見張らない）
     const long = p.slipSec > 0 && this.overAcc >= p.slipSec
     const drift = p.slipDrift > 0 && this.ref !== null && this.ref - (this.anchor ?? this.runLean) >= p.slipDrift
-    if (long || drift) {
+    // カメラ版：越えて camSlipSec 秒たち、カメラの値が camMin 件ずつあって、線の下にいた間より camRise 度も増えていなければ、ずれ
+    const camSlip =
+      p.camSlipSec > 0 &&
+      this.overSince !== null &&
+      t - this.overSince >= p.camSlipSec &&
+      this.camOver.length >= p.camMin &&
+      this.camUnder.length >= p.camMin &&
+      median(this.camOver.map((x) => x.trunk)) - median(this.camUnder.map((x) => x.v.trunk)) < p.camRise &&
+      median(this.camOver.map((x) => x.head)) - median(this.camUnder.map((x) => x.v.head)) < p.camHeadRise
+    if (long || drift || camSlip) {
       const from = this.anchor ?? this.runLean
       this.ref = median(this.tilts.map((x) => x.v))
       this.anchor = this.ref
       this.overAcc = 0
       this.overSince = null
       this.waitSince = null
+      this.camOver = []
       this.slips++
       out.cue = false
       out.slip = { from, to: this.ref }

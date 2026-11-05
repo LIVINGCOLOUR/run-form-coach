@@ -22,6 +22,8 @@ export const HEAD_PLACE = '頭'
 //   走り出して skip 秒たってから learn 秒の傾きの真ん中の値を「走る前傾」にする（走る前傾は人と速さで変わるので、線はそこから決める）。
 //   線は「基準 + margin」。基準は走る前傾から始め、線の下にいる間だけ follow 秒の時定数でゆっくり今の傾きへ寄せる（ベルトのずれを吸う）。
 //   傾きが線を hold 秒続けて超えたら、その場所を buzzMs 震わせ、超えたままなら cooldown 秒ごとに繰り返す。線の下に戻れば止まる
+//   前の向きは、走る前傾が fwdMin 度より大きいときだけ決める。小さいと向きが揺れで決まって本当の前とずれ、前に出た頭を数えなかった（2026-11-05：頭 2.9°・胸 6.1°）。
+//     fwdMin 1 → 8 で、記録5本を流し直すと、11-05 の頭の知らせ 0 → 11回（カメラの「頭が前」9回のうち5回に±15秒で合う）。ほかの走りの回数は変わらない
 //   ずれの見張り：線を越えていた時間が slipSec 秒に達するか、寄せた基準が走る前傾から slipDrift 度より前へ動いたら、
 //   崩れではなくセンサーの付け位置がずれたとみなし、基準を今の傾きへ置き直して、短く slipBuzzCount 回震わせる（走ったあとの結果の画面で「付け直して」と知らせる）
 //   slipSec 75・slipDecay 1：わざとの猫背 60秒（60秒あけて2回でも）は置き直さず、急にずれて越えたままなら約75秒で黙る（sim/result-lean-slip.md）。
@@ -33,7 +35,7 @@ export interface LeanParams {
   skip: number // 走り出してから、走る前傾を覚え始めるまで（秒。走った時間だけ数える）
   learn: number // 走る前傾を覚える長さ（秒）
   learnMin: number // その間に取れた傾きがこれより少なければ、覚えずに取り直す（10回/秒で5秒）
-  fwdMin: number // 走る前傾を覚える間に、立った姿勢からこれ（度）以上傾いていなければ、前の向きを決めず、向きによらない角度を使う
+  fwdMin: number // 走る前傾を覚える間に、立った姿勢からこれ（度）以上傾いていなければ、前の向きを決めず、向きによらない角度を使う（下の LEAN の説明）
   margin: number // 基準からこれ以上（度）前に傾いたら崩れ
   follow: number // 基準を今の傾きへ寄せる時定数（秒）。0 なら寄せない
   hold: number // それが続いたら知らせる（秒）
@@ -57,6 +59,13 @@ export interface LeanParams {
   //   曲げる途中の傾きで先に震わせないため（2026-11-04 の3回は、頭の知らせが胸で曲げたと分かる約0.4秒前だった）
   confirmAbove: number
   confirmSec: number
+  // カメラ版のずれの見張り：線を越えて camSlipSec 秒たっても、カメラの上体の前傾の真ん中が camRise 度、頭の位置（肩→耳）の真ん中が camHeadRise 度も、
+  // 線の下にいた直近 camRef 秒の真ん中より増えていなければ、ずれとみなす。両方にカメラの値が camMin 件（tick の数）なければ見ない。camSlipSec が 0 なら見ない
+  camSlipSec: number
+  camRise: number
+  camHeadRise: number
+  camRef: number
+  camMin: number
 }
 
 const LEAN = {
@@ -65,7 +74,7 @@ const LEAN = {
   skip: 10,
   learn: 30,
   learnMin: 50,
-  fwdMin: 1,
+  fwdMin: 8,
   follow: 60,
   hold: 1.5,
   cooldown: 4,
@@ -82,6 +91,11 @@ const LEAN = {
   bendAfter: 5,
   confirmAbove: 0,
   confirmSec: 1,
+  camSlipSec: 0,
+  camRise: 1.5,
+  camHeadRise: 2,
+  camRef: 60,
+  camMin: 20,
 }
 
 // 胸の猫背。実機：ふつうに走って胸 約12〜16°、猫背 約26〜28°、胸を張って 約18°（立った姿勢から）。立った姿勢からの決まった 18° では、ふつうの走りでも鳴った。
@@ -107,9 +121,9 @@ const LEAN = {
 //   +20° より大きく傾いて知らせるときだけ1秒待つ（ふつうの猫背の知らせ 24°・+10° 前後は待たない）
 // HUNCH は、レベルが分からないときの線（中級＝カメラの既定 DEFAULT_STRICT と同じ）
 export const HUNCH_BY_LEVEL: Record<Level, LeanParams> = {
-  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20 },
-  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20 },
-  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20 },
+  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10 },
+  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10 },
+  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10 },
 }
 export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 
@@ -176,7 +190,10 @@ export interface StepParams {
   dfMax: number // 接地の割合がこれより大きい1歩は歩き（両足が着いている間がある）なので捨てる
   impactBefore: number // 着地の衝撃を探す範囲（着地の前後、秒）
   impactAfter: number
-  speedA: number // 速さ（m/s）= speedA + speedB × すねの振れ幅（度）÷ 1歩きの時間（秒）。RBDS の 54本で r 0.91、ばらつき 0.30 m/s
+  // 速さ（m/s）= speedA + speedB × すねの振れ幅（度）÷ 1歩きの時間（秒）。RBDS の 54本で r 0.91、人によるばらつき 0.30 m/s（RBDS の式は speedA −0.183）。
+  // speedA は自分に合わせた：2026-11-05 のトレッドミル（時速9.0km で30分）を RBDS の式では 8.1 km/h（5〜95%：7.9〜8.3）と低く見積もったので、+0.27 m/s 足して 9.0（8.7〜9.1）にした。
+  // 11-04（本人の平均で約7 km/h。ベルトの記録はない）は 5.8（5.7〜6.4）→ 6.8（6.7〜7.4）。足した分は RBDS の人によるばらつきの内（0.9倍）で、ほかの人には合っていない
+  speedA: number
   speedB: number
 }
 export const STEP: StepParams = {
@@ -199,7 +216,7 @@ export const STEP: StepParams = {
   dfMax: 0.5,
   impactBefore: 0.03,
   impactAfter: 0.06,
-  speedA: -0.183,
+  speedA: 0.09,
   speedB: 0.02416,
 }
 
@@ -219,9 +236,9 @@ export interface ContactParams {
   keep: number // ためておく長さ（秒）
   minSteps: number // 両足あわせて、これだけの1歩がなければ判定しない
   minSide: number // 左右差は、片足ずつこれだけの1歩がなければ出さない
-  steadySec: number // この長さ（秒）の間、速さとピッチが変わっていなければ判定する
+  steadySec: number // この長さ（秒）の間、見積もった速さ（とピッチ）が変わっていなければ判定する
   steadyV: number // 変わっていない：見積もった速さの差がこの割合まで
-  steadyCad: number // かつ、ピッチの差がこの割合まで
+  steadyCad: number // かつ、ピッチの差がこの割合まで（接地の割合と左右差だけ。オーバーストライドはピッチの落ち方そのものを見るので、速さだけ）
   vMin: number // 見積もった速さがこの範囲（km/h）の外なら判定しない（見積もりが外れている）
   vMax: number
   // 接地時間の左右差（%）がこれより大きければ、長いほうの足を知らせる。RBDS の床反力では どの人も 10% 未満（いちばん大きくて 9.3%）、
@@ -233,6 +250,17 @@ export interface ContactParams {
   stale: number // その足の1歩がこれ（秒）より来ていなければ、その足は使わない（切れた・止まった）
   warmup: number // 走り出してから、これ（秒）は判定しない（歩きから走りへ、速さを上げている間）
   stopReset: number // 「走っている」がこれ（秒）より長く途切れたら、ためた1歩を捨てて、走り出しからやり直す（短い途切れでは捨てない）
+  // 足が体より前に着く（オーバーストライド。contact.ts の ContactJudge）。同じ速さの走り出しのピッチから、overDrop % より落ちたのが
+  // overHold 秒続いたら、両足首で知らせる（一瞬わざと崩したのは知らせない。2026-11-05 本人）。
+  //   同じ速さで歩幅をのばすと、ピッチが落ちる（速さ ＝ 歩幅 × ピッチ）。ピッチを 5〜10% 上げると、足が体の近くに着き、ひざと股関節の負担が減る
+  //   （Heiderscheit 2011 Med Sci Sports Exerc 43:296）。その逆向きの崩れを見る。
+  //   自分の記録（2026-11-05、時速9kmのまま30分）：ふつうのピッチは 165〜172（走り出し 168 から ±2.5%）。わざと大またにした約15秒は 146〜153（−10〜14%）
+  refSec: number // 走り出し（warmup のあと、速さが落ち着いてから）のこの長さ（秒）のピッチと接地時間の真ん中を、その速さの基準にする
+  sameV: number // 見積もった速さが、基準の速さからこの割合の内なら「同じ速さ」として比べる
+  relearn: number // 速さがこれ（秒）より長く違ったら、新しい速さで基準を覚え直す
+  overDrop: number // ピッチがこれ（%）より落ちたら、オーバーストライド
+  overHold: number // それがこれ（秒）続いたら知らせる
+  overGap: number // 判定の間がこれ（秒）よりあいたら、続いていたとはみなさない
 }
 export const CONTACT: ContactParams = {
   norm: [
@@ -257,6 +285,12 @@ export const CONTACT: ContactParams = {
   stale: 3,
   warmup: 30,
   stopReset: 5,
+  refSec: 60,
+  sameV: 0.08,
+  relearn: 60,
+  overDrop: 6,
+  overHold: 20,
+  overGap: 3,
 }
 
 // 足首の振動（ble.ts の buzz。回数と長さ ms）。足首で走りながら感じ取れるかは、まだ試していない（hardware/sensor/docs/haptic.md）

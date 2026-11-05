@@ -15,7 +15,7 @@ import type { Vec3 } from './parse'
 // 向き：センサーの付け方は決めていないので、走り出してからのジャイロの主成分（いちばん大きく振れる軸）を前後の面の回転の軸とする。
 //   符号は「振り出しの山が正」：正の側が短く（振り出しの間だけ）、高い。2つの見方が合わなければ、決めずに次の窓で取り直す
 // 速さ：1歩き（同じ足の着地から次の着地まで）の、すねの前後の振れ幅（ω を積分した角度の幅）÷ 1歩きの時間 から見積もる（RBDS で r 0.91）。
-//   接地の割合は速さで変わる（遅いほど長い）ので、線を速さで替えるのに使う
+//   接地の割合は速さで変わる（遅いほど長い）ので、線を速さで替えるのに使う。オーバーストライドの「同じ速さ」の見分けにも使う
 
 export interface Step {
   ic: number // 着地（センサーの時計、秒）
@@ -257,7 +257,13 @@ export interface ContactValues {
   peakL: number // 振り出しの山（dps、足ごとの真ん中の値）
   peakR: number
   mountDiff: boolean // 両足の振り出しの山が違いすぎる：付け方が左右で違うとみて、左右差を使わない
-  steady: boolean // 速さとピッチが変わっていない（判定してよい）
+  steady: boolean // 見積もった速さとピッチが変わっていない（接地の割合と左右差を判定してよい）
+  steadyV: boolean // 見積もった速さが変わっていない（オーバーストライドを判定してよい。ピッチは見ない）
+  // 足が体より前に着く（オーバーストライド）：同じ速さの走り出し（ref）より、ピッチが何 % 落ちたか。基準がない・速さが違うときは NaN
+  cadDrop: number
+  cadDropHeld: number // 直近 CONTACT.overHold 秒の cadDrop のいちばん小さい値（その間ずっと落ちていたか）。続けて測れた長さが足りなければ NaN
+  ctRise: number // 同じく、接地時間が何 % のびたか（記録用）
+  ref: { v: number; cad: number; ct: number } | null // 走り出しの基準（その速さの、ふつうのピッチと接地時間）
 }
 
 const median = (xs: number[]) => {
@@ -268,7 +274,7 @@ const median = (xs: number[]) => {
 
 // 速さ v（km/h）での、市民ランナーの接地の割合の平均と標準偏差。表の間は直線でつなぎ、表の外は端の値のまま（研究の値がないので延ばさない）。
 // 時速9kmより遅く走ると、本当の平均はもう少し高い（遅いほど接地が長い）ので、そのぶん知らせやすい側にずれる。
-// 一方、見積もった速さは低めに出やすく（実機で、時速8〜9kmほどの走りを 6〜8km と見積もった）、延ばすと線が上がりすぎるので、端で止める
+// 一方、見積もった速さは人によって ±1 km/h ほどずれる（自分には 2026-11-05 の時速9km で合わせた。params.ts の STEP.speedA）ので、延ばすと線が動きすぎる。端で止める
 export function dfNorm(v: number, c: ContactParams = CONTACT): { mean: number; sd: number } {
   const T = c.norm
   if (v <= T[0][0]) return { mean: T[0][1], sd: T[0][2] }
@@ -283,10 +289,18 @@ export function dfNorm(v: number, c: ContactParams = CONTACT): { mean: number; s
 }
 
 // 両足の1歩をためて、直近 win 秒から判定の値を出す
+// オーバーストライド：ベルトの速さが同じなのに歩幅を大きくすると、ピッチが落ち、接地がのびる（2026-11-05 にわざとやった約15秒：
+//   時速9kmのまま、ピッチ 170 → 146〜153、接地時間 255 → 330ms。見積もった速さは 7.7〜8.2 km/h で変わらなかった）。
+//   走り出して速さが落ち着いた refSec 秒のピッチと接地時間の真ん中を、その速さの「ふつう」として覚え、
+//   見積もった速さが sameV の割合の内にある間、ピッチがそこから何 % 落ちたかを出す。速さが relearn 秒より長く違ったら、新しい速さで覚え直す
 export class ContactJudge {
   private steps: { L: Step[]; R: Step[] } = { L: [], R: [] }
   private now = { L: -Infinity, R: -Infinity } // 足ごとの、最後に届いた1歩の時刻（センサーの時計）
   private hist: { t: number; v: number; cad: number }[] = [] // 速さとピッチの移り変わり（判定した時刻の順）
+  private ref: { v: number; cad: number; ct: number } | null = null
+  private refBuf: { t: number; v: number; cad: number; ct: number }[] = []
+  private away: number | null = null // 速さが基準と違い始めた t
+  private drops: { t: number; d: number }[] = [] // 直近の cadDrop（同じ速さで測れた間だけ。途切れたら空にする）
   readonly c: ContactParams
 
   constructor(c: ContactParams = CONTACT) {
@@ -300,10 +314,12 @@ export class ContactJudge {
     while (xs.length && this.now[side] - xs[0].ic > this.c.keep) xs.shift()
   }
 
-  // 走るのが途切れたら（止まった・歩いた）、ためた1歩を捨てる
+  // 走るのが途切れたら（止まった・歩いた）、ためた1歩を捨てる（走り出しの基準は残す。速さが違えば覚え直す）
   clear() {
     this.steps = { L: [], R: [] }
     this.hist = []
+    this.refBuf = []
+    this.drops = []
   }
 
   // t：判定する時刻（どの時計でもよい。速さが変わったかを見る間隔だけに使う）。
@@ -330,12 +346,12 @@ export class ContactJudge {
     this.hist.push({ t, v, cad })
     while (this.hist.length && t - this.hist[0].t > c.steadySec + 1) this.hist.shift()
     const old = this.hist[0]
-    // 速さ・ピッチが steadySec 秒の間に変わった、速さがありえない：判定しない（速さを変えた直後は、接地の割合も、見積もった速さも追いつかない）
-    const steady =
-      t - old.t >= c.steadySec - 1 &&
-      this.hist.every((h) => Math.abs(h.v - v) / v <= c.steadyV && Math.abs(h.cad - cad) / cad <= c.steadyCad) &&
-      v >= c.vMin &&
-      v <= c.vMax
+    // 速さが steadySec 秒の間に変わった、速さがありえない：判定しない（速さを変えた直後は、接地の割合も、見積もった速さも追いつかない）。
+    // 接地の割合と左右差は、ピッチが変わった間も判定しない（同じ速さで大またにすると接地の割合が上がり、「腰が落ちている」と取り違える。2026-11-02 のわざと大また）。
+    // オーバーストライドは、速さだけを見る（同じ速さでピッチが落ちたのが、その崩れ）
+    const steadyV = t - old.t >= c.steadySec - 1 && this.hist.every((h) => Math.abs(h.v - v) / v <= c.steadyV) && v >= c.vMin && v <= c.vMax
+    const steady = steadyV && this.hist.every((h) => Math.abs(h.cad - cad) / cad <= c.steadyCad)
+    const over = this.overstride(t, v, cad, ct, steadyV)
     const n = dfNorm(v, c)
     // 左右差は、長めの窓（winSi）で見る（足ごとの1歩の数が半分なので、同じ窓ではぶれが大きい。左右差は数秒では変わりにくい）
     const L2 = fresh.L ? this.steps.L.filter((s) => this.now.L - s.ic <= c.winSi) : []
@@ -360,6 +376,47 @@ export class ContactJudge {
       nL: L2.length, nR: R2.length,
       peakL: PK.l, peakR: PK.r, mountDiff,
       steady,
+      steadyV,
+      ...over,
     }
+  }
+
+  // 走り出しの基準を覚え、同じ速さの間のピッチの落ち方を出す
+  private overstride(t: number, v: number, cad: number, ct: number, steady: boolean) {
+    const c = this.c
+    const none = { cadDrop: NaN, cadDropHeld: NaN, ctRise: NaN, ref: this.ref }
+    if (!(Number.isFinite(v) && Number.isFinite(cad) && Number.isFinite(ct))) return none
+    if (!this.ref) {
+      if (!steady) {
+        this.refBuf = []
+        return none
+      }
+      this.refBuf.push({ t, v, cad, ct })
+      if (t - this.refBuf[0].t < c.refSec) return none
+      this.ref = { v: median(this.refBuf.map((x) => x.v)), cad: median(this.refBuf.map((x) => x.cad)), ct: median(this.refBuf.map((x) => x.ct)) }
+      this.refBuf = []
+      this.drops = []
+    }
+    const ref = this.ref
+    if (Math.abs(v - ref.v) / ref.v > c.sameV) {
+      // 速さが違う：比べない。relearn 秒より長く違ったら（ベルトの速さを変えた）、新しい速さで覚え直す
+      this.away ??= t
+      this.drops = []
+      if (t - this.away >= c.relearn) {
+        this.ref = null
+        this.away = null
+      }
+      return { ...none, ref: this.ref }
+    }
+    this.away = null
+    const cadDrop = ((ref.cad - cad) / ref.cad) * 100
+    const ctRise = ((ct - ref.ct) / ref.ct) * 100
+    // 1回の判定の間が gap 秒よりあいたら（止まった・値が切れた）、続けて測れたとはみなさない
+    const last = this.drops[this.drops.length - 1]
+    if (last && t - last.t > c.overGap) this.drops = []
+    this.drops.push({ t, d: cadDrop })
+    while (this.drops.length && t - this.drops[0].t > c.overHold) this.drops.shift()
+    const held = t - this.drops[0].t >= c.overHold - 1 ? Math.min(...this.drops.map((x) => x.d)) : NaN
+    return { cadDrop, cadDropHeld: held, ctRise, ref }
   }
 }

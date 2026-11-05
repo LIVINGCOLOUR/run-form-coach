@@ -5,6 +5,7 @@ import { sensors } from './ble'
 import { MotionGate } from './gate'
 import { HUNCH, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
 import { SensorSession } from './session'
+import type { CamValues } from './lean'
 
 // 1回の走りの間、センサーを動かす役（トレッドミルのカメラ版・センサーラン・腰スマホで共通）。
 // SensorSession（崩れの見分け・知らせ・記録）を HUNCH.tick 秒ごとに動かし、「立った姿勢」と「走っている」を渡す。
@@ -23,6 +24,7 @@ export interface SensorRunnerOptions {
   level?: Level // 胸の線のレベル
   voice?: boolean // 接地の知らせを声でも言う（トレッドミルのカメラ版だけ。外は振動だけ）
   running?: () => boolean // カメラの「走っている」。渡さなければセンサーで見分ける
+  camera?: () => CamValues | null // カメラ版：いまのカメラの上体と頭の位置（胸のずれの見分けに使う。lean.ts）。なければ null
   say?: (text: string) => void // カメラなしの案内を声で言う
   onChange?: () => void // 段階が変わった（画面を直す）
 }
@@ -92,7 +94,7 @@ export class SensorRunner {
     this.lastTick = t
     const running = this.o.running ? this.o.running() : this.autoTick(t)
     if (running) this.runSec += dt
-    this.session.tick(t, running)
+    this.session.tick(t, running, this.o.camera?.() ?? null)
   }
 
   // カメラなし：立った姿勢と走っているかを、センサーで決める

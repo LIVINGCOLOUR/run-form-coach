@@ -255,6 +255,80 @@ describe('胸のセンサーで猫背を見る', () => {
   })
 })
 
+describe('走る前傾が小さいとき（2026-11-05：頭 2.9°・胸 6.1°）', () => {
+  // 立つ → 走る前傾は横向きに 3°（揺れで決まった向き）→ 頭を前に 26° 出す（線は 3 + 18°）
+  const run = (p: typeof HEAD) => {
+    const d = new LeanDetector(p)
+    play(d, 0, 5, () => 0, () => false)
+    d.stand(5, 3)
+    play(d, 5, 50, () => 0, () => true, () => 3)
+    return { d, out: play(d, 50, 70, () => 26, () => true, () => 3) }
+  }
+
+  it('前の向きを決めず（向きによらない角度）、前に出た頭を知らせる', () => {
+    const { d, out } = run(HEAD)
+    expect(HEAD.fwdMin).toBeGreaterThan(3)
+    expect(d.fwd).toBeNull()
+    expect(out.some((o) => o.cue)).toBe(true)
+  })
+
+  it('前の向きを小さい傾きで決めると（前の fwdMin 1°）、横向きになって前に出た頭を数えない', () => {
+    const { d, out } = run({ ...HEAD, fwdMin: 1 })
+    expect(d.fwd).not.toBeNull()
+    expect(out.some((o) => o.cue)).toBe(false)
+  })
+
+  it('走る前傾が fwdMin より大きければ、前と同じく前の向きを決める', () => {
+    const d = new LeanDetector(HUNCH)
+    play(d, 0, 5, () => 0, () => false)
+    d.stand(5, 3)
+    play(d, 5, 50, () => HUNCH.fwdMin + 4, () => true)
+    expect(d.fwd).not.toBeNull()
+  })
+})
+
+describe('カメラ版：カメラが崩れていないと見ている間の、胸のずれ', () => {
+  // 走る前傾 14°。50秒で胸のバンドが回って +13°（27°）のまま。カメラの上体・頭の位置は cam(t) で渡す
+  const run = (cam: (t: number) => { trunk: number; head: number } | null, p = HUNCH) => {
+    const d = new LeanDetector(p)
+    const out: ({ t: number } & LeanStep)[] = []
+    for (let i = 0; i < 20000; i++) {
+      const t = i / 100
+      d.sample(t, lean(t < 5 ? 0 : t < 50 ? 14 : 27))
+      if (i === 500) d.stand(5, 3)
+      if (i > 500 && i % 10 === 0) out.push({ t, ...d.update(t, true, false, cam(t)) })
+    }
+    return out
+  }
+
+  it('カメラの上体も頭の位置も変わらなければ、約 camSlipSec 秒でずれとみなして黙る', () => {
+    const out = run(() => ({ trunk: 4, head: 35 }))
+    const slip = out.find((o) => o.slip)
+    expect(slip).toBeDefined()
+    expect(slip!.t).toBeGreaterThan(50 + HUNCH.camSlipSec)
+    expect(slip!.t).toBeLessThan(50 + HUNCH.camSlipSec + 3)
+    expect(out.filter((o) => o.cue && o.t > slip!.t)).toHaveLength(0)
+    expect(out.filter((o) => o.cue).length).toBeLessThanOrEqual(4)
+  })
+
+  it('カメラも崩れたと見ている（上体 +3°・頭 +6°）なら、ずれとみなさず知らせ続ける', () => {
+    const out = run((t) => (t < 50 ? { trunk: 4, head: 35 } : { trunk: 7, head: 41 }))
+    expect(out.filter((o) => o.slip && o.t < 50 + HUNCH.slipSec)).toHaveLength(0)
+    expect(out.filter((o) => o.cue && o.t < 50 + HUNCH.slipSec).length).toBeGreaterThan(10)
+  })
+
+  it('上体は変わらなくても、頭の位置が前に出ていれば（背中を丸めると頭が落ちる）ずれとみなさない', () => {
+    const out = run((t) => (t < 50 ? { trunk: 4, head: 35 } : { trunk: 4.5, head: 41 }))
+    expect(out.filter((o) => o.slip && o.t < 50 + HUNCH.slipSec)).toHaveLength(0)
+  })
+
+  it('カメラの値がなければ（センサーラン・カメラが間引いている間）、前と同じく slipSec 秒を待つ', () => {
+    const slip = run(() => null).find((o) => o.slip)
+    expect(slip!.t).toBeGreaterThan(50 + HUNCH.slipSec)
+    expect(HEAD.camSlipSec).toBe(0) // 頭は見ない（頭でずれたことはまだない）
+  })
+})
+
 describe('胸の線はレベルごと（カメラの猫背の線に合わせる）', () => {
   const run = (p: typeof HUNCH, deg: number) => {
     const d = new LeanDetector(p)

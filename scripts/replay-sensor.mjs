@@ -2,6 +2,7 @@
 // 使い方: npm run replay:sensor -- <rfc-….json | Mac の記録のフォルダ> … [--level advanced] [--chest '{"follow":0}'] [--head '{"margin":10}']
 //   rfc-….json：カメラ版といっしょに走った記録（ファイル名だけなら RFC_RUNS_DIR、既定 ~/Developer/research-data/runs/ から読む）。
 //     立った姿勢は記録の stand（なければ phase:run の直前3秒）、走っているかはカメラの段階 run と歩数（アプリと同じ区切り）。
+//     胸には、アプリと同じくカメラの上体と頭の位置（直近1秒のコマ）を渡す（ずれの見分け。lean.ts の camSlipSec）
 //     カメラの答え（camera/params.ts の FORM：上体 > trunk.max、首 > head.neck かつ 頭の位置 > head.headLean）と、知らせた時刻・5秒の窓で比べる
 //   Mac の記録のフォルダ（hardware/sensor/tools の記録。imu.csv と phases.csv）：区切りごとに知らせた回数を出す（わざと崩したテストの確かめ）
 //   --level：胸の線のレベル（beginner / intermediate / advanced。params.ts の HUNCH_BY_LEVEL。なければ HUNCH＝中級）
@@ -70,7 +71,7 @@ say(`頭：${JSON.stringify(KINDS[1].p)}`)
 
 // 1つの場所の値を流す。samples：[{ tt, a }]（時刻順）、running(t)、standT：立った姿勢を覚える t。100Hz でない記録は ema を件数に合わせる。
 // bentBy：ほかの場所（胸）の tick ごとの「体を曲げている」（頭はアプリと同じく、胸で曲げたと分かれば止める）
-function replay(p, samples, running, standT, t0, t1, hz, bentBy) {
+function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt) {
   const k = 1 - Math.pow(1 - p.ema, 100 / hz)
   const d = new LeanDetector({ ...p, ema: k, standMin: Math.round((p.standMin * hz) / 100) }, 5)
   const ticks = []
@@ -79,7 +80,7 @@ function replay(p, samples, running, standT, t0, t1, hz, bentBy) {
   for (let t = t0, k = 0; t < t1; t += p.tick, k++) {
     while (i < samples.length && samples[i].tt <= t) d.sample(samples[i].tt, samples[i++].a)
     if (!stood && t >= standT) stood = d.stand(t, BASELINE.collect)
-    const r = d.update(t, running(t), !!bentBy?.[k])
+    const r = d.update(t, running(t), !!bentBy?.[k], camAt?.(t) ?? null)
     ticks.push({ t, run: running(t), ...r, bentNow: d.bent(t), line: r.ref !== null && r.ref !== undefined ? r.ref + p.margin : null })
   }
   return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), slips: ticks.filter((x) => x.slip), bends: ticks.filter((x) => x.bend !== undefined), learnedAt: ticks.find((x) => x.learned !== undefined) }
@@ -135,6 +136,19 @@ function cameraLog(path) {
     },
   }
   const runRows = rows.filter((r) => r.phase === 'run' && r.moving)
+  // カメラの上体と頭の位置：その時刻の前1秒以内のコマ（段階 run）。アプリの Live.tsx と同じ
+  const camAt = (t) => {
+    let lo = 0
+    let hi = rt.length - 1
+    if (hi < 0 || t < rt[0]) return null
+    while (lo < hi) {
+      const m = (lo + hi + 1) >> 1
+      if (rt[m] <= t) lo = m
+      else hi = m - 1
+    }
+    const r = rows[lo]
+    return r.phase === 'run' && t - r.t < 1 && S.finite(r.trunk) && S.finite(r.headLean) ? { trunk: r.trunk, head: r.headLean } : null
+  }
   const t0 = rows[0].t
   const t1 = rows[rows.length - 1].t
   let chestBent = null
@@ -147,7 +161,7 @@ function cameraLog(path) {
       continue
     }
     const hz = nodeHz(log.sensors, ni)
-    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null)
+    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null, K.key === 'chest' ? camAt : null)
     if (K.key === 'chest') chestBent = r.ticks.map((x) => x.bentNow)
     say(`値の速さ ${f1(hz)}Hz・体を曲げたとみなした ${r.bends.length} 回：${r.bends.map((x) => `${f1(x.t)}（${f1(x.bend)}°）`).join(' ') || 'なし'}`)
     const mins = runMin(r.ticks, K.p)

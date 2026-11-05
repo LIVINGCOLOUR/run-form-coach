@@ -120,6 +120,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     const progress = loadProgress()
     // 自作のセンサー（つないであるとき）：値を記録し、胸で猫背・頭で前に出たの・足首で接地を見て震わせる（sensor/runner.ts。腰スマホ・センサーランと共通）。
     // 区切りはカメラの直立の基準と「走っている」を使う。胸の線はレベルごと。トレッドミルでは接地の知らせを声でも言う
+    let camNow: { t: number; trunk: number; head: number } | null = null // 走っている間の、いちばん新しいカメラの値（センサーへ渡す）
     const sensorRun = !file && sensors.supported
       ? new SensorRunner({
           onEvent: (t, text) => rec.event(t, text),
@@ -129,6 +130,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             const coach = coachRef.current
             return phase === 'run' && !!coach && coach.state === 'running' && coach.stepping
           },
+          // カメラの上体と頭の位置（直近1秒のコマがあるときだけ）。胸のセンサーがずれたのか、本当に崩れたのかを分けるのに使う（sensor/lean.ts）
+          camera: () => (camNow && performance.now() / 1000 - camNow.t < 1 ? { trunk: camNow.trunk, head: camNow.head } : null),
         })
       : null
     const logTimer = setInterval(() => {
@@ -340,6 +343,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       }
       const visible = !!frame && bodyVisible(frame, 0.5, h)
       const m: Measure | undefined = visible ? measure(frame!) : undefined
+      if (m && phase === 'run') camNow = { t, trunk: m.trunk, head: m.headLean }
       const sideDeg = frame ? sideOffDeg(frame) : 90
       if (phase === 'setup' && t - lastLightAt > 1) {
         lastLight = brightness() > 40

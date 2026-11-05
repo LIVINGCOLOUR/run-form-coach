@@ -75,7 +75,7 @@ constexpr uint16_t MAX_PAYLOAD = 244; // MTU 247 - 3
 
 BLEDfu bledfu; // 無線での書き換え（次からは USB につながずに、Mac やスマホから書き込めるように）
 BLEDis bledis; // 機器の情報（0x180A）。受ける側が、どの版のファームかを読めるように
-const char* FW_VERSION = "2026-11-05.1"; // 振動（0xFFE3）・無線での書き換え・動いたら起きる・LED を点けない
+const char* FW_VERSION = "2026-11-05.2"; // 振動（0xFFE3）・無線での書き換え・動いたら起きる・LED を点けない・型番 0x2A24 に番号
 BLEService imuService(0xFFE0);
 BLECharacteristic imuChar(0xFFE1);
 BLECharacteristic batChar(0xFFE2);
@@ -301,7 +301,10 @@ void setup() {
 
   bledfu.begin();
   bledis.setManufacturer("run-form-coach");
-  bledis.setModel("RFC-IMU");
+  // 型番 0x2A24 に名前（RFC-IMU-番号）を入れる。アプリはつないでからこれで、どのセンサーかを確かめる。
+  // 名前は当てにならない：無線で書き換えると同じアドレスで「AdaDFU」と名乗り、iPhone がその名前を覚えたままになる（2026-11-05 の4番）。
+  // シリアル番号 0x2A25 は Web Bluetooth で読めない（gatt_blocklist）ので、型番にした。前の版は「RFC-IMU」だけ
+  bledis.setModel(DEVICE_NAME);
   bledis.setFirmwareRev(FW_VERSION);
   bledis.begin();
   imuService.begin();

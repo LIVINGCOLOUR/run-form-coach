@@ -191,7 +191,8 @@ function rbdsPart() {
   const siE = per.map((x) => si(x.estL, x.estR))
   say(`- 接地時間の左右差（1本の真ん中の値、|右 − 左| ÷ 平均）：床反力 中央 ${f1(med(siT))}%・上から1割 ${f1(q(siT, 0.9))}%・いちばん大きい ${f1(Math.max(...siT))}%。見つけた値 中央 ${f1(med(siE))}%・上から1割 ${f1(q(siE, 0.9))}%・いちばん大きい ${f1(Math.max(...siE.filter(Number.isFinite)))}%（線 ${CONTACT.si}%）`)
   const vErr = per.map((x) => x.v - x.vTrue)
-  say(`- 速さの見積もり（すねの振れ幅 ÷ 1歩きの時間）：ベルトとの差 ${f1(mean(vErr))} ± ${f1(sd(vErr))} km/h（いちばん大きい ${f1(Math.max(...vErr.map(Math.abs)))}）`)
+  say(`- 速さの見積もり（すねの振れ幅 ÷ 1歩きの時間）：ベルトとの差 ${f1(mean(vErr))} ± ${f1(sd(vErr))} km/h（いちばん大きい ${f1(Math.max(...vErr.map(Math.abs)))}）。` +
+    `アプリの式は、RBDS の当てはめ（speedA −0.183）に自分の 2026-11-05（時速9km）で合わせた分を足している（speedA ${STEP.speedA}。params.ts）ので、RBDS の人では約 +1 km/h 高く出る`)
   say()
 
   say('## ② 線：市民ランナーの接地の割合（RBDS の床反力の本当の値）')

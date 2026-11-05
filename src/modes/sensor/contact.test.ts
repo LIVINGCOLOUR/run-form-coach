@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ContactJudge, StepDetector, dfNorm, principalAxis, swingSign, type Step } from './contact'
 import { ContactCoach, contactValues } from './contactCoach'
 import { ANKLES, CONTACT, CONTACT_BUZZ, STEP } from './params'
+import { PHRASES } from '../../core/phrases'
 import type { Vec3 } from './parse'
 
 // 作りもののすねの角速度（dps、振り出しが正）。着地を 0 とした1歩きの中の折れ線：
@@ -158,5 +159,81 @@ describe('接地時間の知らせ（ContactCoach）', () => {
     expect(co.last).toBeNull()
     expect(CONTACT_BUZZ.praiseCount).toBeGreaterThan(1)
     expect(CONTACT.warmup).toBeGreaterThan(0)
+  })
+})
+
+// 1歩を直接入れて、ContactCoach の知らせを集める。cad(t)：ピッチ（歩/分）、ct(t)：接地時間（秒）。見積もった速さはずっと同じ（ベルトの速さが同じ）
+function runStrides(o: { sec: number; cad: (t: number) => number; ct?: (t: number) => number; v?: (t: number) => number }) {
+  const co = new ContactCoach()
+  const cues: { t: number; kind: string; item: string; places: string[]; text: string }[] = []
+  const next = { L: 0, R: 0.36 }
+  for (let i = 0; i < o.sec * 10; i++) {
+    const t = i / 10
+    for (const side of ['L', 'R'] as const) {
+      while (next[side] <= t) {
+        const ic = next[side]
+        const stride = 120 / o.cad(ic)
+        const ct = o.ct?.(ic) ?? 0.255
+        co.addStep(side, t, { ic, to: ic + ct, ct, stride, df: ct / stride, rom: 90, v: o.v?.(ic) ?? 9, impact: 4, peak: 450 })
+        next[side] = ic + stride
+      }
+    }
+    for (const c of co.tick(t, true)) cues.push({ t, kind: c.kind, item: c.item, places: c.places, text: c.text })
+  }
+  return { co, cues }
+}
+
+describe('足が体より前に着く（オーバーストライド）', () => {
+  it('同じ速さでピッチが 10% 落ちたまま30秒：overHold 秒たってから両足首で知らせ、戻ったらほめる', () => {
+    const cad = (t: number) => (t >= 180 && t < 210 ? 153 : 170)
+    const ct = (t: number) => (t >= 180 && t < 210 ? 0.3 : 0.255)
+    const { cues } = runStrides({ sec: 260, cad, ct })
+    const cue = cues.find((c) => c.kind === 'cue')
+    expect(cue?.item).toBe('stride')
+    expect(cue!.t).toBeGreaterThan(180 + CONTACT.overHold)
+    expect(cue!.places).toEqual([ANKLES.L, ANKLES.R])
+    expect(cue!.text).toBe(PHRASES.cueLanding)
+    const praise = cues.find((c) => c.kind === 'praise')
+    expect(praise?.item).toBe('stride')
+    expect(praise!.t).toBeGreaterThan(210)
+    // ピッチが変わった間は、接地の割合がのびても「腰が落ちている」とは言わない
+    expect(cues.filter((c) => c.item === 'sit')).toHaveLength(0)
+  })
+
+  it('わざと一瞬（15秒）大またにしたのは知らせない（2026-11-05 の形）', () => {
+    const cad = (t: number) => (t >= 180 && t < 195 ? 148 : 170)
+    expect(runStrides({ sec: 260, cad }).cues.filter((c) => c.kind === 'cue')).toHaveLength(0)
+  })
+
+  it('ふつうのピッチの揺れ（±2.5%）では知らせない', () => {
+    const cad = (t: number) => 170 + 4 * Math.sin(t / 7)
+    expect(runStrides({ sec: 400, cad }).cues.filter((c) => c.kind === 'cue')).toHaveLength(0)
+  })
+
+  it('速さを上げ下げしてピッチが変わったのは比べない。新しい速さで覚え直す', () => {
+    // 200秒で時速9 → 7km に落とし、ピッチも 170 → 160（速さに合わせて落ちた）
+    const slow = (t: number) => t >= 200
+    const { co, cues } = runStrides({ sec: 400, cad: (t) => (slow(t) ? 160 : 170), v: (t) => (slow(t) ? 7 : 9) })
+    expect(cues.filter((c) => c.kind === 'cue')).toHaveLength(0)
+    expect(co.last?.ref?.v).toBeCloseTo(7, 0)
+    expect(co.last?.ref?.cad).toBeCloseTo(160, 0)
+  })
+
+  it('基準は走り出しの refSec 秒で覚える。その前は比べない', () => {
+    const J = new ContactJudge()
+    const mk = (ic: number): Step => ({ ic, to: ic + 0.255, ct: 0.255, stride: 120 / 170, df: 0.36, rom: 90, v: 9, impact: 4, peak: 450 })
+    let t = 0
+    let k = 0
+    let first: number | null = null
+    for (; t < 120; t += 0.1) {
+      while (k * 0.353 <= t) {
+        J.add(k % 2 ? 'R' : 'L', mk(k * 0.353))
+        k++
+      }
+      const m = J.values(t, { L: true, R: true })
+      if (m?.ref && first === null) first = t
+    }
+    expect(first).not.toBeNull()
+    expect(first!).toBeGreaterThanOrEqual(CONTACT.steadySec - 1 + CONTACT.refSec - 1)
   })
 })
