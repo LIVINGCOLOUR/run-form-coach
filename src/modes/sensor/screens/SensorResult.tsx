@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { LIMIT } from '../../../core/params'
 import type { RunLog } from '../../../core/types'
 import { sensorLogMeta, sensorRunCounts } from '../runLog'
 import { slipNotes } from '../slipText'
@@ -45,9 +46,12 @@ export function SensorResult({ logId, onHome }: { logId: string; onHome: () => v
             <div style={{ fontSize: 15, fontWeight: 700 }}>振動で知らせた回数</div>
             <Row label="背中が丸まった（胸）" n={sum.chest} />
             <Row label="頭が前に出た（頭）" n={sum.head} />
-            <Row label="接地が長い（腰が落ちた）" n={sum.sit} />
+            <Row label="接地が長い（両足首）" n={sum.sit} />
             <Row label="接地の左右差" n={sum.side} />
+            <Row label="足が体より前に着いた（両足首）" n={sum.stride} />
+            <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>着地を変えると負担がふくらはぎ・アキレス腱に移るので、変えるのは少しずつ、週単位で。</div>
             {sum.bends > 0 && <div className="muted" style={{ fontSize: 12 }}>体を大きく曲げた {sum.bends} 回は、走る姿勢ではないので知らせていません。</div>}
+            {sum.capped > 0 && <div className="muted" style={{ fontSize: 12 }}>同じ知らせが1時間に {LIMIT.perHour} 回に達したので、その項目はその1時間の残りは知らせていません（{sum.capped} 回）。</div>}
           </div>
           {slipNotes(s).map((n) => (
             <div key={n} style={{ color: 'var(--warn)', fontSize: 14, fontWeight: 700, lineHeight: 1.6 }}>{n}</div>

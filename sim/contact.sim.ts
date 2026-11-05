@@ -192,7 +192,8 @@ function rbdsPart() {
   say(`- 接地時間の左右差（1本の真ん中の値、|右 − 左| ÷ 平均）：床反力 中央 ${f1(med(siT))}%・上から1割 ${f1(q(siT, 0.9))}%・いちばん大きい ${f1(Math.max(...siT))}%。見つけた値 中央 ${f1(med(siE))}%・上から1割 ${f1(q(siE, 0.9))}%・いちばん大きい ${f1(Math.max(...siE.filter(Number.isFinite)))}%（線 ${CONTACT.si}%）`)
   const vErr = per.map((x) => x.v - x.vTrue)
   say(`- 速さの見積もり（すねの振れ幅 ÷ 1歩きの時間）：ベルトとの差 ${f1(mean(vErr))} ± ${f1(sd(vErr))} km/h（いちばん大きい ${f1(Math.max(...vErr.map(Math.abs)))}）。` +
-    `アプリの式は、RBDS の当てはめ（speedA −0.183）に自分の 2026-11-05（時速9km）で合わせた分を足している（speedA ${STEP.speedA}。params.ts）ので、RBDS の人では約 +1 km/h 高く出る`)
+    `アプリの式の既定は RBDS の当てはめ（speedA ${STEP.speedA}。params.ts）で、ベルトの速さを入れた走りで人ごとに合わせる（speedFit.ts。この仮想実験と ③ の自分の記録は、合わせる前の既定の式で通している。` +
+    `自分の記録を時速9.0km の 11-05 で合わせると speedA 約 +0.11 で、③ の速さの見積もりは約 +1 km/h 高くなる。知らせの回数は変わらない：接地の割合の線は時速9km より遅いと端の値）`)
   say()
 
   say('## ② 線：市民ランナーの接地の割合（RBDS の床反力の本当の値）')

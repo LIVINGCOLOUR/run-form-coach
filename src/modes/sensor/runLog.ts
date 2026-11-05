@@ -41,9 +41,12 @@ export class SensorRunLog {
     }, LOG_CHUNK.every * 1000)
   }
 
+  // 知らせた回数（項目ごと）・上限に達した回数・ずれの回数（session.ts の counts）と、位置情報の様子も残す
   private summarize() {
     const r = this.runner
-    if (r) this.log.summary = { runSec: Math.round(r.runSec), gaps: r.gaps, stood: r.stoodAt !== null, trunk: r.trunk }
+    if (!r) return
+    const c = r.session.counts
+    this.log.summary = { runSec: Math.round(r.runSec), gaps: r.gaps, stood: r.stoodAt !== null, trunk: r.trunk, cues: { ...c.cues }, capped: { ...c.capped }, slips: { ...c.slips }, ...(r.gpsStatus && { gps: r.gpsStatus }) }
   }
 
   // 走り終わり：センサーを止めて、残りを書く
@@ -75,16 +78,21 @@ export async function sensorLogPayload(logId?: string): Promise<UploadPayload | 
   return { name: sensorLogName(r.meta.startedAt), parts, pieces: (k) => logPieces(r.meta, undefined, r.get, parts > 1 ? k : undefined) }
 }
 
-// センサーランの結果の画面に出す数（記録の頭から数える。センサーの値そのものは読まない）
+// センサーランの結果の画面に出す数（記録の頭から数える。センサーの値そのものは読まない）。
+// 接地の回数は、まとめ（summary.cues）があればそこから、なければ（前の記録）events から数える
 export function sensorRunCounts(log: RunLog) {
   const s = log.sensors
   const ev = log.events.map((e) => e[1])
+  const c = log.summary?.cues
+  const capped = log.summary?.capped
   return {
     runMin: (log.summary?.runSec ?? 0) / 60,
     chest: s?.cues.length ?? 0,
     head: s?.head?.cues.length ?? 0,
-    sit: ev.filter((e) => e.startsWith('sensor:contact sit')).length,
-    side: ev.filter((e) => e.startsWith('sensor:contact long')).length,
+    sit: c?.sit ?? ev.filter((e) => e.startsWith('sensor:contact sit')).length,
+    side: c ? c.longL + c.longR : ev.filter((e) => e.startsWith('sensor:contact long')).length,
+    stride: c?.stride ?? ev.filter((e) => e.startsWith('sensor:contact stride')).length,
+    capped: capped ? Object.values(capped).reduce((a, b) => a + b, 0) : ev.filter((e) => e.startsWith('sensor:capped')).length,
     bends: s?.bends?.length ?? 0,
     gaps: log.summary?.gaps ?? 0,
     stood: log.summary?.stood ?? !!s?.stand,

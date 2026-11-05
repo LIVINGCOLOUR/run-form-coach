@@ -22,7 +22,9 @@ import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detecto
 import { fullFrames } from '../fullFrames'
 import { SensorRunner } from '../../sensor/runner'
 import { sensors } from '../../sensor/ble'
-import { POSE } from '../../sensor/params'
+import { POSE, SPEED_FIT } from '../../sensor/params'
+import { fitSpeedA, saveSpeedFit } from '../../sensor/speedFit'
+import { loadBeltText, parseKmh, runSpeedOf, saveBeltText } from '../belt'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -60,6 +62,11 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
   // 検証用の「全コマ記録」（URL に ?full=1）。走っている間も間引かず毎コマ骨格を取る。動画で試すときはもともと毎コマ取る
   const full = !file && fullFrames()
   const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true } })
+  // ベルトの速さ（時速 km。走る前に入れる。前回の値を覚えている。空欄なら使わない）。belt.ts
+  const [beltText, setBeltText] = useState<string>(() => (file ? '' : loadBeltText()))
+  const beltRef = useRef<number | undefined>(undefined)
+  beltRef.current = parseKmh(beltText)
+  const beltInvalid = beltText.trim() !== '' && beltRef.current === undefined
 
   useEffect(() => {
     let stopPose: { stop: () => void } | null = null
@@ -177,7 +184,22 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       closeSensors()
       const coach = coachRef.current
       if (coach && coach.samples.length >= 30) {
+        // その走りの速さ：ベルトの速さ（真）→ 足首のセンサーの見積もり → カメラの速さの目安（belt.ts）。結果の画面のよい例の範囲を、この速さにする
+        const steps = sensorRun?.session.contactSteps.map((x) => x.s) ?? []
         const s = coach.finish()
+        const belt = beltRef.current
+        const speed = runSpeedOf({ belt, sensorV: steps.map((x) => x.v), camSv: s.form?.find((r) => r.group === 'landing')?.speed })
+        if (speed) {
+          s.speedKmh = speed.kmh
+          s.speedSource = speed.source
+          rec.event(nowT, `speed:${speed.source} ${speed.kmh}`)
+        }
+        // ベルトの速さが分かっていて、足首の1歩が足りれば、速さの式をこの人に合わせて端末に残す（sensor/speedFit.ts）
+        if (belt !== undefined && steps.length >= SPEED_FIT.minSteps) {
+          const fit = fitSpeedA(steps, belt)
+          const a = saveSpeedFit(fit)
+          if (fit) rec.event(nowT, `speedFit:A ${fit.speedA} n ${fit.n} spread ${fit.spread} use ${a}`)
+        }
         s.taps = tapsRef.current
         s.provisionalBaseline = !!file
         s.standing = standing
@@ -489,6 +511,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
                 say(fallback ? PHRASES.poseSmall : issue === 'head' ? PHRASES.baseHeadLeft : issue === 'back' ? PHRASES.baseBackLeft : PHRASES.poseDone, t)
                 say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
                 lastNextSay = t
+                // ベルトの速さ（走る前に入れたもの）を記録に残す。線とよい例の範囲は、この速さにする（Coach を作るときに渡す）
+                rec.event(t, beltRef.current === undefined ? 'belt:none' : `belt:kmh ${beltRef.current}`)
                 setPhase('run')
               }
             }
@@ -517,7 +541,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             baseline = { neck: sorted[Math.floor(sorted.length * 0.25)], createdAt: Date.now() }
           }
         }
-        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step), level: progress.level }) // 検証中は一時停止を切っている（params.ts）
+        // 検証中は一時停止を切っている（params.ts）。kmh：ベルトの速さ（入れたときだけ。速さで動く線をその速さにする）
+        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step), level: progress.level, kmh: beltRef.current })
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない
         if (coach && coach.state === 'waiting' && t - lastNextSay > RUNNING.waitRepeat) {
@@ -671,6 +696,33 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
                   3つそろうと、触らなくても自動で次へ進みます{cameraLens === 'ultra' ? '（超広角）' : ''}
                 </div>
               </div>
+              {!file && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 6, borderTop: '1px solid var(--line)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+                    <span style={{ flexGrow: 1 }}>ベルトの速さ（時速 km）</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step={0.1}
+                      min={SPEED_FIT.kmhMin}
+                      max={SPEED_FIT.kmhMax}
+                      placeholder="空欄なら使わない"
+                      aria-label="ベルトの速さ（時速 km）"
+                      value={beltText}
+                      onChange={(e) => {
+                        setBeltText(e.target.value)
+                        saveBeltText(e.target.value)
+                      }}
+                      style={{ width: 150, padding: '8px 10px', borderRadius: 10, border: `1px solid ${beltInvalid ? 'var(--warn)' : 'var(--line)'}`, background: 'rgba(255,255,255,0.06)', color: 'var(--text)', fontSize: 16, fontFamily: 'var(--num)' }}
+                    />
+                  </label>
+                  <div style={{ fontSize: 11, lineHeight: 1.5 }} className="muted">
+                    {beltInvalid
+                      ? `時速${SPEED_FIT.kmhMin}〜${SPEED_FIT.kmhMax}kmの数字を入れてください（このままだと使いません）`
+                      : '入れると、よい例の範囲と、足首のセンサーの速さの見積もりを、この速さに合わせます。途中で変えるなら走り出しの速さを。前回の値を覚えています'}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

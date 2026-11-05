@@ -1,5 +1,6 @@
 import { CONTACT, STEP, type ContactParams, type StepParams } from './params'
 import type { Vec3 } from './parse'
+import { applySpeedFit } from './speedFit'
 
 // 足首のセンサーで、1歩ごとの接地（着地 → 離地）を見つけ、接地時間・接地の割合（duty factor）・左右差を出す（数字は params.ts の STEP・CONTACT）。
 // BLE も画面も持たないので、テストと仮想実験で値を流して確かめられる。時刻はセンサーの時計（ms → 秒）で数える（届いた時刻は Bluetooth の遅れでぶれるため）
@@ -15,7 +16,9 @@ import type { Vec3 } from './parse'
 // 向き：センサーの付け方は決めていないので、走り出してからのジャイロの主成分（いちばん大きく振れる軸）を前後の面の回転の軸とする。
 //   符号は「振り出しの山が正」：正の側が短く（振り出しの間だけ）、高い。2つの見方が合わなければ、決めずに次の窓で取り直す
 // 速さ：1歩き（同じ足の着地から次の着地まで）の、すねの前後の振れ幅（ω を積分した角度の幅）÷ 1歩きの時間 から見積もる（RBDS で r 0.91）。
-//   接地の割合は速さで変わる（遅いほど長い）ので、線を速さで替えるのに使う。オーバーストライドの「同じ速さ」の見分けにも使う
+//   接地の割合は速さで変わる（遅いほど長い）ので、線を速さで替えるのに使う。オーバーストライドの「同じ速さ」の見分けにも使う。
+//   式の切片（STEP.speedA）は人によって ±0.30 m/s ずれるので、ベルトの速さ（真）を入れた走りで人ごとに合わせる（speedFit.ts。
+//   StepDetector を作るたびに、端末に残した合わせを式に入れる。GPS の速さが来たら同じ口（fitSpeedA）に渡せる）
 
 export interface Step {
   ic: number // 着地（センサーの時計、秒）
@@ -89,6 +92,8 @@ export class StepDetector {
 
   constructor(p: StepParams = STEP) {
     this.p = p
+    // 速さの式の切片を、端末に残した人ごとの合わせにする（speedFit.ts）。速さは1歩ごとに p.speedA を読むので、作ったあとに残した合わせもすぐ効く
+    if (p === STEP) applySpeedFit()
   }
 
   // t：センサーの時計（秒）。g：ジャイロ（dps）、a：加速度（g）
@@ -274,7 +279,7 @@ const median = (xs: number[]) => {
 
 // 速さ v（km/h）での、市民ランナーの接地の割合の平均と標準偏差。表の間は直線でつなぎ、表の外は端の値のまま（研究の値がないので延ばさない）。
 // 時速9kmより遅く走ると、本当の平均はもう少し高い（遅いほど接地が長い）ので、そのぶん知らせやすい側にずれる。
-// 一方、見積もった速さは人によって ±1 km/h ほどずれる（自分には 2026-11-05 の時速9km で合わせた。params.ts の STEP.speedA）ので、延ばすと線が動きすぎる。端で止める
+// 一方、見積もった速さは人によって ±1 km/h ほどずれる（ベルトの速さを入れた走りで人ごとに合わせるまで。speedFit.ts）ので、延ばすと線が動きすぎる。端で止める
 export function dfNorm(v: number, c: ContactParams = CONTACT): { mean: number; sd: number } {
   const T = c.norm
   if (v <= T[0][0]) return { mean: T[0][1], sd: T[0][2] }

@@ -296,9 +296,15 @@ export interface StepParams {
   dfMax: number // 接地の割合がこれより大きい1歩は歩き（両足が着いている間がある）なので捨てる
   impactBefore: number // 着地の衝撃を探す範囲（着地の前後、秒）
   impactAfter: number
-  // 速さ（m/s）= speedA + speedB × すねの振れ幅（度）÷ 1歩きの時間（秒）。RBDS の 54本で r 0.91、人によるばらつき 0.30 m/s（RBDS の式は speedA −0.183）。
-  // speedA は自分に合わせた：2026-11-05 のトレッドミル（時速9.0km で30分）を RBDS の式では 8.1 km/h（5〜95%：7.9〜8.3）と低く見積もったので、+0.27 m/s 足して 9.0（8.7〜9.1）にした。
-  // 11-04（本人の平均で約7 km/h。ベルトの記録はない）は 5.8（5.7〜6.4）→ 6.8（6.7〜7.4）。足した分は RBDS の人によるばらつきの内（0.9倍）で、ほかの人には合っていない
+  // 速さ（m/s）= speedA + speedB × すねの振れ幅（度）÷ 1歩きの時間（秒）。RBDS の 54本で r 0.91、人によるばらつき 0.30 m/s。
+  // speedA は RBDS の当てはめの値（−0.183）を既定にして、人ごとに合わせる（speedFit.ts。2026-11-06 本人の決め「固定の線より、人ごとの較正を基準にする」）：
+  //   トレッドミルのカメラ版で、走る前にベルトの速さ（時速 km）を入れた走りが終わるごとに、その走りの1歩ごとの「ベルトの速さ − speedB × 振れ幅 ÷ 1歩き」の
+  //   中央値を、その人の speedA として端末（localStorage）に残し、次の走りから使う（1歩ごとの中央値なので、走り出し・歩き・ベルトの加減速の1歩に引きずられない。
+  //   直近 SPEED_FIT.keep 回の中央値を使うので、1回の入れ間違いにも引きずられにくい）。ベルトの速さを入れない走り・新しい端末では RBDS の値のまま。
+  //   前は自分の 2026-11-05（時速9.0km で30分）に手で合わせた +0.09 を既定にしていた（RBDS の式では 8.1 km/h と見積もった。11-04 の約7 km/h は 5.8 → 6.8）。
+  //   同じ記録を人ごとの合わせ方に通した結果は docs/validation-plan.md の「速さごとのよい例」
+  //   外を走るとき（センサーラン）は、人ごとに合わせた speedA の式でそのまま見積もる。GPS の速さ（runner.ts の onGps）が来たら、ベルトの速さと同じく真として
+  //   speedFit.ts の fitSpeedA に渡せる（まだつないでいない：GPS の速さの精度を記録で確かめてから）
   speedA: number
   speedB: number
 }
@@ -322,8 +328,19 @@ export const STEP: StepParams = {
   dfMax: 0.5,
   impactBefore: 0.03,
   impactAfter: 0.06,
-  speedA: 0.09,
+  speedA: -0.183,
   speedB: 0.02416,
+}
+
+// 速さの式の人ごとの合わせ（speedFit.ts）。ベルトの速さ（真）が分かった走りの1歩から speedA を出し、端末に残す
+export const SPEED_FIT = {
+  key: 'rfc.speedFit', // localStorage の鍵
+  base: STEP.speedA, // 合わせる前の値（RBDS の当てはめ）。新しい端末はこれ
+  minSteps: 100, // 1回の走りで、合わせるのに要る1歩の数（両足あわせて。時速9kmなら約40秒）
+  keep: 5, // 直近これだけの走りの speedA を残し、その中央値を使う
+  maxOffset: 0.6, // RBDS の値からこれ（m/s）より離れた speedA は使わない（ベルトの速さの入れ間違い。RBDS の人によるばらつき 0.30 の2倍）
+  kmhMin: 3, // ベルトの速さとして受け付ける範囲（時速 km）
+  kmhMax: 25,
 }
 
 // 接地時間が長い（腰が落ちている）・左右差の線（contact.ts の ContactJudge と coach の項目）。
@@ -430,3 +447,16 @@ export const STILL = { sec: 3, accStd: 0.03, gyroMed: 15, gyroP90: 30, minN: 50,
 // センサーランの案内（声）。立った姿勢が取れるまで、この間隔（秒）で、いま測る立ち方の案内を言い直す。
 // 立った姿勢を覚えてから走り出すまでは「走り出すと始まります」を言い直す（走り出したあとの信号待ちでは言わない）
 export const SENSOR_RUN_SAY = { standRepeat: 20, waitRepeat: 30 }
+
+// ---- 位置情報（センサーランだけ。gps.ts）----
+// 坂で知らせを変えるか（上りでは体ごと前に傾き、接地も長くなる）をあとで記録から決めるため、GPS の速さと高さを
+// 1秒ごとのまとめ（sec の gpsV・gpsAcc・alt・altAcc）に残すだけ。知らせには使わない。
+// Bluefy で位置情報が取れるかは未確認（使えないブラウザでは events に gps: none と残す）。走り終わったら止める（電池）
+export const GPS = {
+  // 電池のため、ふつうの精度で頼む。ふつうの精度では高さが付かないことがある（iPhone は Wi-Fi で決めた位置に高さを付けない）ので、
+  // 記録の alt がいつも null なら true にして確かめる
+  highAccuracy: false,
+  maximumAge: 5000, // これ（ms）より古い位置でもよい
+  timeout: 30000, // これ（ms）取れなければ error
+  stale: 10, // 最後の位置がこれ（秒）より古ければ、1秒ごとのまとめには null を入れる（取れない間が記録で分かるように）
+}

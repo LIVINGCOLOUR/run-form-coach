@@ -216,7 +216,9 @@ export const REL_LIMITS: Record<'trunk' | 'trunkBack' | 'body' | 'bodyBack', { f
 //       よい例と崩しの間（5.4〜7.0°）のうち、ぶれで行き来しにくい低いほうにした
 //     max 15：研究データ（Van Hooren 2024、16人）で、ふつうに走ると 7〜13°（平均10.4°）、わざと前に倒すと平均14.4°。
 //       越えた走りは 14° で 9本（3.7%）、15° で 4本（0.4%）。人の動画で倒れすぎを見せた例はない（いちばん大きくて 11.9°）
-//     体全体の傾きは速いほど大きい（研究データで、楽なペースから速いペース（約時速11km）へ、中央値 9.0° → 10.7°）。カメラ版は速さを知らないので、線は1つ
+//     体全体の傾きは速いほど大きい（研究データで、楽なペースから速いペース（約時速11km）へ、中央値 9.0° → 10.7°）。
+//     下の線（min）は、ベルトの速さが分かっているときだけ、遅い速さで下げる（いちばん下の applySpeed。よい例の範囲の下の端より 0.3° 下まで。時速8km で約 3.5°）。
+//     上の線（max）は速さで動かさない（下の FORM_SPEED の説明。下げると、研究データのふつうの走りに外れた声が増えた）
 //   上体（腰の中心→肩の中心の前傾、度）：max より大きいと前かがみ、min より小さいと後ろへ傾いている
 //     max 12：人の動画で、講師のよい例9本は 4.8〜9.5°（下の GOOD）、作者が「上体の突っ込み」「前で着地」と言う例は 11.1〜11.4°、
 //       トレッドミルの記録の崩しは 猫背 11.6°・下を向く 13.5°・体ごと前に 16.1°。越えた走りは 11° で 7本（3.4%）、12° で 4本（1.3%）。
@@ -297,7 +299,7 @@ export const FORM = {
 //     Riglet の楽なペースで下から1割 7.1°・真ん中 9.0°、Van Hooren（時速12km）で真ん中 10.9°。よい例は、ふつうの走りの真ん中あたりから下。
 //     見本の絵（研究データの脚に、上体7°を足したもの）を measure() に通すと 9.4°。
 //     体全体の傾きは速いほど大きい（研究データで、楽なペースから速いペースへ真ん中 9.0° → 10.7°）。講師より遅く走ると、その分だけ小さく出る
-//     （自分の 2026-10-19、時速8km のふつうの区間の16秒平均の真ん中は 6.2°・7.0°）。速さで直すかは、まだ決めていない（カメラ版は速さを知らない）
+//     （自分の 2026-10-19、時速8km のふつうの区間の16秒平均の真ん中は 6.2°・7.0°）。そこで、よい例は速さごとに持つ（下の GOOD_SPEED・goodAt）
 //   上体（腰の中心→肩の中心）：4.8〜9.5°（真ん中 7.5°）。研究データのふつうの走りの真ん中（Van Hooren 4.0°、Riglet 楽 4.5°）より前寄りで、
 //     講師は「上半身をやや前傾に」と言う。研究には、上体がまっすぐに近い人ほど記録が良かったという報告もある（Folland 2017）。見本の絵は 7.0°
 //   頭：首の角度 22.0〜30.9°（真ん中 29.2°）、頭の位置そのもの 29.9〜37.8°（真ん中 33.8°）。前に出た側だけを見て、首の角度と頭の位置の
@@ -316,14 +318,94 @@ export const FORM = {
 //     自分の 2026-10-19（時速8km）は、速さで補正すると ふつう1 +0.048・ふつう2 +0.022（form-videos/notes/判定テスト.md の 7.4）で、範囲の内側
 //   near：よい例の範囲からの差がこれより小さいときは、よい例とほぼ同じとみなす（画面にはそう書き、次の一歩には選ばない）。
 //     正しいフォームの線の margin（線の際のぶれ）と同じ大きさにした。頭は講師1人の中でも区間で 9° ちがうので、大きめ
+// この GOOD は、講師の速さ（時速12km。9本のうち7本がキロ5分）での範囲。ほかの速さの範囲は goodAt(kmh)（下の GOOD_SPEED）で出す
 export const GOOD = {
   body: { min: 7.0, max: 9.6, mid: 8.7, near: 0.5 },
   trunk: { min: 4.8, max: 9.5, mid: 7.5, near: 1 },
   head: { neck: { min: 22.0, max: 30.9, mid: 29.2 }, headLean: { min: 29.9, max: 37.8, mid: 33.8 }, near: 3 },
   landing: { min: -0.071, max: 0.092, mid: 0.015, near: 0.015 },
   examples: 9, // よい例の本数（画面と /theory/ に出す）
-  kmh: { min: 10, max: 15 }, // よい例の走りの速さ（時速 km）
+  kmh: { min: 10, max: 15 }, // よい例の走りの速さ（時速 km）。9本のうち 時速10km（キロ6分）1本・12km（キロ5分）7本・15km（キロ4分）1本
 }
+
+// よい例を速さごとに持つ（2026-11-06 本人の決め：「よい例は速さごとに持つモデルにする」）。
+// 講師のよい例9本は時速10〜15km（7本が12km）で、本人は時速7〜9kmで走る。速く走るほど体全体と上体は前に傾くので、
+// 講師の速さの範囲（GOOD）とそのまま比べると、遅く走る人ほど「起きている」に見える（docs/research/posture-vs-speed.md の ③）。
+// 速さごとの範囲は、講師のよい例（GOOD、アプリと同じ骨格の推定）を土台に、研究データの「同じ人が速さを変えたときの変わり方」でずらす
+// （値そのものは研究データの印の値をそのまま使わない。CLAUDE.md の決まり）。くわしい表と確かめは sim/good-speed.sim.ts → sim/result-good-speed.md
+//   anchor 12：土台の速さ（講師9本のうち7本）。
+//   slope 0.6（体全体・上体、度／時速1km）：研究データ（Riglet 2024、30人が楽なペースとその +0.5m/s＝時速 約8.1 → 9.8km）の同じ人の変わり方は
+//     体全体 +0.81° [95%信頼区間 +0.66〜+0.97]（29/30人で増えた）・上体 +0.82° [+0.66〜+0.98]（29/30人）。人をまたいだ真ん中（Riglet 楽 → 速い → Van Hooren 11.5km/h）は
+//     体全体で約 +0.6°/km。RBDS（Fukuchi 2017、時速9 → 12.6km。脚と骨盤の分だけ）は +0.25〜+0.29°/km。同じ人の変わり方（0.8）と人をまたいだ変わり方（0.6）の間の
+//     低いほう（迷う速さの範囲なので、ずらしすぎない側）。
+//   首の角度：頭の位置そのものは速さで変わらない（Riglet の同じ人で −0.58°/km [−1.36〜+0.20]、差なし）ので、頭の位置はずらさない。
+//     首の角度（＝頭の位置 − 上体）は、上体が起きる分だけ大きく出る（研究データで −1.38°/km [−2.24〜−0.52]。頭の位置の分も含む値）ので、上体と同じ量を逆向きにずらす
+//     （頭の位置と上体と首の範囲が食い違わないように）。遅く走る人の首の角度は、同じ頭の位置でも講師より大きく出る：時速8km で +2.4°。
+//     自分のいつもの頭（時速7〜9km で 首 32〜35°）が講師の首の上の端（30.9°）より 1〜4° 前なのは、この分で説明できる範囲にある。頭の位置（36〜38°）は速さでは変わらない
+//   着地：速さで補正したかかとの前（LANDING.fit で速さの目安から見込む分を引いた値）なので、ずらさない（どの速さでも同じ範囲）
+//   widen 0.2（度／時速1km）：講師の速さから離れるほど範囲を上下に広げる。変わり方の見込みの幅（同じ人 0.8 と人をまたいだ 0.6 の差、信頼区間 ±0.16）のぶん。
+//     時速9km で ±0.6°、7km で ±1.0°。首と頭の位置も同じ幅で広げる（頭の位置の変わり方の信頼区間 ±0.8°/km はこれより広いが、頭はもともと near 3° で見ているので、同じ幅にした）
+//   from 7・to 12：ずらすのはこの間だけで、外は端の値で止める。研究データで上体まであるのは Riglet の時速約6〜11km（楽なペースの下から1割が 6.9km）。
+//     時速12km より速いほうは、RBDS の脚の分が +0.10°/km [−0.04〜+0.25]（差なし）で、講師の時速15km の1本も時速12km の範囲の内側（体全体 8.6°・上体 7.5°）なので、ずらさない。
+//     時速7km より遅いと歩きとの境で、研究データもない
+//   trusted 10〜12：講師の例がある速さ。この外の範囲は仮（画面と /theory/ に「仮」と出す）。時速15km は1本だけなので仮。
+//     埋めるのに要る記録：講師（またはよい姿勢の走り手）を、同じ置き方で時速7・8・9km で撮ったもの（1つの速さに1分あれば足りる）。
+//     自分の走りでは、よい姿勢の講師ではないので範囲の土台にはしない（ずらし方の確かめには使う：時速8kmの自分の体全体 6.2〜7.0° は、時速8kmの範囲 3.8〜8.0° の上寄り）
+//   確かめ（sim/result-good-speed.md の ②）：研究データのふつうの走り（印の点。よい例ではない）を範囲と比べると、上体は速さごとの範囲のほうが
+//     よく入る（Riglet 楽：講師の範囲の中 11/30・下 18 → 速さの範囲の中 22/30・下 5）。体全体は逆で、研究データの人はもともと講師より体全体が大きく
+//     （講師は足が体の下に来る走り）、範囲を下げると「上に外れる」が増える（Riglet 楽：上 10 → 23）。体全体の講師との差は速さではなく走り方の違いで、
+//     遅い人を講師の速さの範囲で「起きている」と言わないための補正なので、そのまま。人数を増やしたよい例（講師の速さごとの記録）で合わせ直す
+//   table：画面と /theory/ に出す速さ
+//   kmhPerSv 5.6：カメラの速さの目安（接地している足首が後ろへ動く速さ ÷ 脚の長さ、脚の長さ／秒）を時速 km に直す倍率。
+//     目安はベルトの速さ ÷ 脚の長さの 0.544倍（仮想実験、133本。下から1割 0.509・上から1割 0.585）で、脚の長さを 0.85m（研究データの真ん中 0.83〜0.86m）とすると
+//     時速 = 目安 ÷ 0.544 × 0.85 × 3.6 ≒ 目安 × 5.6。自分の記録（2026-10-19、時速8km）の目安 1.3〜1.4 は 時速 7.3〜7.9km にあたり、合う。
+//     人の脚の長さと置き方で ±10% ほどずれるので、ベルトの速さ（真）が入っていればそれを使い、足首のセンサーの速さ（人ごとに合わせたもの）が次、この目安は最後
+//   ベルトの速さの入れ方：トレッドミルのカメラ版は、置き方の画面に「ベルトの速さ（時速 km）」の欄がある（Live.tsx。前回の値を覚える。空欄なら使わない）。
+//     入れた速さは、結果の画面のよい例の範囲・走っている間の線（下の applySpeed）・足首のセンサーの速さの式の人ごとの合わせ（sensor/speedFit.ts）に使い、記録にも残す
+export const GOOD_SPEED = {
+  anchor: 12,
+  slope: 0.6,
+  widen: 0.2,
+  from: 7,
+  to: 12,
+  trusted: { min: 10, max: 12 },
+  table: [7, 9, 11, 13, 15],
+  kmhPerSv: 5.6,
+  max: 15, // 広げるのはここまで（これより速い値は端の値）
+}
+
+type Range = { min: number; max: number; mid: number }
+export interface GoodRanges {
+  body: Range & { near: number }
+  trunk: Range & { near: number }
+  head: { neck: Range; headLean: Range; near: number }
+  landing: Range & { near: number }
+  kmh?: number // この範囲の速さ（時速 km）。無ければ講師の速さ（GOOD そのもの）
+  provisional: boolean // 講師の例がない速さの範囲（仮）
+}
+
+const r1 = (x: number) => Math.round(x * 10) / 10
+const clampN = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x))
+
+// 速さ（時速 km）でのよい例の範囲。速さが分からなければ GOOD そのもの（講師の速さの範囲）
+export function goodAt(kmh?: number): GoodRanges {
+  if (kmh === undefined || !Number.isFinite(kmh)) return { body: GOOD.body, trunk: GOOD.trunk, head: GOOD.head, landing: GOOD.landing, provisional: false }
+  const S = GOOD_SPEED
+  const shift = r1(S.slope * (clampN(kmh, S.from, S.to) - S.anchor)) // 0 以下
+  const widen = r1(S.widen * Math.abs(clampN(kmh, S.from, S.max) - S.anchor))
+  const sh = (r: Range, k: number): Range => ({ min: r1(r.min + k * shift - widen), max: r1(r.max + k * shift + widen), mid: r1(r.mid + k * shift) })
+  return {
+    body: { ...sh(GOOD.body, 1), near: GOOD.body.near },
+    trunk: { ...sh(GOOD.trunk, 1), near: GOOD.trunk.near },
+    head: { neck: sh(GOOD.head.neck, -1), headLean: sh(GOOD.head.headLean, 0), near: GOOD.head.near },
+    landing: GOOD.landing,
+    kmh,
+    provisional: kmh < S.trusted.min || kmh > S.trusted.max,
+  }
+}
+
+// 時速 km の見せ方（小数1桁まで。整数なら整数）
+export const kmh1 = (x: number) => `${Math.round(x * 10) / 10}`
 
 // 顎（耳→鼻の線の上向き）：今日の基準からの変化を、上体が起きた分（頭は上体といっしょに回る）を差し引いて測り、記録する。
 // 声はかけない。人の動画（3R）では、顎上げ +12.9°・顎引き −8.9° と分かれたが、顎を言っていない例でも −7.1〜+5.5° 動き、
@@ -366,6 +448,23 @@ export const GAIT = {
   // 研究データのふつうの走り（RBDS 時速9・12.6km、Riglet 楽、Van Hooren 時速12km の93本）を、アプリと同じ測り方で出した値の
   // 下から1割〜上から1割と真ん中（sim/result-gait.md の ③）。よい例ではなく、ふつうの人の範囲。上下動・腰の高さは脚の長さに対する割合
   typical: { vo: { min: 0.055, mid: 0.072, max: 0.091 }, hip: { min: 0.933, mid: 0.949, max: 0.964 }, runs: 93, kmh: { min: 9, max: 12.6 } },
+  // 腰の高さは速いほど低い（膝が深く曲がる）：同じ人が時速 +1km 速く走ると、脚の長さに対して RBDS で −0.0038 [−0.0045〜−0.0031]（21人中0人が上がった）、
+  // Riglet で −0.0065 [−0.0074〜−0.0057]（30人中0人）。研究データの速さごとの真ん中（sim/result-gait.md の ③）も 時速9km 0.955〜0.956 → 12.6km 0.940〜0.943 → 16.2km 0.930 と同じ向き。
+  // そこで、速さが分かっているときは、上の typical.hip を 時速1km あたり hipSlope だけずらして比べる（typical の速さの真ん中 hipAnchor から。時速7〜16km の間だけ）。
+  // 傾きは2つの研究の間（−0.005）。上下動は速さで変わらない（RBDS 9 → 12.6km で −0.003、12.6 → 16.2km で −0.010。範囲の幅 0.036 に比べて小さい）のでずらさない
+  hipSlope: -0.005,
+  hipAnchor: 10.8,
+  hipFrom: 7,
+  hipTo: 16,
+}
+
+// 速さ（時速 km）での、研究データのふつうの走りの腰の高さの範囲。速さが分からなければ GAIT.typical.hip そのもの
+export function typicalHipAt(kmh?: number): { min: number; mid: number; max: number } {
+  const T = GAIT.typical.hip
+  if (kmh === undefined || !Number.isFinite(kmh)) return T
+  const d = GAIT.hipSlope * (clampN(kmh, GAIT.hipFrom, GAIT.hipTo) - GAIT.hipAnchor)
+  const r3 = (x: number) => Math.round(x * 1000) / 1000
+  return { min: r3(T.min + d), mid: r3(T.mid + d), max: r3(T.max + d) }
 }
 
 // 走り姿のアニメーション（ホームと結果画面）。作り方は stride.ts
@@ -402,7 +501,8 @@ export const STRIDE = {
 //   体全体 2.5°：3°傾けた走りに 56% → 98%、腰 3%：3%落とした走りに 58% → 97%）。猫背は、3° の崩しに 73%・93%・98%。
 //   記録した走り（sim/result-strictness.md）で、2026-11-03 のわざとの猫背には、どのレベルも7秒前後で「背中が丸まっています」。ふつうの区間の声は10分あたり 1.8・2.4・4.1回（頭と腰。上級は頭の線 32°/36° で。38°/42° のときは 3.5回）。
 //   正しいフォームの線（上体・体全体の上の線、頭）は、初心者は前の線のまま。中級・上級は、よい例（GOOD）の上の端（上体 9.5°・体全体 9.6°）へ寄せるが、
-//   超えない（上体 11°・10°：人の動画の「突っ込み」は 11.1〜11.4°、研究データで線を越えた走りは 11° で 3.4%）。頭の線は、
+//   超えない（上体 11°・10°：人の動画の「突っ込み」は 11.1〜11.4°、研究データで線を越えた走りは 11° で 3.4%）。この2つの線はよい例から決めた線だが、
+//   速さでは動かさない（FORM_SPEED の説明：遅い速さに合わせて下げると、研究データのふつうの走りに外れた声が増えた）。頭の線は、
 //   自分のふつうの値（首 42°・頭の位置 44°）にそろえた仮想実験（sim/result-head-line.md）で、誤った声が10分あたり 48°/52° 0.04回・46°/50° 0.26回・
 //   44°/48° 0.88回、頭を +6° 前に出した走りに気づく割合が 42%・78%・88%。中級・初心者は、この表で 46°/50°・48°/52°（はっきり前に出たときだけ言う）。
 //   上級の頭の線 32°/36° は、走り出しから頭が前に出ている人に、走り出しの整える間に知らせるための線（本人の決め：2026-11-05「最初から頭が前に出ている。それ自体がよくない」）。
@@ -464,12 +564,34 @@ export const STRICT: Record<Level, Strict> = {
 // 既定は中級（ふつう）。レベルが分からない走り（前の版の記録を通し直すときなど）もこれ
 export const DEFAULT_STRICT: Level = 'intermediate'
 export let strictness: Level = DEFAULT_STRICT
+// いま線に入れている速さ（時速 km。ベルトの速さが分かっている走りだけ。無ければ講師の速さの線＝今までの線）
+export let speedKmh: number | undefined
+
+// 正しいフォームの線のうち、速さで動かすもの（ベルトの速さが分かっている走りだけ。カメラの速さの目安では動かさない：走り出しには分からず、置き方で ±10% ずれるため）。
+//   体全体の下の線（起きすぎ）：よい例の下の端（goodAt）− bodyMinGap まで下げる（上げない）。時速12km で講師のよい例の下の端 7.0° に対して 5.5° の線なので、
+//     速さを下げると、よい例の下の端のほうが先に線に近づく。時速8kmの自分の16秒平均の最小 5.1° はいまの線の外（docs/research/posture-vs-speed.md の ⑤）。
+//     時速8km で約 3.5°（講師の悪い例「上体が起きている」「ブレーキ」「腰落ち」の体全体 2.2〜5.4° を時速8km にずらすと −0.2〜3.0° で、線はその上）
+//   上体・体全体の上の線：動かさない。中級・上級の上の線はよい例の上の端から決めた線なので、よい例と同じだけ下げる（時速8km の上級で 上体 7.6°・体全体 10.6°）案を試したが、
+//     研究データのふつうの走り79本（Riglet 楽・速い、Van Hooren。その走りの速さを入れた）で、走りの平均が線を越えた本数が
+//     中級 体全体 3 → 5・上体 3 → 7、上級 体全体 7 → 12・上体 4 → 8 に増えた（sim/result-good-speed.md の ③）。外れた声は信頼を失う（迷ったら声をかけない側）ので、
+//     上の線は講師の速さの線のまま。遅く走る人の「よい例より前に傾いている」は、結果の画面のよい例との差（速さごとの範囲）で伝える。upperLevels を足せば動かせる
+//   頭の線：変えない。頭の位置は速さで変わらず、上級の線（首 32°・頭の位置 36°）は本人の決め（2026-11-05）で、いつもの頭に走り出しから知らせるための線。
+//     ただし、首の角度の「よい例の上の端」は遅いほど大きいので、時速7〜9km では上級の首の線より上になる（時速8km で 34.1°）。
+//     結果の画面では、線の外でも、その速さのよい例の首の範囲に入っていればそう書く（nextStep.ts の HEAD_LINE_NOTE）
+export const FORM_SPEED = {
+  bodyMinGap: 0.3, // 体全体の下の線は、よい例の下の端からこれだけ下（度）
+  upperLevels: [] as Level[], // 上の線を動かすレベル（いまは無し。上の説明）
+}
+// 体全体の下の線のもとの値（どのレベルでも同じ。速さで下げる前）
+const STRICT_BODY_MIN = FORM.body.min
 
 // 厳しさを入れ替える。線の入れ物（LIMITS・REL_LIMITS・FORM）の中身を書き換えるので、判定・点数・/theory/ の表示が同じ値になる。
-// コーチを作るとき（coach.ts の Coach）に、その走りのレベルで呼ぶ。1つの画面で同時に走るコーチは1つだけ
-export function applyStrictness(level: Level = DEFAULT_STRICT) {
+// コーチを作るとき（coach.ts の Coach）に、その走りのレベルで呼ぶ。1つの画面で同時に走るコーチは1つだけ。
+// 速さ（kmh）を渡すと、速さで動く線（FORM_SPEED）もその速さにする。渡さなければ、いま入っている速さのまま
+export function applyStrictness(level: Level = DEFAULT_STRICT, kmh: number | undefined = speedKmh) {
   const s = STRICT[level]
   strictness = level
+  speedKmh = kmh !== undefined && Number.isFinite(kmh) ? kmh : undefined
   Object.assign(LIMITS.hunch, s.hunch)
   Object.assign(LIMITS.head, s.head)
   Object.assign(LIMITS.hip, s.hip)
@@ -478,5 +600,19 @@ export function applyStrictness(level: Level = DEFAULT_STRICT) {
   FORM.body.max = s.form.bodyMax
   FORM.head.neck = s.form.neck
   FORM.head.headLean = s.form.headLean
+  FORM.body.min = STRICT_BODY_MIN
+  if (speedKmh === undefined) return
+  const g = goodAt(speedKmh)
+  FORM.body.min = Math.min(STRICT_BODY_MIN, r1(g.body.min - FORM_SPEED.bodyMinGap))
+  if (FORM_SPEED.upperLevels.includes(level)) {
+    const shift = r1(g.trunk.mid - GOOD.trunk.mid) // 0 以下（goodAt の shift と同じ）
+    FORM.trunk.max = r1(s.form.trunkMax + shift)
+    FORM.body.max = r1(s.form.bodyMax + shift)
+  }
+}
+
+// 速さだけを入れ替える（レベルはそのまま）。undefined なら講師の速さの線（今までの線）に戻す
+export function applySpeed(kmh: number | undefined) {
+  applyStrictness(strictness, kmh)
 }
 applyStrictness()

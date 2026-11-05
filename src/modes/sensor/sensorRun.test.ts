@@ -214,13 +214,71 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     const iRun = log.secCols!.indexOf('run')
     expect(log.sec!.some((row) => row[iRun] === 1)).toBe(true)
     expect(log.sec!.some((row) => row[iRun] === 0)).toBe(true)
+    // 知らせた回数は、その場で数える（まとめに残す）
+    expect(r.session.counts.cues.chest).toBeGreaterThan(0)
+    expect(r.session.counts.cues.head).toBe(0)
+    expect(r.session.counts.capped.chest).toBe(0)
+    // 位置情報を渡していないので、受け取らない（GPS の欄は null）
+    expect(r.gpsStatus).toBe(null)
+    expect(log.sec!.every((row) => row[log.secCols!.indexOf('gpsV')] === null)).toBe(true)
     return new Promise<void>((done) =>
       setTimeout(() => {
         // 振動の結果（つながっていないので震えない）が返ってから、知らせた記録が入る
         expect(log.cues.length).toBeGreaterThan(0)
+        expect(log.cues.length).toBe(r.session.counts.cues.chest)
         done()
       }, 0),
     )
+  })
+
+  it('センサーラン：位置情報の速さと高さを1秒ごとのまとめに残し、様子の変わり目を events に残す。走り終わったら止める', () => {
+    connect(['胸'])
+    let onFix: ((f: { t: number; speed: number | null; accuracy: number; altitude: number | null; altitudeAccuracy: number | null }) => void) | null = null
+    let onStatus: ((s: 'none' | 'on' | 'denied' | 'error', code?: number) => void) | null = null
+    let stopped = false
+    const events: string[] = []
+    const got: number[] = []
+    const r = new SensorRunner({
+      onEvent: (_t, text) => events.push(text),
+      say: () => {},
+      gps: (fix, status) => {
+        onFix = fix
+        onStatus = status
+        return () => (stopped = true)
+      },
+      onGps: (f) => got.push(f.t),
+    })
+    let t = performance.now() / 1000
+    onStatus!('on')
+    onFix!({ t, speed: 3, accuracy: 10, altitude: 50, altitudeAccuracy: 5 })
+    t = send('胸', 'stand', t, 2, r)
+    expect(r.gpsStatus).toBe('on')
+    expect(events).toContain('gps: on')
+    expect(got).toHaveLength(1)
+    const log = r.current()!
+    const col = (name: string) => log.secCols!.indexOf(name)
+    expect(log.sec!.some((row) => row[col('gpsV')] === 10.8 && row[col('gpsAcc')] === 10 && row[col('alt')] === 50 && row[col('altAcc')] === 5)).toBe(true)
+    // 位置が来なくなって10秒より経てば null
+    t = send('胸', 'stand', t, 12, r)
+    expect(log.sec![log.sec!.length - 1][col('gpsV')]).toBe(null)
+    // 様子は変わったときだけ残す
+    onStatus!('error', 3)
+    onStatus!('error', 3)
+    expect(events.filter((e) => e.startsWith('gps:'))).toEqual(['gps: on', 'gps: error 3'])
+    r.finish()
+    expect(stopped).toBe(true)
+  })
+
+  it('位置情報のないブラウザでは gps: none と残す。カメラ版（running を渡す）では受け取らない', () => {
+    connect(['胸'])
+    const events: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text), say: () => {}, gps: true })
+    expect(events).toContain('gps: none')
+    expect(r.gpsStatus).toBe('none')
+    r.finish()
+    const cam = new SensorRunner({ onEvent: (_t, text) => events.push(text), running: () => false, gps: true })
+    expect(cam.gpsStatus).toBe(null)
+    cam.finish()
   })
 
   it('案内の声を話している間にじっとしても、測らない（言い終えてから3秒で測る）', () => {
@@ -368,13 +426,22 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
 })
 
 describe('センサーランの結果の数え方', () => {
-  it('知らせた回数・体を曲げた・止まっていた・立った姿勢', () => {
+  it('知らせた回数・体を曲げた・止まっていた・立った姿勢（前の記録：まとめに回数がなく、events から数える）', () => {
     const log = {
       id: 'sensor-log-1', startedAt: 1, width: 0, height: 0, columns: [], points: [], phases: [], rows: [], mode: 'sensor',
-      events: [[1, 'sensor:contact sit 2.1'], [2, 'sensor:contact longL 16'], [3, 'sensor:contactOk sit'], [4, 'sensor:contact longR 17']],
+      events: [[1, 'sensor:contact sit 2.1'], [2, 'sensor:contact longL 16'], [3, 'sensor:contactOk sit'], [4, 'sensor:contact longR 17'], [5, 'sensor:contact stride 8.2'], [6, 'sensor:capped 胸']],
       sensors: { version: 1, nodes: [], stride: 2, blocks: [], cues: [[1, 20, 1], [2, 21, 0]], head: { cues: [[3, 40, 1]] }, bends: [[5, 80]] },
       summary: { runSec: 600, gaps: 2, stood: false, trunk: true },
     } as unknown as RunLog
-    expect(sensorRunCounts(log)).toEqual({ runMin: 10, chest: 2, head: 1, sit: 1, side: 2, bends: 1, gaps: 2, stood: false, trunk: true })
+    expect(sensorRunCounts(log)).toEqual({ runMin: 10, chest: 2, head: 1, sit: 1, side: 2, stride: 1, capped: 1, bends: 1, gaps: 2, stood: false, trunk: true })
+  })
+
+  it('まとめに回数があれば、そこから数える', () => {
+    const log = {
+      id: 'sensor-log-2', startedAt: 1, width: 0, height: 0, columns: [], points: [], phases: [], rows: [], mode: 'sensor', events: [],
+      sensors: { version: 1, nodes: [], stride: 2, blocks: [], cues: [[1, 20, 1]] },
+      summary: { runSec: 7200, gaps: 0, stood: true, trunk: true, cues: { chest: 1, head: 0, sit: 3, longL: 2, longR: 1, stride: 4 }, capped: { chest: 0, head: 0, sit: 1, longL: 0, longR: 0, stride: 1 }, slips: { chest: 0, head: 0 }, gps: 'on' },
+    } as unknown as RunLog
+    expect(sensorRunCounts(log)).toMatchObject({ runMin: 120, chest: 1, sit: 3, side: 3, stride: 4, capped: 2 })
   })
 })

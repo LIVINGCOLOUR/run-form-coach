@@ -4,7 +4,7 @@ import { category } from '../../core/scoring'
 import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
-import { applyStrictness, FORM, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
+import { applySpeed, applyStrictness, FORM, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
 import type { Level } from '../../core/level'
 import { CUE as CUE_P } from '../../core/params'
 import { RunningGate } from './motion'
@@ -393,8 +393,11 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   // 起きすぎと着地は歩数で走っていない秒に判定を止めるので、止めた直後に、止める前の秒の値で知らせないため
   // level：ランナーのレベル。声をかける線と点数の目盛りの厳しさ（params.ts の STRICT）を、ここで入れ替える。
   //   なければ入れ替えない（いまの線のまま。読み込んだときは中級＝ふつう。採点の道具が線を書き換えて試すため）
-  constructor(opts: { pause?: boolean; items?: ItemKey[]; level?: Level } = {}) {
-    if (opts.level) applyStrictness(opts.level)
+  // kmh：ベルトの速さ（時速 km。走る前に入れたもの）。速さで動く線（params.ts の FORM_SPEED：体全体の下の線）を
+  //   その速さにする。無ければ講師の速さの線（今までの線）。カメラの速さの目安では動かさない（走り出しには分からず、置き方でずれるため）
+  constructor(opts: { pause?: boolean; items?: ItemKey[]; level?: Level; kmh?: number } = {}) {
+    if (opts.level) applyStrictness(opts.level, opts.kmh)
+    else if (opts.kmh !== undefined) applySpeed(opts.kmh) // 速さだけ渡されたときだけ入れ替える（採点の道具が書き換えた線を戻さないため）
     super(new CameraAnalyzer(), { holdUnjudged: true, ...opts })
   }
 
@@ -446,8 +449,10 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
     return this.camera.refSeconds
   }
 
-  finish(speedKmh?: number): Session {
-    return { ...this.summary(), speedKmh, samples: this.samples, strides: this.camera.strides(), form: this.camera.form.results(), gait: this.camera.gait.result() }
+  // speed：その走りの速さ（時速 km）と出どころ（Live.tsx が決める：ベルトの速さ → 足首のセンサーの見積もり → カメラの速さの目安）。
+  // 結果の画面で、よい例の範囲をこの速さにする（nextStep.ts）。無ければ講師の速さの範囲
+  finish(speed?: { kmh: number; source: NonNullable<Session['speedSource']> }): Session {
+    return { ...this.summary(), ...(speed ? { speedKmh: speed.kmh, speedSource: speed.source } : {}), samples: this.samples, strides: this.camera.strides(), form: this.camera.form.results(), gait: this.camera.gait.result() }
   }
 }
 

@@ -1,3 +1,4 @@
+import { LIMIT } from '../../core/params'
 import type { LeanParams } from './params'
 import type { Vec3 } from './parse'
 
@@ -31,15 +32,18 @@ import type { Vec3 } from './parse'
 //     走り出して poseStart 秒から、走る前傾を覚え終わる前でも poseCap を基準にして知らせる（最初から崩れたまま走り出したのを、すぐ知らせる）・
 //     知らせたあと線の下に posePraise 秒続けていたら、ほめる（praise）
 // 2026-11-02 20:23 と 2026-11-03 15:08 の走りで、胸のセンサーがずれて傾きが +9〜13° 増えた（カメラの上体は変わらず）。わざとの猫背（60秒まで）は置き直さない
+// 1時間の上限（core/params.ts の LIMIT.perHour。しくみ engine.ts と同じ決まり）：走った時間を1時間ずつの枠に切り、知らせが枠の中で上限に達したら、
+//   その枠の残りは知らせない（測って、線を越えているかは見続ける。capped を返した tick が、その枠の最後の知らせ）。長い走りで震え続けないため
 
 // bent：体を曲げている（またはその直後）ので見ていない。bend：この tick で曲げ始めたと見た（そのときの傾き。胸の bend を越えたときだけ）
+// capped：この知らせで1時間の上限に達した（この1時間は、これが最後の知らせ）
 // カメラ版で、カメラが見たいまの値（度）：trunk＝上体（腰の中心→肩の中心）の前傾、head＝頭の位置（手前の肩→耳の前傾）
 export type CamValues = { trunk: number; head: number }
 
 // learned：走る前傾を覚えた（度）。offset：2つの立ち方で見るとき、そのうち基準として差し引いた分（度）
 // plausible：2つの立ち方で見ているとき、線を越えている向きが猫背としてありうる（ずれの見張りに数えない）
 // praise：知らせたあと、線の下に posePraise 秒続けていた（直った。2つの立ち方で見ているときだけ）
-export type LeanStep = { tilt: number | null; cue: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number }
+export type LeanStep = { tilt: number | null; cue: boolean; capped?: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number }
 
 // 2つの立ち方で決めた物差し。deg：a と b の角度（猫背の大きさ）、margin：使う線の幅（度）、camB：カメラ版で b のときのカメラの上体の前傾（度）
 export type PoseScale = { deg: number; margin: number; camB: number | null }
@@ -88,14 +92,17 @@ export class LeanDetector {
   private camLearn: number[] = [] // 2つの立ち方で見るカメラ版：走る前傾を覚える間の、カメラの上体の前傾
   private sides: { t: number; v: number }[] = [] // 直近 slipRef 秒の横の傾き（2つの立ち方で見るとき）
   private streak = 0 // 続けて知らせた回数（2つの立ち方で見るときの、知らせ直す間隔をのばすため）
+  private hourCues = { hour: -1, n: 0 } // いまの1時間の枠（走った時間 ÷ 3600）で知らせた回数（LIMIT.perHour の上限）
   private underSince: number | null = null // 線の下に入った t
   private owed = false // 知らせたあと、まだほめていない（2つの立ち方で見るとき、posePraise）
   readonly p: LeanParams
+  private readonly perHour: number
 
-  // keepSec：立った姿勢を覚えるのに、さかのぼる長さの上限（秒）
-  constructor(p: LeanParams, keepSec = 5) {
+  // keepSec：立った姿勢を覚えるのに、さかのぼる長さの上限（秒）。perHour：1時間の知らせの上限（テストで外すためだけに渡す）
+  constructor(p: LeanParams, keepSec = 5, perHour = LIMIT.perHour) {
     this.keep = keepSec
     this.p = p
+    this.perHour = perHour
   }
 
   sample(t: number, a: Vec3) {
@@ -332,7 +339,10 @@ export class LeanDetector {
       // 知らせ直す間隔：2つの立ち方で見ているときは、続けて poseBackoffAfter 回知らせたら poseBackoffEvery 秒ごとにする
       const every = this.pose && this.streak >= p.poseBackoffAfter ? p.poseBackoffEvery : p.cooldown
       const hold = this.pose && p.poseHold > 0 ? p.poseHold : p.hold
-      if (t - this.overSince >= hold && t - this.lastCue >= every) {
+      // 1時間の枠が変わったら数え直す。上限に達した枠では知らせない
+      const hour = Math.floor(this.runSec / 3600)
+      if (this.hourCues.hour !== hour) this.hourCues = { hour, n: 0 }
+      if (this.hourCues.n < this.perHour && t - this.overSince >= hold && t - this.lastCue >= every) {
         // 越えて最初の知らせで大きく傾いているときは、曲げる途中かもしれないので少し待つ（越えたままの知らせ直しは待たない）
         const wait = p.confirmAbove > 0 && p.confirmSec > 0 && this.lastCue < this.overSince && tilt >= ref + p.confirmAbove
         if (wait) this.waitSince ??= t
@@ -341,6 +351,7 @@ export class LeanDetector {
           this.streak++
           this.waitSince = null
           out.cue = true
+          if (++this.hourCues.n >= this.perHour) out.capped = true
           if (this.pose && p.posePraise > 0) this.owed = true
         }
       }

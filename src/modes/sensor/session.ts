@@ -1,8 +1,9 @@
 import type { Level } from '../../core/level'
-import type { SensorLog, SensorPoseLog } from '../../core/types'
+import type { SensorCounts, SensorLog, SensorPoseLog } from '../../core/types'
 import { speak, voiceBusy } from '../../core/voice'
 import { sensors } from './ble'
-import { ContactCoach } from './contactCoach'
+import { ContactCoach, type ContactKey } from './contactCoach'
+import type { GpsSec } from './gps'
 import { angleDeg, LeanDetector, type CamValues } from './lean'
 import type { Vec3 } from './parse'
 import { SensorRecorder } from './log'
@@ -36,8 +37,11 @@ const r1n = (x: number | null | undefined) => (x === null || x === undefined || 
 const r3n = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000)
 
 // 1秒ごとのまとめ（SensorLog の sec）の欄：t・走っているか（1/0）・胸の傾きと基準（度）・頭の傾きと基準・体を曲げている（1/0）・
-// 接地の割合・左右の接地時間（ms）・見積もった速さ（km/h）・ピッチ（歩/分）・胸と頭の猫背の割合（2つの立ち方で見たとき。b ＝ 0、a ＝ 1）。値がなければ null
-export const SEC_COLS = ['t', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx']
+// 接地の割合・左右の接地時間（ms）・見積もった速さ（km/h）・ピッチ（歩/分）・胸と頭の猫背の割合（2つの立ち方で見たとき。b ＝ 0、a ＝ 1）・
+// GPS（センサーランだけ。gps.ts）の速さ（km/h）と横の誤差（m）・高さ（m）と高さの誤差（m）。値がなければ null
+export const SEC_COLS = ['t', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx', 'gpsV', 'gpsAcc', 'alt', 'altAcc']
+
+const zeroCounts = (): SensorCounts => ({ chest: 0, head: 0, sit: 0, longL: 0, longR: 0, stride: 0 })
 
 export class SensorSession {
   private rec: SensorRecorder | null = null
@@ -48,6 +52,10 @@ export class SensorSession {
   private onEvent: (t: number, text: string) => void
   // 足首の2つで、接地時間が長い（腰が落ちている）・接地時間の左右差を見る（contactCoach.ts）。voice：知らせを声でも言う（カメラ版はトレッドミルで声が出せる）
   private contact = new ContactCoach()
+  // 足首で決まった1歩のすべて（速さの式の人ごとの合わせ speedFit.ts と、走り終わりの速さの見積もりに、カメラ版の Live.tsx が使う）
+  get contactSteps() {
+    return this.contact.steps
+  }
   private ankle = { L: SLOTS.findIndex((s) => s.place === ANKLES.L), R: SLOTS.findIndex((s) => s.place === ANKLES.R) }
   private nextSteps = 0
   private nextSec = 0
@@ -59,6 +67,10 @@ export class SensorSession {
   private poseDegs: Record<Key, (number | null)[]> = { chest: [], head: [] }
   poseTries = 0
   voice = true
+  // この走りで知らせた回数（項目ごと）・1時間の上限（core/params.ts の LIMIT.perHour）に達した回数・ずれとみなした回数。
+  // 走り終わりのまとめ（runLog.ts の summary）に残す。あとで、知らせを減らしていく決まりを考えるため（いまは数えるだけ）
+  readonly counts = { cues: zeroCounts(), capped: zeroCounts(), slips: { chest: 0, head: 0 } }
+  private cappedSeen = 0 // 接地のしくみ（engine.capped）のうち、もう数えた件数
 
   // onEvent：区切り（覚えた・知らせた）を、カメラの記録の events にも残す。level：ランナーのレベル（胸の線を選ぶ）
   constructor(onEvent: (t: number, text: string) => void, level?: Level) {
@@ -169,8 +181,9 @@ export class SensorSession {
     return out
   }
 
-  // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」。cam：カメラ版で、いまのカメラの上体と頭の位置（胸だけに渡す）
-  tick(t: number, running: boolean, cam: CamValues | null = null) {
+  // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」。cam：カメラ版で、いまのカメラの上体と頭の位置（胸だけに渡す）。
+  // gps：センサーランで、いまの GPS の速さと高さ（1秒ごとのまとめに残すだけ。知らせには使わない）
+  tick(t: number, running: boolean, cam: CamValues | null = null, gps: GpsSec | null = null) {
     for (const x of this.parts) {
       // 頭は、胸で体を曲げたと分かっていれば止める（胸を先に見る）
       const chest = this.parts.find((y) => y.key === 'chest')
@@ -190,6 +203,7 @@ export class SensorSession {
       // ずれとみなした：短く3回震わせる（崩れの1秒1回と分ける）。声は出さない。走ったあとの結果の画面で「付け直して」と知らせる（SlipNote.tsx）
       if (r.slip) {
         const { from, to } = r.slip
+        this.counts.slips[x.key]++
         if (this.rec) (this.slot(x.key).slips ??= []).push([r2(t), Math.round(from * 10) / 10, Math.round(to * 10) / 10])
         // 2つの立ち方で見ているときは、置き直した基準の猫背の割合も（1 に近ければ、ずれではなく猫背のまま走っていたのかもしれない。あとで確かめる）
         const idx = x.d.index(to)
@@ -198,10 +212,16 @@ export class SensorSession {
       }
       if (r.cue && r.tilt !== null) {
         const tilt = r.tilt
+        this.counts.cues[x.key]++
         void sensors.buzz(x.p.place, x.p.buzzCount, x.p.buzzMs).then((ok) => {
           this.rec?.cue(t, tilt, ok, x.key)
           this.onEvent(t, `${x.ev.cue} ${tilt.toFixed(1)}${ok ? '' : ' (no buzz)'}`)
         })
+        // 1時間の上限に達した（この1時間は、これが最後の知らせ）：sensor:capped 胸
+        if (r.capped) {
+          this.counts.capped[x.key]++
+          this.onEvent(t, `sensor:capped ${x.p.place}`)
+        }
       }
       // 知らせたあと直った：短く2回震わせる（知らせの1秒1回・ずれの0.3秒×3回と分ける）
       if (r.praise) {
@@ -210,11 +230,11 @@ export class SensorSession {
       }
     }
     this.tickContact(t, running)
-    this.tickLog(t, running)
+    this.tickLog(t, running, gps)
   }
 
   // 1秒ごとのまとめと、電池の電圧を記録に残す
-  private tickLog(t: number, running: boolean) {
+  private tickLog(t: number, running: boolean, gps: GpsSec | null) {
     if (!this.rec) return
     if (t >= this.nextSec) {
       this.nextSec = t + SENSOR_LOG.secEvery
@@ -225,6 +245,7 @@ export class SensorSession {
       this.rec.second(SEC_COLS, [
         r2(t), running ? 1 : 0, r1n(c.tilt), r1n(c.ref), r1n(h.tilt), r1n(h.ref), c.bent || h.bent ? 1 : 0,
         r3n(m?.df), r1n(m ? m.ctL * 1000 : null), r1n(m ? m.ctR * 1000 : null), r1n(m?.v), r1n(m?.cad), idx('chest'), idx('head'),
+        r1n(gps?.v), r1n(gps?.acc), r1n(gps?.alt), r1n(gps?.altAcc),
       ])
     }
     if (t >= this.nextBat) {
@@ -254,15 +275,22 @@ export class SensorSession {
   }
 
   // 接地時間：しくみ（engine.ts）が決めた知らせを、足首の振動と声にする。値の移り変わりは CONTACT_LOG.every 秒ごとに events に残す
-  //   sensor:contact sit 2.3（腰が落ちている。値は平均から標準偏差いくつぶん上か）・sensor:contact longL 16.9（左が長い左右差 %）・
+  //   sensor:contact sit 2.3（接地が長い。値は平均から標準偏差いくつぶん上か）・sensor:contact longL 16.9（左が長い左右差 %）・
   //   sensor:contact stride 8.2（オーバーストライド。同じ速さの走り出しからピッチが何 % 落ちたか）
-  //   sensor:contactOk sit（直った）・sensor:steps df 0.38 ct 272 L 270 R 275 v 7.4 cad 168 imp 4.1/4.9 drop 1.2（drop：走り出しからのピッチの落ち方 %）
+  //   sensor:contactOk sit（直った）・sensor:capped sit（1時間の上限に達した。この1時間は知らせない）・
+  //   sensor:steps df 0.38 ct 272 L 270 R 275 v 7.4 cad 168 imp 4.1/4.9 drop 1.2（drop：走り出しからのピッチの落ち方 %）
   private tickContact(t: number, running: boolean) {
     for (const c of this.contact.tick(t, running)) {
       for (const place of c.places) void sensors.buzz(place, c.count, c.ms)
       // 声はカメラの声と重ねない（話している間は振動だけ）
       if (this.voice && !voiceBusy()) speak(c.text)
+      if (c.kind === 'cue') this.counts.cues[c.item]++
       this.onEvent(t, c.kind === 'cue' ? `sensor:contact ${c.item} ${c.value?.toFixed(1) ?? ''}` : `sensor:contactOk ${c.item}`)
+    }
+    const capped: { item: ContactKey; t: number }[] = this.contact.engine.capped
+    for (; this.cappedSeen < capped.length; this.cappedSeen++) {
+      this.counts.capped[capped[this.cappedSeen].item]++
+      this.onEvent(t, `sensor:capped ${capped[this.cappedSeen].item}`)
     }
     const m = this.contact.last
     if (m && t >= this.nextSteps) {

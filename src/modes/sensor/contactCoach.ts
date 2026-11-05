@@ -4,10 +4,11 @@ import { ContactJudge, StepDetector, type ContactValues, type Step } from './con
 import { ANKLES, CONTACT, CONTACT_BUZZ, STEP, type ContactParams } from './params'
 import type { Vec3 } from './parse'
 
-// 足首の2つのセンサーで、接地時間が長い（腰が落ちている）・接地時間の左右差・足が体より前に着く（オーバーストライド）を見て、知らせる（SensorSession から使う）。
-// いつ知らせるか・直ったらほめるか・だんだん減らすかは、ほかの入り口と同じ声かけのしくみ（core/engine.ts の CueEngine）に任せる。
+// 足首の2つのセンサーで、接地時間が長い・接地時間の左右差・足が体より前に着く（オーバーストライド）を見て、知らせる（SensorSession から使う）。
+// いつ知らせるか・直ったらほめるか・だんだん減らすか・1時間の上限は、ほかの入り口と同じ声かけのしくみ（core/engine.ts の CueEngine）に任せる。
 // このファイルは、その秒の値（ContactValues）を項目の値にする「見る役」と、しくみが決めた知らせを、振動（と声）に替える役だけ。
-//   腰が落ちている：両足首を震わせる（体全体のこと。胸・頭の振動と場所で分ける。腰にはセンサーがない）
+//   接地が長い（sit）：両足首を震わせる（体全体のこと。胸・頭の振動と場所で分ける）。声は「接地が長くなっています」と起きていることだけを言う
+//     （腰が落ちたときだけでなく、大また・かかとからの着地でも長くなるので、「腰が落ちています」とは言わない。腰にはセンサーがない）
 //   オーバーストライド：両足首を震わせる（どちらの足でも起きる。声はカメラの着地と同じ「足が体より前に着いています…」）
 //   左右差：接地の長いほうの足首を震わせる
 //   直った：同じ場所を短く2回（ほめる。声を出せるときは「いい感じです」「左右がそろいました」）
@@ -45,7 +46,7 @@ export class ContactAnalyzer implements ModeAnalyzer<ContactValues | null, Conta
   constructor(c: ContactParams = CONTACT) {
     // 満点は「平均 + 1標準偏差まで」（市民ランナーの約8割）、0点は線の 1.5 標準偏差上。直ったかの線は、そのあいだの真ん中（engine.ts）
     this.items = [
-      { key: 'sit' as const, limits: { full: 1, cue: c.z, zero: c.z + 1.5 }, cue: PHRASES.cueHip },
+      { key: 'sit' as const, limits: { full: 1, cue: c.z, zero: c.z + 1.5 }, cue: PHRASES.cueContactLong },
       { key: 'longL' as const, limits: { full: c.si / 3, cue: c.si, zero: c.si * 2 }, cue: PHRASES.cueLongL },
       { key: 'longR' as const, limits: { full: c.si / 3, cue: c.si, zero: c.si * 2 }, cue: PHRASES.cueLongR },
       { key: 'stride' as const, limits: { full: c.overDrop / 3, cue: c.overDrop, zero: c.overDrop * 2 }, cue: PHRASES.cueLanding },

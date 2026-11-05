@@ -98,9 +98,13 @@ export interface Session {
   id: string
   startedAt: number
   durationSec: number
-  speedKmh?: number
+  speedKmh?: number // その走りの速さ（時速 km）。よい例の範囲（camera/params.ts の goodAt）をこの速さにする。無い走りは講師の速さの範囲で比べる
+  speedSource?: 'belt' | 'sensor' | 'camera' // speedKmh の出どころ：走る前に入れたベルトの速さ（真）・足首のセンサーの見積もり・カメラの速さの目安
   samples: Sample[]
   cues: CueLog[]
+  // 項目ごとの声をかけた回数と、1時間の上限（core/params.ts の LIMIT.perHour）に達した項目（engine.ts）。前の記録にはない
+  cueCounts?: Partial<Record<ItemKey, number>>
+  capped?: { item: ItemKey; t: number }[]
   strides: Partial<Record<Category, Stride>>
   share: Record<Category, number> // 0〜1
   breakdownMin?: number // 崩れ始め（分）
@@ -156,13 +160,18 @@ export interface RunLog {
   // rows はなく、走っていたかはセンサーの1秒ごとのまとめ（sensors.sec の run）と events の sensor:run on/off で見る
   mode?: 'sensor'
   with?: 'phone' // 腰スマホといっしょに使った（スマホ版の記録は別のファイル。時刻は clock で合わせる）
-  // 走り終わりのまとめ（センサーランの結果の画面）。runSec：走っていた秒、gaps：アプリが2秒より止まっていた回数（画面が消えた・裏に回った）
-  summary?: { runSec: number; gaps: number; stood: boolean; trunk?: boolean } // trunk：胸か頭がつながっていた
+  // 走り終わりのまとめ（センサーランの結果の画面）。runSec：走っていた秒、gaps：アプリが2秒より止まっていた回数（画面が消えた・裏に回った）、
+  // trunk：胸か頭がつながっていた。cues：項目ごとの知らせた回数、capped：1時間の上限に達した回数、slips：ずれとみなした回数（sensor/session.ts の counts。前の記録にはない）、
+  // gps：位置情報の様子（none＝使えないブラウザ、on＝取れた、denied＝許可されていない、error＝取れなかった。センサーランだけ）
+  summary?: { runSec: number; gaps: number; stood: boolean; trunk?: boolean; cues?: SensorCounts; capped?: SensorCounts; slips?: { chest: number; head: number }; gps?: string }
   // 走り始めたときの端末の入れ物の様子（navigator.storage。使えないブラウザではない）。usage・quota はバイト
   storage?: { usage?: number; quota?: number; persisted?: boolean }
 }
 
 export type SensorRunLean = { t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'camera'; cam?: number | null }
+
+// センサーで知らせた項目ごとの回数（chest：猫背、head：頭が前、sit：接地が長い、longL・longR：左右差、stride：足が体より前に着く）
+export type SensorCounts = { chest: number; head: number; sit: number; longL: number; longR: number; stride: number }
 
 // 2つの立ち方（src/modes/sensor/session.ts の calibrate）。あとで、2つの立ち方の差と知らせた時刻を、確かめ走の区切りと比べるため。
 //   t：決めた t、tries：測った回数（差が小さくて測り直したぶんを含む）、a・b：最後に測った、いつもの楽な立ち方・胸を開いた立ち方の重力の向き、

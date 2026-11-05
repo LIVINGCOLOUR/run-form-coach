@@ -5,6 +5,7 @@ import { PHRASES } from '../../../core/phrases'
 import { keepAwake } from '../../../core/wake'
 import { queueUpload } from '../../../core/upload/uploads'
 import { sensors } from '../ble'
+import type { GpsStatus } from '../gps'
 import { SensorRunner, type SensorRunPhase } from '../runner'
 import { SensorRunLog } from '../runLog'
 import { SENSOR_RUN_NAME } from '../name'
@@ -31,6 +32,7 @@ const mmss = (sec: number) => {
 export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
   const [phase, setPhase] = useState<SensorRunPhase>('stand')
   const [stage, setStage] = useState<'a' | 'b'>('a') // 2つの立ち方のどちらを測っているか
+  const [gps, setGps] = useState<GpsStatus | null>(null) // 位置情報の様子（記録に残すだけ。Bluefy で取れるかを画面で確かめる）
   const [runSec, setRunSec] = useState(0)
   const [wake, setWake] = useState(false)
   const [holding, setHolding] = useState(false)
@@ -47,9 +49,11 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       level: loadProgress().level,
       say: (text) => speak(text),
       speaking: voicePending,
+      gps: true,
       onChange: () => {
         setPhase(runner.phase)
         setStage(runner.stage)
+        setGps(runner.gpsStatus)
       },
     })
     setPhase(runner.phase)
@@ -118,6 +122,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
         <Chip ok={on.length > 0} label={`センサー ${on.length}個`} />
         {lost.length > 0 && <Chip ok={false} label={`切れた：${lost.map((n) => n.place).join('・')}（つなぎ直しています）`} />}
         <Chip ok={wake} label={wake ? '画面は消えません' : '画面が消えるかも'} />
+        <Chip ok={gps === 'on'} label={gps === 'on' ? 'GPS：記録しています' : gps === 'none' ? 'GPS：このブラウザでは使えません' : gps === 'denied' ? 'GPS：許可されていません' : 'GPS：待っています'} />
       </div>
       <div className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>
         画面を消さないでください（消えると、センサーの値の受け取りや振動が止まるおそれがあります）。

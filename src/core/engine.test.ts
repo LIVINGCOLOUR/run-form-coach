@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CueEngine, TONE_TEXT, type CoachEvent, type EngineSay, type ItemSpec, type ModeAnalyzer, type SecondContext, type Values } from './engine'
 import { RECOVER, SAY } from './phrases'
-import { CUE, HIP_REF, TONE } from './params'
+import { CUE, HIP_REF, LIMIT, TONE } from './params'
 
 // しくみだけを確かめるための、作りものの入り口。1コマの測定は「項目 a の値」で、null ならその秒は判定しない
 type Item = 'a' | 'b'
@@ -259,5 +259,65 @@ describe('見る役が自分で決める声（say・hold・score）', () => {
     run(e, 400, 10, { a: 0 })
     expect(e.quiet).toBe(false)
     expect(e.cues[e.cues.length - 1]).toMatchObject({ item: 'a', lead: true })
+  })
+})
+
+describe('1時間の上限（LIMIT.perHour）', () => {
+  it('同じ項目の知らせが1時間の枠で上限に達したら、その枠の残りは知らせない。次の枠で数え直す。回数と達した時刻を結果に残す', () => {
+    const e = new Toy(new ToyAnalyzer())
+    run(e, 0, 5, { a: 0 })
+    run(e, 5, 7150, { a: 8 }) // 崩れたまま、走った時間で2時間近く（3つ目の枠には入らない）
+    const a = e.cues.filter((c) => c.item === 'a')
+    const hour0 = a.filter((c) => c.t < 3600)
+    const hour1 = a.filter((c) => c.t >= 3600)
+    expect(hour0.length).toBe(LIMIT.perHour) // 30秒ごとなら約120回のところ
+    expect(hour1.length).toBe(LIMIT.perHour)
+    expect(e.capped).toEqual([{ item: 'a', t: hour0[hour0.length - 1].t }, { item: 'a', t: hour1[hour1.length - 1].t }])
+    const s = e.result()
+    expect(s.cueCounts).toEqual({ a: LIMIT.perHour * 2 })
+    expect(s.capped).toBe(e.capped)
+    // 知らせない間も判定して記録している（点数は悪いまま）
+    expect(s.share.bad).toBeGreaterThan(0.9)
+  })
+
+  it('上限に達した項目は、ほかの項目の知らせを止めない', () => {
+    const e = new Toy(new ToyAnalyzer())
+    run(e, 0, 5, { a: 0, b: 0 })
+    run(e, 5, 1200, { a: 8, b: 0 }) // a が上限に達する
+    expect(e.capped.map((c) => c.item)).toEqual(['a'])
+    const said = run(e, 1205, 120, { a: 8, b: 8 })
+    expect(said).toContain('b が崩れています。')
+    expect(said).not.toContain('a が崩れています。')
+  })
+
+  it('上限に達した項目は、見る役に渡す「その項目の前の声からの秒数」を 0 にする（カメラの正しいフォームの線の声も、その1時間は出ない）', () => {
+    // カメラの form.ts と同じ決め方：どの項目でも前の声から CUE.gap、その項目の前の声からも間があいていれば言う
+    class FormLike extends ToyAnalyzer {
+      cueAt: number[] = []
+      since: number[] = []
+      second(b: M[], t: number, ctx: SecondContext<Item>) {
+        const out = super.second(b, t, ctx)
+        if (!out) return null
+        this.since.push(ctx.since('a'))
+        const say = this.cueAt.includes(t) && ctx.since() >= CUE.gap && ctx.since('a') >= CUE.gap ? { kind: 'cue' as const, item: 'a' as const, text: 'a を見る役が知らせます。' } : undefined
+        return { ...out, say }
+      }
+    }
+    const an = new FormLike()
+    const e = new Toy(an)
+    run(e, 0, 5, { a: 0 })
+    run(e, 5, 1200, { a: 8 })
+    expect(e.capped.length).toBe(1)
+    expect(an.since[an.since.length - 1]).toBe(0)
+    an.cueAt = [Math.floor(e.active) + 5]
+    run(e, 1205, 10, { a: 8 })
+    expect(e.cues.some((c) => c.lead)).toBe(false)
+    // 上限に達していなければ、今までどおり言う
+    const fresh = new FormLike()
+    const e2 = new Toy(fresh)
+    run(e2, 0, 5, { a: 0 })
+    fresh.cueAt = [Math.floor(e2.active) + 2] // しくみ自身の声（6秒の平均）より先
+    run(e2, 5, 10, { a: 8 })
+    expect(e2.cues.some((c) => c.lead)).toBe(true)
   })
 })

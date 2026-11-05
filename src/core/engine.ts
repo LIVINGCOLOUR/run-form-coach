@@ -1,4 +1,4 @@
-import { ABSENCE, BREAKDOWN, CUE as CUE_P, POWER, PRAISE, QUIET, RUNNING, SCORE, TONE } from './params'
+import { ABSENCE, BREAKDOWN, CUE as CUE_P, LIMIT, POWER, PRAISE, QUIET, RUNNING, SCORE, TONE } from './params'
 import { RECOVER, SAY } from './phrases'
 import { category } from './scoring'
 
@@ -80,7 +80,9 @@ export interface SecondContext<K extends string> {
   quiet: boolean // 声なしで見守っている時間か
   active: K[] // 声をかける項目
   score: (values: Values<K>) => number | null // 1秒の点数（判定した項目のうち、いちばん崩れている項目の点数）。判定した項目がなければ null
-  since: (item?: K) => number // その項目の前の崩れの声から（item がなければ、どの項目でも前の声から）の秒数。まだなければとても大きい数
+  // その項目の前の崩れの声から（item がなければ、どの項目でも前の声から）の秒数。まだなければとても大きい数。
+  // その項目がこの1時間の上限（LIMIT.perHour）に達していれば 0（見る役が自分で決める声も、この1時間は出ないように）
+  since: (item?: K) => number
 }
 
 export interface ModeAnalyzer<M, S, K extends string> {
@@ -128,6 +130,7 @@ export class CueEngine<M, S, K extends string> {
   active = 0 // 走っていた秒数（一時停止中は進まない）
   samples: S[] = []
   cues: CueRecord<K>[] = []
+  capped: { item: K; t: number }[] = [] // 1時間の上限（LIMIT.perHour）に達した項目と、その時刻（その1時間の残りは知らせない）
   quiet = false
   quietHeldSec = 0
   readonly startedAt = Date.now()
@@ -147,6 +150,7 @@ export class CueEngine<M, S, K extends string> {
 
   private lastCue: Partial<Record<K, number>> = {}
   private cueCount: Partial<Record<K, number>> = {} // 項目ごとの、この走りで知らせた回数
+  private hourCount: Partial<Record<K, { hour: number; n: number }>> = {} // 項目ごとの、いまの1時間の枠（走った時間 ÷ 3600）で知らせた回数
   private toneOn: K | null = null // 音を鳴らしている項目
   private lastAnyCue = -1e9
   private lastPraise = 0
@@ -281,7 +285,7 @@ export class CueEngine<M, S, K extends string> {
     const b = this.bucket
     this.bucket = []
     const t = Math.floor(this.active)
-    const since = (item?: K) => t - (item === undefined ? this.lastAnyCue : (this.lastCue[item] ?? -1e9))
+    const since = (item?: K) => (item !== undefined && this.full(item, t) ? 0 : t - (item === undefined ? this.lastAnyCue : (this.lastCue[item] ?? -1e9)))
     const out = this.analyzer.second(b, t, { quiet: this.quiet, active: this.activeItems, score: (v) => this.score(v), since })
     if (!out) return null
     if (out.ready && this.refAt === null) this.refAt = t
@@ -319,7 +323,7 @@ export class CueEngine<M, S, K extends string> {
       this.quietEnd = t
       this.quietLen = QUIET.first
     }
-    this.cueCount[s.item] = (this.cueCount[s.item] ?? 0) + 1
+    this.count(s.item, t)
     this.lastCue[s.item] = t
     this.lastAnyCue = t
     // 同じ項目で、しくみが「直った」を待っていたら取り消す（直ったかは、見る役が見る）
@@ -329,9 +333,25 @@ export class CueEngine<M, S, K extends string> {
     }
   }
 
+  // 知らせた回数を数える（この走りの回数と、いまの1時間の枠の回数。枠の回数が上限に達したら capped に残す）
+  private count(k: K, t: number) {
+    this.cueCount[k] = (this.cueCount[k] ?? 0) + 1
+    const hour = Math.floor(t / 3600)
+    const h = this.hourCount[k]
+    const n = h && h.hour === hour ? h.n + 1 : 1
+    this.hourCount[k] = { hour, n }
+    if (n === LIMIT.perHour) this.capped.push({ item: k, t })
+  }
+
+  // その項目は、いまの1時間の枠の上限に達している（この1時間は知らせない）
+  private full(k: K, t: number): boolean {
+    const h = this.hourCount[k]
+    return !!h && h.hour === Math.floor(t / 3600) && h.n >= LIMIT.perHour
+  }
+
   private cue(ev: CoachEvent[], t: number, k: K, back: number) {
-    const n = (this.cueCount[k] ?? 0) + 1
-    this.cueCount[k] = n
+    this.count(k, t)
+    const n = this.cueCount[k]!
     if (!this.specs[k].tone) this.say(ev, t, k, this.specs[k].cue)
     else {
       // 初めは言葉で言い、続けて音を鳴らす（音は入り口が、言葉を言い終えてから鳴らす）。あとは音だけ
@@ -370,6 +390,8 @@ export class CueEngine<M, S, K extends string> {
       // 注意していない項目は、大きく崩れたとき（その項目の点数が「ふつう」の線を切ったとき）だけ。muteOthers なら声をかけない
       const active = this.activeItems.includes(k)
       if (activeOnly && (!active || this.specs[k].tone)) continue
+      // 1時間の上限（LIMIT.perHour）に達した項目は、その1時間は知らせない（測って記録はする）
+      if (this.full(k, r.t)) continue
       const over = active ? this.over(k, avg) : !this.muteOthers && scoreOf(this.specs[k].limits, avg) < SCORE.mid
       if (over && r.t - (this.lastCue[k] ?? -1e9) >= this.cooldown(k)) return k
     }
@@ -497,6 +519,8 @@ export class CueEngine<M, S, K extends string> {
       startedAt: this.startedAt,
       durationSec: Math.round(this.active),
       cues: this.cues,
+      cueCounts: { ...this.cueCount }, // 項目ごとの知らせた回数（あとで、知らせを減らしていく決まりを考えるため）
+      capped: this.capped,
       share,
       breakdownMin: breakdownMinute(judged(rs)),
       quietHeldSec: this.quietHeldSec,

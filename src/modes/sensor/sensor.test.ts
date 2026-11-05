@@ -215,14 +215,19 @@ describe('胸のセンサーで猫背を見る', () => {
     expect(cues.every((t) => t < slips[0].t)).toBe(true) // 置き直したあとは鳴らない
     // 置き直したあとでも、そこから数秒で崩れれば知らせる
     expect(play(d, 400, 420, () => 27 + 12, () => true).some((o) => o.cue)).toBe(true)
-    // 見張らなければ、走り終わるまで鳴り続ける
-    const off = setup({ ...HUNCH, slipSec: 0, slipDrift: 0 })
+    // 見張らなければ、走り終わるまで鳴り続ける（1時間の上限 LIMIT.perHour も外して見る。上限は limit.test.ts）
+    const off = new LeanDetector({ ...HUNCH, slipSec: 0, slipDrift: 0 }, 5, Infinity)
+    play(off, 0, 5, () => 0, () => false)
+    expect(off.stand(5, 3)).toBe(true)
     play(off, 5, 50, () => 14, () => true)
     expect(play(off, 50, 400, () => 27, () => true).filter((o) => o.cue).length).toBeGreaterThan(80)
   })
 
   it('わざとの猫背 60秒は、ずれとみなさず知らせ続ける。60秒あけてもう一度でも同じ', () => {
-    const d = setup()
+    // 1つの立ち方で見るときは4秒ごとなので、60秒 ×2 で1時間の上限（20回）を越える。ここではずれの見張りだけを見るので、上限は外す
+    const d = new LeanDetector(HUNCH, 5, Infinity)
+    play(d, 0, 5, () => 0, () => false)
+    expect(d.stand(5, 3)).toBe(true)
     play(d, 5, 50, () => 14, () => true)
     const out = play(d, 50, 250, (t) => ((t >= 60 && t < 120) || (t >= 180 && t < 240) ? 27 : 14), () => true)
     expect(out.some((o) => o.slip)).toBe(false)

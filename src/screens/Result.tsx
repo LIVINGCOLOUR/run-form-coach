@@ -5,10 +5,10 @@ import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
-import { formRows, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
-import { GOOD } from '../modes/camera/params'
+import { formRows, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, speedNote, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
+import { GOOD, kmh1 } from '../modes/camera/params'
 import { SlipNote } from '../modes/sensor/SlipNote'
-import type { FormResult, GaitResult } from '../core/types'
+import type { GaitResult } from '../core/types'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
 
@@ -44,7 +44,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 5l-7 7 7 7" /></svg>
         </button>
         <div style={{ fontSize: 14 }} className="muted">
-          {fmtDate(s.startedAt)} · {Math.round(s.durationSec / 60)}分{s.speedKmh ? ` · ${s.speedKmh} km/h` : ''}
+          {fmtDate(s.startedAt)} · {Math.round(s.durationSec / 60)}分{s.speedKmh ? ` · 時速${kmh1(s.speedKmh)}km${s.speedSource === 'belt' ? '' : '（見積もり）'}` : ''}
         </div>
         <div style={{ width: 44 }} />
       </div>
@@ -107,8 +107,8 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         {s.provisionalBaseline && <div style={{ fontSize: 12, color: 'var(--warn)' }}>動画で試したため、直立の基準は仮のものです</div>}
       </div>
 
-      {s.form && s.form.length > 0 && <FormCard form={s.form} next={nextItem(s)} />}
-      {s.gait && <GaitCard gait={s.gait} standingHip={s.standing?.hip} />}
+      {s.form && s.form.length > 0 && <FormCard session={s} next={nextItem(s)} />}
+      {s.gait && <GaitCard gait={s.gait} standingHip={s.standing?.hip} kmh={s.speedKmh} />}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="row">
@@ -174,9 +174,9 @@ export function Result({ session: s, sessions, go }: { session: Session; session
 // よい例との差：項目ごとに、走っていた秒の平均と、よい例の範囲と、その差（主役）。声をかける線（正しいフォームの線）との
 // 比べは、控えめに添える（線は外れた声にならないよう広く取っているので、ふつうはどれも内側に入る）。次に意識する1つも。
 // 着地の位置は、試しの測り方（params.ts の FORM.landing.say が false の間）であることを、行の下に添える。
-// 言葉は nextStep.ts の formRows で決める
-function FormCard({ form, next }: { form: FormResult[]; next: Next | undefined }) {
-  const rows = formRows(form)
+// 言葉は nextStep.ts の formRows で決める。よい例の範囲は、その走りの速さ（Session.speedKmh）のもの（params.ts の goodAt）
+function FormCard({ session: s, next }: { session: Session; next: Next | undefined }) {
+  const rows = formRows(s.form!, s.speedKmh)
   // 線の外は warn、よい例から離れていたら mid、ほぼ同じは文字の色、よい例の範囲なら accent
   const color = (r: FormRow) => (r.lineOut ? 'var(--warn)' : r.state === 'off' ? 'var(--mid)' : r.state === 'near' ? 'var(--text)' : 'var(--accent)')
   return (
@@ -216,7 +216,7 @@ function FormCard({ form, next }: { form: FormResult[]; next: Next | undefined }
         </div>
       ))}
       <div style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--faint)' }}>
-        よい例は、ランニングの講師1人の手本{GOOD.examples}本を、アプリと同じ骨格の推定で測った値です（時速{GOOD.kmh.min}〜{GOOD.kmh.max}km。体全体の傾きは、速く走るほど大きく出ます）。声をかける線の内側なら、走っている間は声をかけません。
+        よい例は、ランニングの講師1人の手本{GOOD.examples}本を、アプリと同じ骨格の推定で測った値です（時速{GOOD.kmh.min}〜{GOOD.kmh.max}km）。速く走るほど体全体と上体は前に傾くので、範囲は速さごとに持っています。{speedNote(s)}。声をかける線の内側なら、走っている間は声をかけません。
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.6, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
         {next ? (
@@ -234,8 +234,8 @@ function FormCard({ form, next }: { form: FormResult[]; next: Next | undefined }
 
 // 走りの数字：ピッチ・上下動・腰の高さ・腕振り。声はかけず、測った値を出すだけ（言葉は nextStep.ts の gaitRows）。
 // 比べる範囲は研究データのふつうの走り（よい例ではない）なので、範囲の外でも警告の色にはしない
-function GaitCard({ gait, standingHip }: { gait: GaitResult; standingHip?: number }) {
-  const rows = gaitRows(gait, standingHip)
+function GaitCard({ gait, standingHip, kmh }: { gait: GaitResult; standingHip?: number; kmh?: number }) {
+  const rows = gaitRows(gait, standingHip, kmh)
   if (!rows.length) return null
   const color = (r: GaitRow) => (r.state === undefined || r.state === 'in' ? 'var(--text)' : 'var(--mid)')
   return (

@@ -3,6 +3,7 @@ import { PHRASES } from '../../core/phrases'
 import type { SensorLog } from '../../core/types'
 import { sensors } from './ble'
 import { MotionGate } from './gate'
+import { GpsLatest, watchGps, type GpsFix, type GpsStatus } from './gps'
 import { HUNCH, POSE, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
 import { SensorSession, type PoseName, type PoseResult } from './session'
 import type { CamValues } from './lean'
@@ -18,6 +19,7 @@ import type { CamValues } from './lean'
 //     say がない（腰スマホ）：今までどおり、胸と頭が3秒じっとしたら、その3秒を立った姿勢として覚える（猫背のまま立つと、猫背の走りを基準にしてしまう）
 //     走っている：揺れが RUN_GATE の線を3秒越えたら走り出し、4秒下回ったら止まった。止まっている間は知らせない
 //   say を渡すと、立つ案内と待つ案内を声で言う（センサーラン。腰スマホはスマホ版の声があるので渡さない）
+//   gps を渡すと（センサーラン）、位置情報の速さと高さを1秒ごとのまとめに残す（gps.ts。知らせには使わない。使えないブラウザでは events に gps: none）
 
 export type SensorRunPhase = 'stand' | 'ready' | 'run' | 'stop'
 
@@ -29,7 +31,10 @@ export interface SensorRunnerOptions {
   camera?: () => CamValues | null // カメラ版：いまのカメラの上体と頭の位置（胸のずれの見分けに使う。lean.ts）。なければ null
   say?: (text: string) => void // カメラなしの案内を声で言う
   speaking?: () => boolean // 声を話している（待っている）間か。立った姿勢は、言い終えてから STILL.sec 秒じっとしたぶんで覚える
-  onChange?: () => void // 段階が変わった（画面を直す）
+  onChange?: () => void // 段階が変わった・位置情報の様子が変わった（画面を直す）
+  // 位置情報を受け取る（カメラなしのときだけ。腰スマホはスマホ版が自分で受け取るので渡さない）。watch：テストで差し替える受け口（なければブラウザの位置情報）
+  gps?: boolean | typeof watchGps
+  onGps?: (f: GpsFix) => void // 位置が届くたび（センサーの速さの見積もりを GPS に合わせるときの口。いまは記録に残すだけ）
 }
 
 const now = () => performance.now() / 1000
@@ -45,6 +50,9 @@ export class SensorRunner {
   trunk = false // 胸か頭が一度でもつながっていた（立った姿勢が要った）
   stage: PoseName = 'a' // 2つの立ち方のどちらを測っているか（センサーラン）
   poseResult: PoseResult | null = null // 2つの立ち方で決めた結果
+  gpsStatus: GpsStatus | null = null // 位置情報の様子（gps を渡したときだけ。none＝使えないブラウザ）
+  private gps: GpsLatest | null = null
+  private offGps: () => void = () => {}
   private timer: ReturnType<typeof setInterval>
   private offPacket: () => void = () => {}
   private onVisible: () => void
@@ -77,6 +85,24 @@ export class SensorRunner {
     }
     this.onVisible = () => o.onEvent(now(), `sensor:visible ${document.visibilityState}`)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onVisible)
+    // 位置情報（センサーラン）：速さと高さを1秒ごとのまとめに残す。様子が変わったら events に gps: on / none / denied / error <code>
+    if (o.gps && this.gate) {
+      const gps = new GpsLatest()
+      this.gps = gps
+      const watch = typeof o.gps === 'function' ? o.gps : watchGps
+      this.offGps = watch(
+        (f) => {
+          gps.fix(f)
+          o.onGps?.(f)
+        },
+        (s, code) => {
+          if (s === this.gpsStatus) return
+          this.gpsStatus = s
+          o.onEvent(now(), `gps: ${s}${code !== undefined ? ` ${code}` : ''}`)
+          o.onChange?.()
+        },
+      )
+    }
     this.timer = setInterval(() => this.tick(now()), HUNCH.tick * 1000)
   }
 
@@ -115,7 +141,7 @@ export class SensorRunner {
     this.lastTick = t
     const running = this.o.running ? this.o.running() : this.autoTick(t)
     if (running) this.runSec += dt
-    this.session.tick(t, running, this.o.camera?.() ?? null)
+    this.session.tick(t, running, this.o.camera?.() ?? null, this.gps?.at(t) ?? null)
   }
 
   // カメラなし：立った姿勢と走っているかを、センサーで決める
@@ -197,6 +223,7 @@ export class SensorRunner {
     this.closed = true
     clearInterval(this.timer)
     this.offPacket()
+    this.offGps() // 位置情報も止める（電池）
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onVisible)
     this.result = this.session.finish()
     return this.result
