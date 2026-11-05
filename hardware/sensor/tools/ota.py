@@ -28,7 +28,7 @@ async def find(match, timeout=30):
     def cb(d, a):
         nonlocal hit
         if hit is None and match(d, a):
-            hit = d
+            hit = (d, a)
 
     s = BleakScanner(detection_callback=cb)
     await s.start()
@@ -46,9 +46,13 @@ async def main(name, zip_path):
     print(f"== {name} を書き換えます（{len(image)} バイト）")
 
     # 1. アプリからブートローダーへ（前に途中で止まって、もうブートローダーで待っているときは飛ばす）
-    is_boot = lambda d, a: DFU_SERVICE in [u.lower() for u in a.service_uuids] or (a.local_name or "").startswith("AdaDFU")
-    dev = await find(lambda d, a: (a.local_name or d.name) == name or is_boot(d, a))
-    if dev and (dev.name or "").startswith("AdaDFU"):
+    # 名前は電波の名前（a.local_name）だけで見る。Mac は一度ブートローダーで見た機器を d.name に「AdaDFU」と覚えたままにし、
+    # アプリに戻っても書き換わらない（2026-11-05、全部の個体がそうなり、もう待っていると誤って切り替えを飛ばした）
+    boot_name = lambda a: (a.local_name or "").startswith("AdaDFU")
+    is_boot = lambda d, a: DFU_SERVICE in [u.lower() for u in a.service_uuids] or boot_name(a)
+    hit = await find(lambda d, a: a.local_name == name or is_boot(d, a))
+    dev = hit[0] if hit else None
+    if hit and is_boot(*hit):
         print("== もうブートローダーで待っています")
     elif not dev:
         sys.exit(f"{name} が見つかりません（電源、10分たって眠っていないか、ほかにつながっていないか）")
@@ -65,7 +69,8 @@ async def main(name, zip_path):
         await asyncio.sleep(2)
 
     # 2. ブートローダーに送る
-    boot = await find(lambda d, a: DFU_SERVICE in [u.lower() for u in a.service_uuids] or (a.local_name or "").startswith("AdaDFU"))
+    hit = await find(is_boot)
+    boot = hit[0] if hit else None
     if not boot:
         sys.exit("AdaDFU が見つかりません。USB（tools/flash.sh）で書き込み直してください")
     q = asyncio.Queue()
