@@ -5,9 +5,15 @@
 // 使い方: npm run drill [-- オプション]
 //   --dry-run              声を出さずに、時刻表だけ出す
 //   --try                  1区間だけ（崩しの最初の区間を16秒）声を出して試す。記録は一時フォルダに置く
-//   --steps a,b,…          崩しの並び（既定 head,down,hunch,lean,armstill,armcross,sit,heel,slow。ほかに bouncy,flat,upright）
+//   --steps a,b,…          崩しの並び（既定 head,down,hunch,lean,armstill,armcross,sit,heel,slow。ほかに bouncy,flat,upright,open。同じものを続けてもよい）
+// 確かめ走（2つの立ち方の猫背の見分けを確かめる。約14分）: npm run drill:pose
+//   2つの立ち方（アプリの案内）→ ジャンプ → ふつう3分 → 猫背20秒 ×2 → 胸を開く20秒 ×2 → 頭を前に20秒 ×2（それぞれ40秒の戻し）→ ふつう1分 → 歩き2分。
+//   区間の時刻（Mac の時計）が drill-….json に、知らせた時刻がアプリの記録（events の sensor:hunch・sensor:head、sensors.cues）に残るので、
+//   アプリの記録の clock（perfMs・epochMs）で Mac の時計にそろえて、区間ごとに知らせた回数を数える（猫背の区間は胸、頭の区間は頭が震えたか。
+//   胸を開く・ふつうの区間は震えないのが正しい）。センサーの記録の pose（2つの立ち方の差・見方）もいっしょに見る
 //   --walk 秒 / --walk-kmh 5.0   最初の歩き（0 で歩かない）と速さ
 //   --jog 秒 / --jog-kmh 8.0     ジョグ全体と速さ
+//   --poses 秒             最初に、アプリの声に従って2つの立ち方（いつもの楽な立ち方・胸を開いた立ち方）を測る間（既定 0。確かめ走は 60）
 //   --upright 秒           起きた形で走り出し、アプリの声に従って直す区間（既定 90。0 で入れない）
 //   --first 秒 / --sec 秒 / --gap 秒   最初のふつう・崩し・崩しのあとの戻し（0 で戻しなし）
 //   --cadence 歩/分        いつものピッチ（既定 165。2026-10-19 の時速8km のふつうの区間）。ピッチを落とす区間のメトロノームは、この 0.9 倍
@@ -68,6 +74,7 @@ let o = {
   steps: stepsOpt ? stepsOpt.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
   speeds: speedsOpt === undefined ? DEFAULTS.speeds : speedsOpt === 'none' ? [] : speedsOpt.split(',').map(Number),
   upright: num('--upright', DEFAULTS.upright),
+  poses: num('--poses', DEFAULTS.poses),
   cadence: num('--cadence', DEFAULTS.cadence),
   speedSec: num('--speed-sec', DEFAULTS.speedSec),
   moved: num('--moved', DEFAULTS.moved),

@@ -24,6 +24,8 @@ export const STEPS = {
   flat: { name: 'べた足', say: 'べた足で、ぺたっと着地', camera: [], phone: [], legs: true },
   // 起きた形（体を後ろに残す）。ふつうは走り出しの区間（options.upright）として使い、アプリの整える声（体が後ろに残っています）に従って直す
   upright: { name: '起きた形で走り出す', say: '体を少し後ろに残して、起きた形で', camera: ['bodyBack', 'trunkBack'], phone: [] },
+  // 胸を開いて走る（確かめ走。npm run drill:pose）。2つの立ち方の b に近い形なので、胸の猫背の知らせは出ないのが正しい
+  open: { name: '胸を開く', say: '胸を開いて、肩を後ろに引いて', camera: [], phone: [] },
 }
 
 // 既定の並び（2回目、2026-10-20 に決めた）：上体の崩しを走ったままの戻しで撮り直し、着地の崩し2つを足す
@@ -31,6 +33,9 @@ export const DEFAULT_STEPS = ['head', 'down', 'hunch', 'lean', 'armstill', 'armc
 
 export const DEFAULTS = {
   prep: 15, // 始めてから、歩き始めるまで（ベルトの上に立つ間）
+  // アプリの声に従って、2つの立ち方（いつもの楽な立ち方・胸を開いた立ち方）を測ってもらう間（確かめ走。0 で入れない）。
+  // アプリが案内するので、Mac は区切りの時刻を残すだけ（カメラ版は置き方の確かめのあと、センサーランは開いてすぐ）
+  poses: 0,
   walk: 300, // 最初の歩き（映り方と、歩きを走りと取り違えないかを確かめる）
   walkKmh: 5.0, // 歩きの速さ
   jump: true, // 歩いたあと、ベルトを止めてその場で1回ジャンプ（2台の時計のずれを見る）
@@ -63,6 +68,7 @@ export const DEFAULTS = {
 const kmh = (v) => v.toFixed(1)
 const SAY = {
   prep: '崩しの記録を始めます。カメラに全身が映る場所で、ベルトの上に立ってください。',
+  poses: (sec) => `アプリの声に従って、2つの立ち方を測ります。いつもの楽な立ち方と、胸を開いた立ち方です。ベルトの上で、案内のとおりに止まってください。${len(sec)}。`,
   walk: (o) => `トレッドミルを時速${kmh(o.walkKmh)}にしてください。歩きます。${len(o.walk)}。Mac の画面で、全身が映っているか確かめてください。`,
   stop: 'トレッドミルを止めてください。',
   jump: 'ジャンプの合図をします。その場で1回、軽くジャンプします。',
@@ -125,6 +131,7 @@ export function buildPlan(o = {}) {
     t += sec
   }
   if (opt.prep > 0) section('prep', 'prep', '立つ', opt.prep, SAY.prep)
+  if (opt.poses > 0) section('poses', 'poses', '2つの立ち方', opt.poses, SAY.poses(opt.poses), { kmh: 0 })
   if (opt.walk > 0) section('walk', 'walk', '歩く', opt.walk, SAY.walk(opt), { kmh: opt.walkKmh })
   if (opt.jump) {
     // ベルトを止めて、「ジャンプの合図をします」→ 3、2、1 → 「はい」。はいの時刻が、2台の記録と合わせる手がかり

@@ -14,7 +14,7 @@ import { SENSOR_RUN_NAME } from '../name'
 // 立った姿勢と走っているかは、センサーで決める（runner.ts）。記録は 60秒ごとに端末へ書き出す（runLog.ts。7時間まで）
 
 const PHASE_TEXT: Record<SensorRunPhase, { label: string; text: string }> = {
-  stand: { label: 'STAND', text: 'まっすぐ立って、3秒止まってください' },
+  stand: { label: 'STAND 1/2', text: 'いつもの楽な立ち方で、3秒止まってください' },
   ready: { label: 'READY', text: '走り出すと始まります' },
   run: { label: 'RUNNING', text: '見ています。崩れたら、その場所が震えます' },
   stop: { label: 'STOPPED', text: '止まっています。走り出すと続きます' },
@@ -30,6 +30,7 @@ const mmss = (sec: number) => {
 
 export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
   const [phase, setPhase] = useState<SensorRunPhase>('stand')
+  const [stage, setStage] = useState<'a' | 'b'>('a') // 2つの立ち方のどちらを測っているか
   const [runSec, setRunSec] = useState(0)
   const [wake, setWake] = useState(false)
   const [holding, setHolding] = useState(false)
@@ -46,7 +47,10 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       level: loadProgress().level,
       say: (text) => speak(text),
       speaking: voicePending,
-      onChange: () => setPhase(runner.phase),
+      onChange: () => {
+        setPhase(runner.phase)
+        setStage(runner.stage)
+      },
     })
     setPhase(runner.phase)
     rec.event(clock.perfMs / 1000, 'phase:sensorRun')
@@ -78,7 +82,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
 
   const on = nodes.filter((n) => n.status === 'connected')
   const lost = nodes.filter((n) => n.name && n.status === 'lost')
-  const p = PHASE_TEXT[phase]
+  const p = phase === 'stand' && stage === 'b' ? { label: 'STAND 2/2', text: '胸を開いて、肩を後ろに引いて、顎を軽く引いて、3秒止まってください' } : PHASE_TEXT[phase]
   const startHold = () => {
     setHolding(true)
     holdTimer.current = setTimeout(() => finishRef.current(), HOLD_MS)
@@ -104,8 +108,9 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       <div style={{ fontSize: 22, fontWeight: 900, lineHeight: 1.5 }}>{p.text}</div>
       {phase === 'stand' && (
         <div className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>
-          この3秒の姿勢を、今日の「まっすぐ」として覚えます。センサーは付けるたびに角度が変わるので、カメラのように「本当にまっすぐか」は確かめられません。
-          背筋を伸ばし、目線を正面にしてから止まってください（猫背のまま覚えると、猫背を基準にしてしまいます）。
+          2つの立ち方を3秒ずつ測ります（案内の声が終わってから）。1つ目はいつもの楽な立ち方、2つ目は胸を開いた立ち方です。
+          センサーは付けるたびに角度が変わるので、決まった線ではなく、この2つの違いを今日の猫背の物差しにします。
+          2つ目のほうへ近いほど良い姿勢として見ます（違いが小さいと、もう一度お願いします）。
         </div>
       )}
 

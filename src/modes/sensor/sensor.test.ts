@@ -590,3 +590,164 @@ describe('結果の画面の「センサーがずれたようです」', () => {
     expect(slipNotes(log)).toEqual(['胸のセンサーが13分ごろにずれたようです。次は付け直してください', '頭のセンサーが2分・3分ごろにずれたようです。次は付け直してください'])
   })
 })
+
+// 2つの立ち方（lean.ts の setPoses、params.ts の POSE）。a：いつもの楽な立ち方（猫背）、b：胸を開いた立ち方。
+// ここでは b を 0°、a を前へ 15° とし、走ると体ごと 8° 前に傾く（猫背のままなら 15 + 8 = 23°）
+describe('2つの立ち方で猫背を見る', () => {
+  const A = 15
+  const BODY = 8
+  // 0〜3秒 a、3〜6秒 b で立ち、6秒で決める。cam があれば、b のときのカメラの上体を渡す
+  const setup = (p = HUNCH, camB: number | null = null, a = A) => {
+    const d = new LeanDetector(p)
+    play(d, 0, 3, () => a, () => false)
+    const da = d.dirOver(3, 3)!
+    play(d, 3, 6, () => 0, () => false)
+    const db = d.dirOver(6, 3)!
+    return { d, ok: d.setPoses(da, db, camB) }
+  }
+  const run = (d: LeanDetector, from: number, to: number, tiltAt: (t: number) => number, cam: ((t: number) => { trunk: number; head: number }) | null = null, sideAt: (t: number) => number = () => 0) => {
+    const out: ({ t: number } & LeanStep)[] = []
+    for (let i = Math.round(from * 100); i < Math.round(to * 100); i++) {
+      const t = i / 100
+      d.sample(t, lean(tiltAt(t), sideAt(t)))
+      if (i % 10 === 0) out.push({ t, ...d.update(t, true, false, cam ? cam(t) : null) })
+    }
+    return out
+  }
+
+  it('a と b の角度を猫背の大きさ、b → a を前の向きにする。線は max(margin, poseFrac × 角度)', () => {
+    const { d, ok } = setup()
+    expect(ok).toBe(true)
+    expect(d.pose!.deg).toBeCloseTo(A, 1)
+    expect(d.margin()).toBeCloseTo(Math.max(HUNCH.margin, HUNCH.poseFrac * A), 5)
+    expect(d.fwd![0]).toBeCloseTo(1, 3) // 前（x）
+    // 猫背の割合：b ＝ 0、a ＝ 1
+    run(d, 6, 10, () => A)
+    expect(d.index()!).toBeGreaterThan(0.95)
+  })
+
+  it('差が poseMin より小さければ覚えない（呼ぶ側が測り直す）', () => {
+    const { d, ok } = setup(HUNCH, null, HUNCH.poseMin - 1)
+    expect(ok).toBe(false)
+    expect(d.pose).toBeNull()
+    expect(d.base).toBeNull()
+  })
+
+  it('猫背のまま走り出しても知らせる（走る前傾は poseCap までしか差し引かない）。今までの見方では知らせなかった', () => {
+    const { d } = setup()
+    const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => A + BODY)
+    const learned = out.find((o) => o.learned !== undefined)!
+    expect(learned.learned!).toBeCloseTo(A + BODY, 0)
+    expect(learned.offset!).toBeCloseTo(HUNCH.poseCap, 5)
+    expect(d.offset!.by).toBe('cap')
+    expect(out.filter((o) => o.cue && o.t > learned.t).length).toBeGreaterThan(3)
+    // 今までの見方（b を立った姿勢、走り出しの前傾 + margin）：猫背を基準にして知らせない
+    const old = new LeanDetector(HUNCH)
+    play(old, 0, 3, () => 0, () => false)
+    old.stand(3, 3)
+    expect(play(old, 3, 3 + HUNCH.skip + HUNCH.learn + 30, () => A + BODY, () => true).some((o) => o.cue)).toBe(false)
+  })
+
+  it('胸を開いたまま走れば（体ごとの前傾だけ）知らせない。そこから猫背になれば知らせる', () => {
+    const { d } = setup()
+    const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => BODY)
+    expect(out.find((o) => o.learned !== undefined)!.offset!).toBeCloseTo(BODY, 0) // poseCap より小さいので、そのまま差し引く
+    expect(d.offset!.by).toBe('sensor')
+    expect(out.some((o) => o.cue)).toBe(false)
+    const t0 = 6 + HUNCH.skip + HUNCH.learn + 30
+    expect(run(d, t0, t0 + 10, () => A + BODY).some((o) => o.cue)).toBe(true)
+  })
+
+  it('体ごとの前傾が大きくても、poseCap + 線の幅の内なら知らせない。越えると知らせる（体ごとの前傾と猫背は分けられない）', () => {
+    const line = HUNCH.poseCap + Math.max(HUNCH.margin, HUNCH.poseFrac * A)
+    for (const [lean, cue] of [[line - 1, false], [line + 2, true]] as const) {
+      const { d } = setup()
+      expect(run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => lean).some((o) => o.cue)).toBe(cue)
+    }
+  })
+
+  it('カメラ版：カメラの上体の増えが小さければ、差し引く分をそれ + poseCamSlack までに抑える', () => {
+    // b のときのカメラの上体 −4°。走り出しでカメラの上体は +2°（増え 6°）だが、胸は猫背のまま 23°
+    const { d } = setup(HUNCH, -4)
+    const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => A + BODY, () => ({ trunk: 2, head: 40 }))
+    const want = Math.min(HUNCH.poseCap, 6 + HUNCH.poseCamSlack)
+    expect(out.find((o) => o.learned !== undefined)!.offset!).toBeCloseTo(want, 3)
+    expect(d.offset!.by).toBe(want < HUNCH.poseCap ? 'camera' : 'cap')
+    expect(d.offset!.cam!).toBeCloseTo(6, 3)
+    expect(out.some((o) => o.cue)).toBe(true)
+    // カメラの値がなければ、センサーランと同じ（poseCap まで）
+    const s = setup(HUNCH, -4).d
+    run(s, 6, 6 + HUNCH.skip + HUNCH.learn + 1, () => A + BODY)
+    expect(s.offset!.by).toBe('cap')
+  })
+
+  const L0 = 6 + HUNCH.skip + HUNCH.learn // 走る前傾を覚え終わる t
+
+  it('猫背のまま3分走り続けても、ずれとみなさず知らせ続ける。5回のあとは poseBackoffEvery 秒ごと', () => {
+    const { d } = setup()
+    const out = run(d, 6, L0 + 180, () => A + BODY)
+    expect(out.some((o) => o.slip)).toBe(false)
+    expect(out.filter((o) => o.tilt !== null && o.t > L0 + 2).every((o) => o.plausible)).toBe(true)
+    const cues = out.filter((o) => o.cue).map((o) => o.t)
+    // はじめの5回は cooldown（4秒）ごと、そのあとは poseBackoffEvery ごと
+    cues.slice(1, HUNCH.poseBackoffAfter).forEach((t, i) => expect(t - cues[i]).toBeCloseTo(HUNCH.cooldown, 5))
+    cues.slice(HUNCH.poseBackoffAfter).forEach((t, i) => expect(t - cues[HUNCH.poseBackoffAfter - 1 + i]).toBeCloseTo(HUNCH.poseBackoffEvery, 5))
+    expect(cues[cues.length - 1]).toBeGreaterThan(L0 + 165) // 最後まで知らせている
+    // 線の下に poseBackoffReset 秒いたら、また4秒ごとに戻る
+    const t1 = L0 + 180
+    run(d, t1, t1 + HUNCH.poseBackoffReset + 5, () => BODY)
+    const again = run(d, t1 + HUNCH.poseBackoffReset + 5, t1 + HUNCH.poseBackoffReset + 20, () => A + BODY).filter((o) => o.cue).map((o) => o.t)
+    expect(again[1] - again[0]).toBeCloseTo(HUNCH.cooldown, 5)
+  })
+
+  it('ベルトが横に回った（b→a と直角に 25°）なら、猫背ではないので slipSec 秒でずれとみなす', () => {
+    const { d } = setup()
+    run(d, 6, L0 + 20, () => BODY)
+    const out = run(d, L0 + 20, L0 + 200, () => BODY + 12, null, () => 25)
+    const slip = out.find((o) => o.slip)
+    expect(slip).toBeDefined()
+    expect(slip!.t - (L0 + 20)).toBeGreaterThan(HUNCH.slipSec)
+    expect(slip!.t - (L0 + 20)).toBeLessThan(HUNCH.slipSec + 5)
+    expect(out.filter((o) => o.cue && o.t > slip!.t)).toHaveLength(0)
+  })
+
+  it('前へ大きく（猫背の割合が poseSlipIdx より大きい）傾いたままでも、ずれとみなす', () => {
+    const { d } = setup()
+    run(d, 6, L0 + 20, () => BODY)
+    const out = run(d, L0 + 20, L0 + 200, () => BODY + A * (HUNCH.poseSlipIdx + 0.5))
+    expect(out.some((o) => o.slip)).toBe(true)
+  })
+
+  it('今までの見方（stand）では、前と同じく越えたままなら slipSec 秒でずれとみなし、4秒ごとのまま', () => {
+    const old = new LeanDetector(HUNCH)
+    play(old, 0, 3, () => 0, () => false)
+    old.stand(3, 3)
+    play(old, 3, 3 + HUNCH.skip + HUNCH.learn + 10, () => BODY, () => true)
+    const out = play(old, 53, 200, () => BODY + 15, () => true)
+    expect(out.some((o) => o.slip)).toBe(true)
+    expect(out.every((o) => o.plausible === undefined)).toBe(true)
+  })
+
+  it('stand で覚え直すと、2つの立ち方の物差しは消えて今までの見方に戻る', () => {
+    const { d } = setup()
+    play(d, 6, 9, () => 0, () => false)
+    d.stand(9, 3)
+    expect(d.pose).toBeNull()
+    expect(d.margin()).toBe(HUNCH.margin)
+  })
+
+  it('頭：差が HEAD.poseMin 以上なら同じ見方、線は max(頭の margin, poseFrac × 差)', () => {
+    const { d, ok } = setup(HEAD, null, 12)
+    expect(ok).toBe(true)
+    expect(d.margin()).toBe(Math.max(HEAD.margin, HEAD.poseFrac * 12))
+    expect(setup(HEAD, null, HEAD.poseMin - 1).ok).toBe(false)
+  })
+
+  it('レベルで線の割合が変わる（初心者ほどゆるい）', () => {
+    expect(HUNCH_BY_LEVEL.beginner.poseFrac).toBeGreaterThan(HUNCH_BY_LEVEL.intermediate.poseFrac)
+    expect(HUNCH_BY_LEVEL.intermediate.poseFrac).toBeGreaterThan(HUNCH_BY_LEVEL.advanced.poseFrac)
+    const big = 30
+    const m = (lv: keyof typeof HUNCH_BY_LEVEL) => setup(HUNCH_BY_LEVEL[lv], null, big).d.margin()
+    expect(m('beginner')).toBeGreaterThan(m('advanced'))
+  })
+})

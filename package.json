@@ -20,6 +20,7 @@
     "logs": "node scripts/fetch-logs.mjs",
     "drill": "node scripts/treadmill-drill.mjs",
     "drill:short": "node scripts/treadmill-drill.mjs --walk 120 --upright 90 --first 240 --steps heel --sec 60 --gap 30 --speeds 9,10 --speed-sec 150 --jog 870 --moved 0 --cool 120 --hr 0",
+    "drill:pose": "node scripts/treadmill-drill.mjs --poses 60 --walk 0 --upright 0 --first 180 --steps hunch,hunch,open,open,head,head --sec 20 --gap 40 --speeds none --jog 600 --moved 0 --cool 120 --hr 0",
     "grade": "node scripts/treadmill-grade.mjs",
     "rec:landmarks": "node scripts/rec-landmarks.mjs"
   },

@@ -109,7 +109,8 @@ export interface Session {
   provisionalBaseline?: boolean // 動画で試したときの仮の基準
   logId?: string // 調整用の記録
   // 走る前の立ち姿勢（猫背のチェック）。hip は立った姿勢の腰の高さ（低いほうの足首から腰までの高さ ÷ 脚の長さ。走りの数字の腰の高さを割る）
-  standing?: { head: number; trunk: number; issue: 'head' | 'back' | null; hip?: number }
+  // 走る前の立ち姿勢（カメラ。胸を開いた立ち方）。issue：決まった線を越えていた（知らせるだけ）。habit：いつもの楽な立ち方（2つの立ち方の前の記録にはない）
+  standing?: { head: number; trunk: number; issue: 'head' | 'back' | null; hip?: number; habit?: { head: number; trunk: number } }
   focus?: { level: 'beginner' | 'intermediate' | 'advanced'; step: number } // この走りのレベルと、注意した項目の段階（level.ts）
   form?: FormResult[] // 正しいフォームとの比べ（カメラ版）
   gait?: GaitResult // 走りの数字（カメラ版）。声はかけず、結果の画面に出すだけ
@@ -161,6 +162,25 @@ export interface RunLog {
   storage?: { usage?: number; quota?: number; persisted?: boolean }
 }
 
+export type SensorRunLean = { t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'camera'; cam?: number | null }
+
+// 2つの立ち方（src/modes/sensor/session.ts の calibrate）。あとで、2つの立ち方の差と知らせた時刻を、確かめ走の区切りと比べるため。
+//   t：決めた t、tries：測った回数（差が小さくて測り直したぶんを含む）、a・b：最後に測った、いつもの楽な立ち方・胸を開いた立ち方の重力の向き、
+//   deg：a と b の角度（度）、mode：pose（2つの立ち方で見た）・fallback（差が poseMin より小さい、または片方しか測れず、b を立った姿勢にして今までの見方）、
+//   margin：使う線の幅（度）、frac：poseFrac、degs：測った回ごとの角度、cam：カメラ版で a・b のときのカメラの上体と頭の位置（度）
+export interface SensorPoseLog {
+  t: number
+  tries: number
+  a?: [number, number, number]
+  b?: [number, number, number]
+  deg: number | null
+  mode: 'pose' | 'fallback'
+  margin?: number
+  frac?: number
+  degs?: (number | null)[]
+  cam?: { a?: { trunk: number; head: number }; b?: { trunk: number; head: number } }
+}
+
 // センサーの記録（src/modes/sensor/log.ts の SensorRecorder で作り、decodeBlock で戻す）。時刻 t は rows と同じ時計の秒
 export interface SensorLog {
   version: 1
@@ -180,13 +200,17 @@ export interface SensorLog {
   bat?: [number, number, number][] // 電池の電圧 [t, nodes の何番目か, V]（SENSOR_LOG.batteryEvery 秒ごと）。前の記録にはない
   bends?: [number, number][] // 体を曲げた（物を拾うなど）とみなして、胸と頭で知らせなかった [t, 胸の傾き（度）]。前の記録にはない
   stand?: { t: number; base: [number, number, number] } // 立った姿勢を覚えた t と、胸の重力の向き
-  runLean?: { t: number; deg: number } // 走る前傾を覚えた t と角度（度）
+  // 走る前傾を覚えた t と角度（度）。2つの立ち方で見たときは、そのうち基準として差し引いた分（offset、度）と、
+  // 抑えたもの（by：sensor＝そのまま・cap＝上限・camera＝カメラの上体の増え）、カメラの上体の増え（cam、度）も
+  runLean?: SensorRunLean
+  pose?: SensorPoseLog // 2つの立ち方（胸）。前の記録にはない
   cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]
   slips?: [number, number, number][] // 胸のセンサーがずれたとみなした [t, ずれを測るもとの基準（度）, 置き直した基準（度）]。見張る前の記録にはない
   // 頭が前に出たのを頭のセンサーで見た記録（胸と同じ形）。頭を見る前の記録にはない
   head?: {
     stand?: { t: number; base: [number, number, number] }
-    runLean?: { t: number; deg: number }
+    runLean?: SensorRunLean
+    pose?: SensorPoseLog
     cues: [number, number, number][] // [t, 頭の前への傾き（度）, 震わせられたか 1/0]
     slips?: [number, number, number][] // 胸と同じ形
   }

@@ -72,7 +72,7 @@ const MODES: { key: RunMode; label: string; note: string }[] = [
   {
     key: 'sensor',
     label: SENSOR_RUN_NAME,
-    note: 'センサーだけで外を走ります（マラソンにも）。スマホはポケットかアームバンドに入れ、画面は消さずに見ません。崩れたら、その場所が震えます。始めたら、まっすぐ立って3秒止まってください',
+    note: 'センサーだけで外を走ります（マラソンにも）。スマホはポケットかアームバンドに入れ、画面は消さずに見ません。崩れたら、その場所が震えます。始めたら、声の案内に従って2つの立ち方で3秒ずつ止まってください',
   },
 ]
 const loadMode = (): RunMode => {
@@ -372,7 +372,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         )}
         <SensorPanel key={mode === 'sensor' ? 'open' : 'closed'} defaultOpen={mode === 'sensor' && sensorsOn === 0} />
         <div style={{ fontSize: 12 }} className="muted">
-          {mode === 'treadmill' && <>走る前に、まっすぐ立って基準を取ります{' · '}</>}
+          {mode === 'treadmill' && <>走る前に、2つの立ち方で基準を取ります{' · '}</>}
           <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>
             フォームの見方
           </a>

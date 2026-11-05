@@ -3,17 +3,19 @@ import { PHRASES } from '../../core/phrases'
 import type { SensorLog } from '../../core/types'
 import { sensors } from './ble'
 import { MotionGate } from './gate'
-import { HUNCH, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
-import { SensorSession } from './session'
+import { HUNCH, POSE, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
+import { SensorSession, type PoseName, type PoseResult } from './session'
 import type { CamValues } from './lean'
 
 // 1回の走りの間、センサーを動かす役（トレッドミルのカメラ版・センサーラン・腰スマホで共通）。
 // SensorSession（崩れの見分け・知らせ・記録）を HUNCH.tick 秒ごとに動かし、「立った姿勢」と「走っている」を渡す。
 //   カメラ版：running にカメラの「走っている」を渡し、立った姿勢はカメラが直立の基準を取ったときに stand を呼ぶ
 //   カメラなし（running を渡さない）：センサーの揺れで決める（gate.ts の MotionGate）。
-//     立った姿勢：胸と頭（つながっているもの）が3秒じっとしたら、その3秒で覚える（覚えるのは1回だけ。走り出したあとの信号待ちでは覚え直さない）。
-//     カメラがないので、立った姿勢がまっすぐかは確かめられない（付けるたびにセンサーの角度が変わるので、決まった線と比べられない）。
-//     崩れは、その立った姿勢と走り出しの前傾からの増え方で見る。猫背のまま立つと、猫背の走りを基準にしてしまう
+//     立った姿勢（say があるセンサーラン）：2つの立ち方を声で案内し、案内を言い終えてから胸と頭（つながっているもの）が3秒じっとしたら、その3秒で測る。
+//       a「いつもの楽な立ち方」→ b「胸を開いて、肩を後ろに引いて、顎を軽く引いて」。a と b の差が小さければ、案内して a から測り直す（POSE.retries 回まで）。
+//       使い切ったら、b を立った姿勢にして今までの見方（session.ts の calibrate）。覚えるのは1回だけ（走り出したあとの信号待ちでは覚え直さない）。
+//       胸のセンサーは付けるたびに角度が変わるので、決まった線ではなく、その日の2つの立ち方を物差しにする（lean.ts の setPoses）
+//     say がない（腰スマホ）：今までどおり、胸と頭が3秒じっとしたら、その3秒を立った姿勢として覚える（猫背のまま立つと、猫背の走りを基準にしてしまう）
 //     走っている：揺れが RUN_GATE の線を3秒越えたら走り出し、4秒下回ったら止まった。止まっている間は知らせない
 //   say を渡すと、立つ案内と待つ案内を声で言う（センサーラン。腰スマホはスマホ版の声があるので渡さない）
 
@@ -41,6 +43,8 @@ export class SensorRunner {
   runSec = 0 // 走っていた時間（秒）
   gaps = 0 // tick が GAP 秒より止まった回数
   trunk = false // 胸か頭が一度でもつながっていた（立った姿勢が要った）
+  stage: PoseName = 'a' // 2つの立ち方のどちらを測っているか（センサーラン）
+  poseResult: PoseResult | null = null // 2つの立ち方で決めた結果
   private timer: ReturnType<typeof setInterval>
   private offPacket: () => void = () => {}
   private onVisible: () => void
@@ -83,9 +87,22 @@ export class SensorRunner {
     return on
   }
 
-  // カメラ版：カメラが直立の基準を取り終えた t。止まっていた最後の sec 秒で覚える
+  // カメラ版：カメラが直立の基準を取り終えた t。止まっていた最後の sec 秒で覚える（2つの立ち方を使わないとき）
   stand(t: number, sec: number) {
     if (this.session.stand(t, sec)) this.stoodAt = t
+  }
+
+  // 2つの立ち方の1つを測り終えた t（カメラ版はカメラの3秒、センサーランはじっとした3秒）。cam：カメラ版のその3秒の上体と頭の位置
+  pose(which: PoseName, t: number, sec: number, cam: CamValues | null = null): boolean {
+    return this.session.pose(which, t, sec, cam)
+  }
+
+  // a と b を測り終えた t。final：もう測り直さない。retry なら、呼ぶ側が案内して a から測り直す。そうでなければ立った姿勢を覚えた
+  calibrate(t: number, final: boolean): PoseResult {
+    const r = this.session.calibrate(t, final)
+    this.poseResult = r
+    if (!r.retry && r.parts.some((p) => p.mode !== 'none')) this.stoodAt = t
+    return r
   }
 
   // HUNCH.tick 秒ごと（テストでは直接呼ぶ）
@@ -110,20 +127,42 @@ export class SensorRunner {
       this.o.onEvent(t, `sensor:run ${running ? 'on' : 'off'}${gate.last.place ? ` ${gate.last.place} ${gate.last.std?.toFixed(2)}` : ''}`)
       if (running) this.started = true
     }
-    // 立った姿勢：まだ覚えていなくて、止まっている間に胸と頭が3秒じっとしたら覚える
+    // 立った姿勢：まだ覚えていなくて、止まっている間に胸と頭が3秒じっとしたら測る
     // 案内を聞いている間に姿勢を直すので、言い終える前の3秒は使わない
     if (this.o.speaking?.()) this.quietSince = null
     else this.quietSince ??= t
     const quiet = this.quietSince !== null && t - this.quietSince >= STILL.sec
-    if (this.stoodAt === null && !running && quiet && gate.still(t) && this.session.stand(t, STILL.sec)) {
-      this.stoodAt = t
-      this.o.onEvent(t, 'sensor:autoStand')
-      if (!this.started) this.speak(t, PHRASES.baseDone)
+    const two = !!this.o.say // センサーラン：2つの立ち方。腰スマホ：今までどおり1つ
+    if (this.stoodAt === null && !running && quiet && gate.still(t)) {
+      if (!two) {
+        if (this.session.stand(t, STILL.sec)) {
+          this.stoodAt = t
+          this.o.onEvent(t, 'sensor:autoStand')
+        }
+      } else if (this.session.pose(this.stage, t, STILL.sec)) {
+        // 次の姿勢は、次の案内を言い終えてから測る（同じ3秒を使わない）
+        this.quietSince = null
+        if (this.stage === 'a') {
+          this.setStage('b')
+          this.speak(t, PHRASES.poseOpen)
+        } else {
+          const r = this.calibrate(t, this.session.poseTries >= POSE.retries)
+          this.setStage('a')
+          if (r.retry) {
+            this.speak(t, PHRASES.poseRetry)
+            this.speak(t, PHRASES.poseHabit)
+          } else {
+            this.o.onEvent(t, 'sensor:autoStand')
+            const chest = r.parts.find((p) => p.mode !== 'none')
+            if (!this.started) this.speak(t, chest?.mode === 'fallback' ? PHRASES.poseSmall : PHRASES.poseDone)
+          }
+        }
+      }
     }
-    // 案内（声）：立つ前は「まっすぐ立って3秒」、覚えてから走り出すまでは「走り出すと始まります」。走り出したあとは言わない
+    // 案内（声）：立つ前は、いま測る立ち方（言い直しも）、覚えてから走り出すまでは「走り出すと始まります」。走り出したあとは言わない
     if (!running && !this.started) {
       if (this.stoodAt === null && this.needsStand()) {
-        if (t - this.lastSay >= SENSOR_RUN_SAY.standRepeat) this.speak(t, PHRASES.baseStand)
+        if (t - this.lastSay >= SENSOR_RUN_SAY.standRepeat) this.speak(t, !two ? PHRASES.baseStand : this.stage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen)
       } else if (t - this.lastSay >= SENSOR_RUN_SAY.waitRepeat) this.speak(t, PHRASES.waitRun)
     }
     const phase: SensorRunPhase = running ? 'run' : this.started ? 'stop' : this.stoodAt === null && this.needsStand() ? 'stand' : 'ready'
@@ -132,6 +171,12 @@ export class SensorRunner {
       this.o.onChange?.()
     }
     return running
+  }
+
+  private setStage(s: PoseName) {
+    if (s === this.stage) return
+    this.stage = s
+    this.o.onChange?.()
   }
 
   private speak(t: number, text: string) {

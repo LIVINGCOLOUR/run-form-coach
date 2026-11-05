@@ -66,6 +66,22 @@ export interface LeanParams {
   camHeadRise: number
   camRef: number
   camMin: number
+  // 2つの立ち方（いつもの楽な立ち方 a と、胸を開いた立ち方 b）で見る（lean.ts の setPoses。下の POSE の説明）。すべて仮の値（確かめ走で決める）
+  poseMin: number // a と b の向きの差（度）がこれより小さければ、姿勢を変えられていないとみて測り直す（使い切ったら今までの見方）
+  poseFrac: number // 猫背の割合（b ＝ 0、a ＝ 1）がこれを越えたら崩れ。線は b からの「走りの前傾の分 + poseFrac × a と b の差」。ただし margin より狭くはしない
+  poseCap: number // 走り出しの前傾として差し引くのは、b からこれ（度）まで（猫背のまま走り出しても、猫背を基準にしないため）
+  poseCamSlack: number // カメラ版：差し引く前傾は、カメラの上体の前傾の増え（b の立ち姿勢から）+ これ（度）まで
+  // ずれと猫背の見分け（2つの立ち方で見るときだけ）：線を越えている向きが猫背としてありうる間は、ずれの見張り（slipSec）に数えない。
+  //   ありうる：猫背の割合（差し引いた走る前傾を除く。b ＝ 0、a ＝ 1）が poseIdxMin〜poseSlipIdx で、b→a と直角な横の傾きが max(poseSlipSide, poseSlipSideFrac × 差) 以下
+  poseIdxMin: number
+  poseSlipIdx: number
+  poseSlipSide: number
+  poseSlipSideFrac: number
+  // 猫背のまま走り続けたとき、4秒ごとに震え続けないよう：続けて poseBackoffAfter 回知らせたら、poseBackoffEvery 秒ごとにする。
+  // 線の下に poseBackoffReset 秒いたら数え直す
+  poseBackoffAfter: number
+  poseBackoffEvery: number
+  poseBackoffReset: number
 }
 
 const LEAN = {
@@ -96,6 +112,50 @@ const LEAN = {
   camHeadRise: 2,
   camRef: 60,
   camMin: 20,
+  poseMin: 5,
+  poseFrac: 0.5,
+  poseCap: 10,
+  poseCamSlack: 5,
+  poseIdxMin: 0.4,
+  poseSlipIdx: 1.8,
+  poseSlipSide: 8,
+  poseSlipSideFrac: 0.6,
+  poseBackoffAfter: 5,
+  poseBackoffEvery: 15,
+  poseBackoffReset: 10,
+}
+
+// 2つの立ち方（2026-11-05 から。すべて仮の値で、確かめ走（npm run drill -- --poses）で決める）
+//   走る前に、声の案内を言い終えてから、a「いつもの楽な立ち方」と b「胸を開いて、肩を後ろに引いて、顎を軽く引いた立ち方」を3秒ずつ測る。
+//   胸（頭）のセンサーの重力の向きの、b から a への回り方を「猫背の向き」、その角度を「猫背の大きさ」にする。
+//   走り出しの前傾から前の向きを決めていたのをやめる（前傾が小さいと向きが揺れで決まり、11-05 は横向きになった）。
+//   猫背の割合 ＝ b からその向きに沿った傾き ÷ a と b の差（b ＝ 0、a ＝ 1）。
+//   なぜ：カメラの立ち姿勢の線（腰→肩・肩→耳）では、本人のいつもの猫背（背中が丸く肩が前）とまっすぐを分けられなかった。
+//     今までの胸の見方は「立った姿勢 → 走り出し30秒の前傾」からの増えで見ていたので、猫背のまま走り出すと猫背を基準にして知らせなかった。
+//     胸のセンサーは付けるたびに角度が変わるので決まった線は持てず、その日のうちの2つの姿勢を物差しにする。
+//   走ると体ごと足首から前に傾き、それも同じ向きに出る。そこで、走り出しの前傾（b から猫背の向きに沿って）を基準として差し引くが、
+//     poseCap 度までにする（猫背のまま走り出したら、差し引けない分が線を越えて知らせる）。カメラ版は、カメラの上体の前傾の増え + poseCamSlack 度までにも抑える
+//     （カメラの上体は猫背をほとんど映さないので、カメラの増えはおもに体ごとの前傾）。
+//   知らせる線 ＝ 基準 + max(margin, poseFrac × a と b の差)。margin（今までの線）より狭くしない（外れた声を増やさない）。
+//   猫背のまま走り出したときに知らせる条件：a と b の差 + 体ごとの前傾 > poseCap + max(margin, poseFrac × 差)。
+//     例：差 15°・体ごと 8° → 23 > 10 + 7.5。差 8°・体ごと 5° → 13 < 10 + 5.5 で知らせない（差が小さい人には効きにくい）
+//   a と b の差が poseMin 度より小さいとき：もう一度、案内して測る（POSE.retries 回まで）。それでも小さければ、b を立った姿勢として今までの見方
+//     （走り出しの前傾 + margin）にもどし、記録に fallback と残す。頭は、頭の差が小さければ、頭だけ今までの見方（頭の margin のまま）
+//   ずれと猫背の見分け：線を越えた向きが b→a に沿っていて、猫背の割合が 0.4〜1.8・横の傾きが max(8°, 0.6 × 差) 以下なら猫背としてありうるので、
+//     ずれの見張り（slipSec）に数えない（猫背のまま走り続けても黙らない）。ベルトが横に回った・割合が 1.8 より大きいなどは、今までどおり slipSec 秒でずれとみなす。
+//     同じく、ありうる間は基準を前へ寄せず（follow。ゆっくり猫背になったのを吸わない）、寄せた基準が動いた（slipDrift）ともみなさない。
+//     カメラ版のカメラとの食い違い（camSlipSec）は今までどおり。b→a に沿ってずれたセンサーは猫背と見分けられない（カメラ版はカメラで見分ける）
+//   知らせ直す間隔：続けて5回（4秒ごと、約20秒）知らせたら、15秒ごとにする。線の下に10秒いたら4秒ごとに戻す
+//   これらはすべて仮の値（猫背の割合 1.8 は、走って猫背が立ったときの猫背より少し深くなっても数えないように、横 8° は記録の立った3秒の揺れ 3° の倍より上）
+//   poseMin 5（胸）：姿勢を本当に変えたかを見るだけの値。記録5本の立った3秒の中で、1秒ずつの胸の向きは3秒の平均から 0.8〜3.1° 動いた。
+//     頭は 0.9〜10.5°（11-03 は頭を動かしていた）と揺れが大きいので、頭は 8（HEAD）。どちらも仮の値
+//   poseFrac：中級 0.5（a と b のまん中）、初心者 0.6・上級 0.4（カメラの猫背の線と同じく、レベルで厳しさを変える）。頭は 0.5
+//   poseCap 10：記録5本で、カメラの上体の前傾は 立つ → 走る（真ん中）で +8.1〜+10.9° 増えた（体ごと前に傾く分の目安）。
+//     胸の走る前傾（立った姿勢から、走り出し30秒）は 6.3〜22.6° と幅があり、付け方のずれや猫背も入るので、カメラの増えに近い 10 にした
+//   poseCamSlack 5：胸の走る前傾 − カメラの上体の増え は、記録4本で −2〜+12°（ずれのあった 11-02 20:23 が +12）。その真ん中あたり
+export const POSE = {
+  retries: 2, // 差が小さいとき、測り直す回数（カメラの立ち姿勢の測り直しと同じ）
+  sec: 3, // 1つの姿勢を測る長さ（秒）
 }
 
 // 胸の猫背。実機：ふつうに走って胸 約12〜16°、猫背 約26〜28°、胸を張って 約18°（立った姿勢から）。立った姿勢からの決まった 18° では、ふつうの走りでも鳴った。
@@ -121,9 +181,9 @@ const LEAN = {
 //   +20° より大きく傾いて知らせるときだけ1秒待つ（ふつうの猫背の知らせ 24°・+10° 前後は待たない）
 // HUNCH は、レベルが分からないときの線（中級＝カメラの既定 DEFAULT_STRICT と同じ）
 export const HUNCH_BY_LEVEL: Record<Level, LeanParams> = {
-  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10 },
-  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10 },
-  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10 },
+  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseFrac: 0.6 },
+  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseFrac: 0.5 },
+  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseFrac: 0.4 },
 }
 export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 
@@ -137,7 +197,7 @@ export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 // bend 0：頭だけでは曲げたのと見分けられない（拾った3回の頭は基準から +53〜59°、わざと頭を前に出したテスト（11-02・11-03）でも +47〜50°）。胸で見る（session.ts）。
 // confirmAbove 35：知らせるときの傾きが基準 +35° 以上なら1秒待つ（拾った3回は知らせたとき +53°。ふつうの頭の知らせは +16〜32°、
 //   11-04 の 56分の頭の知らせ（カメラも頭が前に出たと言った）は +42° で、1秒遅れて知らせる）
-export const HEAD: LeanParams = { ...LEAN, place: HEAD_PLACE, margin: 18, slipDrift: 15, confirmAbove: 35 }
+export const HEAD: LeanParams = { ...LEAN, place: HEAD_PLACE, margin: 18, slipDrift: 15, confirmAbove: 35, poseMin: 8 }
 
 // 走った記録に入れるセンサーの値（log.ts）。センサーごとに約1秒ずつまとめる。場所ごとに残す間隔を変える（every：100Hz のうち何件に1件か）。
 //   mean：間引いた間の平均を残す（間引いた値の折り返しの揺れを残さない）。false なら、通し番号が every で割り切れる件をそのまま残す
@@ -308,7 +368,7 @@ export const CONTACT_BUZZ = { cueCount: 1, cueMs: 1000, praiseCount: 2, praiseMs
 //     走る前（置き方の確かめ。ベルトの上の歩き・立つ・動くを含む）：胸 上から5%で 0.12〜0.24 g、頭 0.09〜0.23 g、足首 0.31〜0.65 g
 //   胸 0.4・頭 0.3 は、そのあいだ。足首は歩きと重なる（0.65 と 0.55）ので、胸も頭もないときだけ使う（足首の接地の見分けは、歩きの1歩を別に捨てる。contact.ts の dfMax）。
 //   外の歩き・ゆっくりのジョグ（マラソンの後半など）で合うかは、まだ確かめていない
-// 立っている（カメラなしの「まっすぐ立って3秒」）：胸と頭（つながっているもの）が、直近 sec 秒、加速度のばらつき accStd g 以下・ジャイロの大きさの
+// 立っている（カメラなしの「3秒止まって」）：胸と頭（つながっているもの）が、直近 sec 秒、加速度のばらつき accStd g 以下・ジャイロの大きさの
 //   真ん中 gyroMed dps 以下・上から1割 gyroP90 dps 以下。カメラが直立の基準を取った3秒（同じ4本）は、胸 0.004〜0.026 g・真ん中 2〜9 dps・上から1割 4〜24 dps、
 //   頭 0.008〜0.026 g・真ん中 3〜22 dps・上から1割 6〜127 dps（頭を動かしていた2本は、ここでは取り直しになる）
 export const RUN_GATE = {
@@ -321,6 +381,6 @@ export const RUN_GATE = {
   stopSec: 4,
 }
 export const STILL = { sec: 3, accStd: 0.03, gyroMed: 15, gyroP90: 30, minN: 50, places: ['胸', '頭'] }
-// センサーランの案内（声）。立った姿勢が取れるまで、この間隔（秒）で「まっすぐ立って、3秒止まってください」を言い直す。
+// センサーランの案内（声）。立った姿勢が取れるまで、この間隔（秒）で、いま測る立ち方の案内を言い直す。
 // 立った姿勢を覚えてから走り出すまでは「走り出すと始まります」を言い直す（走り出したあとの信号待ちでは言わない）
 export const SENSOR_RUN_SAY = { standRepeat: 20, waitRepeat: 30 }

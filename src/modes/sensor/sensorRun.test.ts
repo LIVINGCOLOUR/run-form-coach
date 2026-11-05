@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { MotionGate, windowStats } from './gate'
-import { RUN_GATE, SLOTS, STILL } from './params'
+import { HUNCH, POSE, RUN_GATE, SLOTS, STILL } from './params'
 import type { Packet, Vec3 } from './parse'
 import { sensors } from './ble'
 import { SensorRunner } from './runner'
@@ -12,10 +12,16 @@ import type { RunLog } from '../../core/types'
 
 const HZ = 100
 // 1件ぶんの値。kind：立つ（ほぼ揺れない）・歩く（0.25g の揺れ）・走る（1g の揺れ。浮いている間と着地）
-type Kind = 'stand' | 'walk' | 'run' | 'hunch'
+// slouch：いつもの楽な立ち方（胸が前へ 15°。止まっている）
+type Kind = 'stand' | 'slouch' | 'walk' | 'run' | 'hunch'
+const SLOUCH = 15
 function imu(kind: Kind, t: number, k: number): { a: Vec3; g: Vec3 } {
   const jitter = ((k * 7919) % 13) / 13 - 0.5 // 決まった小さな揺れ（乱数を使わない）
   if (kind === 'stand') return { a: [0.002 * jitter, 0, 1 + 0.004 * jitter], g: [2 * jitter, 1, 1] }
+  if (kind === 'slouch') {
+    const r = (SLOUCH * Math.PI) / 180
+    return { a: [Math.sin(r) + 0.002 * jitter, 0, Math.cos(r) + 0.004 * jitter], g: [2 * jitter, 1, 1] }
+  }
   if (kind === 'hunch') return { a: [Math.sin((30 * Math.PI) / 180) * (1 + Math.sin(2 * Math.PI * 2.8 * t)), 0, Math.cos((30 * Math.PI) / 180) * (1 + Math.sin(2 * Math.PI * 2.8 * t))], g: [120 * Math.sin(2 * Math.PI * 2.8 * t), 30, 10] }
   const amp = kind === 'walk' ? 0.25 : 1.0
   const f = kind === 'walk' ? 1.9 : 2.8
@@ -135,13 +141,20 @@ function send(place: string, kind: Kind, from: number, sec: number, runner: Sens
   return from + sec
 }
 
+// cond が true になるまで（max 秒まで）0.1秒ずつ流す。2つの立ち方の段階が変わったところで、次の姿勢に変えるため
+function sendUntil(place: string, kind: Kind, from: number, runner: SensorRunner, cond: () => boolean, max = 20) {
+  let t = from
+  while (!cond() && t - from < max) t = send(place, kind, t, 0.1, runner)
+  return t
+}
+
 describe('センサーだけで動かす（runner.ts の SensorRunner。センサーラン・腰スマホといっしょ）', () => {
   afterEach(() => {
     for (const n of hub.nodes) if (n.status === 'connected') n.status = 'idle'
     hub.refresh()
   })
 
-  it('立つ案内 → じっとした3秒で立った姿勢を覚える → 走り出す → 猫背で知らせる → 信号で止まる', () => {
+  it('2つの立ち方の案内 → じっとした3秒ずつで測る → 走り出す → 猫背で知らせる → 信号で止まる', () => {
     connect(['胸'])
     const events: [number, string][] = []
     const said: string[] = []
@@ -150,13 +163,23 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     expect(r.phase).toBe('stand')
     // ポケットに入れる間（揺れる）
     t = send('胸', 'walk', t, 3, r)
-    expect(said[0]).toBe(PHRASES.baseStand)
+    expect(said[0]).toBe(PHRASES.poseHabit)
     expect(r.stoodAt).toBe(null)
+    // a：いつもの楽な立ち方（猫背）。3秒じっとしたら、b の案内に進む
+    t = sendUntil('胸', 'slouch', t, r, () => r.stage === 'b')
+    expect(r.stage).toBe('b')
+    expect(said).toContain(PHRASES.poseOpen)
+    expect(r.stoodAt).toBe(null)
+    // b：胸を開いた立ち方。案内のあと、もう一度3秒じっとしたら決める
     t = send('胸', 'stand', t, 4, r)
     expect(r.stoodAt).not.toBe(null)
+    expect(r.poseResult!.parts.find((p) => p.key === 'chest')).toMatchObject({ mode: 'pose' })
+    // 窓のふちに、ポケットに入れる間の値が少し入ることがある（じっとしたかは gate.ts の窓で見ている）
+    expect(Math.abs(r.poseResult!.parts.find((p) => p.key === 'chest')!.deg! - SLOUCH)).toBeLessThan(1.5)
     expect(events.some((e) => e[1] === 'sensor:autoStand')).toBe(true)
     expect(events.some((e) => e[1] === 'sensor:stand')).toBe(true)
-    expect(said).toContain(PHRASES.baseDone)
+    expect(events.some((e) => e[1].startsWith('sensor:pose 胸 pose '))).toBe(true)
+    expect(said).toContain(PHRASES.poseDone)
     expect(r.phase).toBe('ready')
     // 走る：走る前傾を覚える（10秒たってから30秒）まで、知らせない
     t = send('胸', 'run', t, 50, r)
@@ -179,6 +202,13 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     const log = r.finish()!
     expect(log.stand).toBeDefined()
     expect(log.runLean).toBeDefined()
+    // 2つの立ち方の記録：向き・角度・見方。走る前傾のうち差し引いた分（走る 12° は poseCap より大きいので poseCap）
+    expect(log.pose).toMatchObject({ mode: 'pose', tries: 1 })
+    expect(Math.abs(log.pose!.deg! - SLOUCH)).toBeLessThan(1.5)
+    expect(log.pose!.a).toHaveLength(3)
+    expect(log.pose!.b).toHaveLength(3)
+    expect(log.runLean!.offset).toBeDefined()
+    expect(log.secCols).toContain('chestIdx')
     // 1秒ごとのまとめに、走っていたか（センサーで決めたもの）が入る
     const iRun = log.secCols!.indexOf('run')
     expect(log.sec!.some((row) => row[iRun] === 1)).toBe(true)
@@ -192,11 +222,20 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     )
   })
 
-  it('案内の声を話している間にじっとしても、立った姿勢を覚えない（言い終えてから3秒で覚える）', () => {
+  it('案内の声を話している間にじっとしても、測らない（言い終えてから3秒で測る）', () => {
     connect(['胸'])
     let speaking = true
     const r = new SensorRunner({ onEvent: () => {}, say: () => {}, speaking: () => speaking })
     let t = performance.now() / 1000
+    t = send('胸', 'slouch', t, 6, r)
+    expect(r.stage).toBe('a')
+    speaking = false
+    t = send('胸', 'slouch', t, 2, r)
+    expect(r.stage).toBe('a')
+    t = send('胸', 'slouch', t, 2, r)
+    expect(r.stage).toBe('b')
+    // b の案内を話している間も測らない
+    speaking = true
     t = send('胸', 'stand', t, 6, r)
     expect(r.stoodAt).toBe(null)
     speaking = false
@@ -204,6 +243,64 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     expect(r.stoodAt).toBe(null)
     send('胸', 'stand', t, 2, r)
     expect(r.stoodAt).not.toBe(null)
+  })
+
+  it('2つの立ち方の差が小さい：案内して測り直し（POSE.retries 回）、それでも小さければ今までの見方にして記録に残す', () => {
+    connect(['胸'])
+    const events: string[] = []
+    const said: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text), say: (x) => said.push(x) })
+    let t = performance.now() / 1000
+    for (let i = 0; i < POSE.retries; i++) {
+      t = sendUntil('胸', 'stand', t, r, () => r.stage === 'b') // a（変えていない）
+      t = sendUntil('胸', 'stand', t, r, () => r.stage === 'a') // b
+      expect(r.stoodAt).toBe(null)
+      expect(r.stage).toBe('a')
+      expect(said.filter((x) => x === PHRASES.poseRetry)).toHaveLength(i + 1)
+    }
+    t = sendUntil('胸', 'stand', t, r, () => r.stage === 'b')
+    t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null)
+    expect(r.stoodAt).not.toBe(null)
+    expect(r.poseResult!.parts.find((p) => p.key === 'chest')!.mode).toBe('fallback')
+    expect(said).toContain(PHRASES.poseSmall)
+    expect(events.filter((e) => e.startsWith('sensor:poseDiff'))).toHaveLength(POSE.retries + 1)
+    expect(events.some((e) => e.startsWith('sensor:poseFallback 胸'))).toBe(true)
+    expect(r.session.current()!.pose).toMatchObject({ mode: 'fallback', tries: POSE.retries + 1 })
+    expect(r.session.current()!.pose!.degs).toHaveLength(POSE.retries + 1)
+    // 今までの見方：走る前傾 + margin で見る（走り出しの猫背を基準にする）
+    send('胸', 'run', t, 50, r)
+    expect(r.session.current()!.runLean!.offset).toBeUndefined()
+    r.finish()
+  })
+
+  it('猫背のまま走り出しても（走り出しから 30°）、2つの立ち方で見れば知らせる', () => {
+    connect(['胸'])
+    const r = new SensorRunner({ onEvent: () => {}, say: () => {} })
+    let t = performance.now() / 1000
+    t = sendUntil('胸', 'slouch', t, r, () => r.stage === 'b')
+    t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null)
+    send('胸', 'hunch', t, 70, r)
+    const log = r.finish()!
+    expect(log.runLean!.deg).toBeGreaterThan(25)
+    expect(log.runLean!.offset).toBe(HUNCH.poseCap)
+    return new Promise<void>((done) =>
+      setTimeout(() => {
+        expect(log.cues.length).toBeGreaterThan(3)
+        done()
+      }, 0),
+    )
+  })
+
+  it('腰スマホ（声の案内なし）は、今までどおり1つの立ち方を覚える', () => {
+    connect(['胸'])
+    const events: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text) })
+    let t = performance.now() / 1000
+    t = send('胸', 'stand', t, 4, r)
+    expect(r.stoodAt).not.toBe(null)
+    expect(events).toContain('sensor:autoStand')
+    expect(events.some((e) => e.startsWith('sensor:pose'))).toBe(false)
+    r.finish()
   })
 
   it('アプリが止まっていた（画面が消えた）間を events に残す。足首だけなら立つ案内は出さない', () => {
@@ -217,7 +314,7 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     r.tick(t + 10)
     expect(r.gaps).toBe(1)
     expect(events.some((e) => e.startsWith('sensor:gap'))).toBe(true)
-    expect(said).not.toContain(PHRASES.baseStand)
+    expect(said).not.toContain(PHRASES.poseHabit)
     expect(said).toContain(PHRASES.waitRun)
     expect(r.trunk).toBe(false)
     r.finish()

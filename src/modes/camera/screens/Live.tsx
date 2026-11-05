@@ -17,11 +17,12 @@ import { todayFocus } from '../nextStep'
 import { LogRecorder } from '../log'
 import { preloadVoice, speak, stopVoice, voicePending } from '../../../core/voice'
 import { PHRASES } from '../../../core/phrases'
-import { capBaseline, median, standingDecision, type Standing, type StandingIssue } from '../standing'
+import { capBaseline, median, standingIssue, type Standing, type StandingIssue } from '../standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
 import { fullFrames } from '../fullFrames'
 import { SensorRunner } from '../../sensor/runner'
 import { sensors } from '../../sensor/ble'
+import { POSE } from '../../sensor/params'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -37,6 +38,7 @@ interface Hud {
   countdown?: number
   error?: string
   problem?: string | null // 置き方で、いま足りないこと（null ならそろっている）
+  pose?: 'a' | 'b' // 直立の基準で、いま測っている立ち方（a：いつもの楽な立ち方、b：胸を開いた立ち方）
 }
 
 // 頭から足までが画面の高さの何割か。超広角で 1m 前後なら約6割、3m だと約2割
@@ -81,8 +83,11 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let baseMovingSince: number | null = null
     let baseStands: Standing[] = []
     let baseHips: number[] = [] // 立った姿勢の腰の高さ（走りの数字の腰の高さを割る）
-    let baseTries = 0 // 立ち姿勢を直してもらった回数
-    let standing: { head: number; trunk: number; issue: StandingIssue | null; hip?: number } | undefined
+    let baseTries = 0 // 2つの立ち方を測り直してもらった回数（差が小さかった）
+    // 2つの立ち方：a「いつもの楽な立ち方」→ b「胸を開いて、肩を後ろに引いて、顎を軽く引いて」を3秒ずつ（params.ts の POSE）
+    let poseStage: 'a' | 'b' = 'a'
+    let poseA: Standing | undefined // a のときのカメラの頭の位置と上体（記録と結果の画面用）
+    let standing: { head: number; trunk: number; issue: StandingIssue | null; hip?: number; habit?: Standing } | undefined
     let provisional: number[] = []
     let lastHud = 0
     let caption = ''
@@ -384,7 +389,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             // 次に何をすればいいかまで、続けて声で言う（画面は見えない前提）
             lastNextSay = t
             say(PHRASES.placeOk, t)
-            say(PHRASES.baseStand, t)
+            say(PHRASES.poseHabit, t)
+            poseStage = 'a'
+            setHud((hh) => ({ ...hh, pose: 'a' }))
             setPhase('baseline')
             stillSince = null
           }
@@ -423,7 +430,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         // 骨格の推定は止まっていても少し揺れるので、1秒続けて動いたときだけ数え直す
         if (moving) baseMovingSince ??= t
         else baseMovingSince = null
-        // 案内（「まっすぐ立って、3秒止まって」や測り直しの声）を言い終えるまでは測らない。聞きながら姿勢を直すため
+        // 案内（2つの立ち方や測り直しの声）を言い終えるまでは測らない。聞きながら姿勢を直すため
         if (voicePending() || (baseMovingSince !== null && t - baseMovingSince > BASELINE.movingTolerance)) {
           stillSince = null
           baseNecks = []
@@ -440,29 +447,50 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           const left = Math.max(1, Math.ceil(BASELINE.settle + BASELINE.collect - el))
           setHud((hh) => (hh.countdown === left ? hh : { ...hh, countdown: left }))
           if (el > BASELINE.settle + BASELINE.collect && baseNecks.length > 10) {
-            // 猫背のチェック：決まった線（今日の基準ではない）と比べ、越えていたら背筋を伸ばしてもらって取り直す
-            // （BASELINE.retries 回まで。それでもだめならその姿勢で始める。standing.ts の standingDecision）
+            // 2つの立ち方（a → b）を3秒ずつ。カメラの頭の位置と上体を記録に残し、胸・頭のセンサーの向きも測る（sensor/session.ts の pose・calibrate）。
+            // カメラの立ち姿勢の線（standing.ts）では、いつもの猫背とまっすぐを分けられなかったので、「まっすぐです」とは言わない
             const st = { head: median(baseStands.map((x) => x.head)), trunk: median(baseStands.map((x) => x.trunk)) }
-            const { issue, retry } = standingDecision(st, baseTries)
-            if (retry) {
-              baseTries++
-              say(PHRASES.baseHunch, t)
+            const cam = { trunk: st.trunk, head: st.head }
+            rec.event(t, `pose:${poseStage} head ${st.head.toFixed(1)} trunk ${st.trunk.toFixed(1)} neck ${median(baseNecks).toFixed(1)}`)
+            sensorRun?.pose(poseStage, t, BASELINE.collect, cam)
+            const restart = () => {
               lastNextSay = t
               stillSince = null
               baseNecks = []
               baseStands = []
               baseHips = []
+            }
+            if (poseStage === 'a') {
+              poseA = st
+              poseStage = 'b'
+              setHud((hh) => ({ ...hh, pose: 'b' }))
+              say(PHRASES.poseOpen, t)
+              restart()
             } else {
-              const today = median(baseNecks)
-              const createdAt = Date.now()
-              baseline = { neck: capBaseline(today, loadBaselines()), createdAt, ...st }
-              saveBaseline({ neck: today, createdAt, ...st })
-              standing = { ...st, issue, hip: median(baseHips) }
-              say(!issue ? PHRASES.baseGood : issue === 'head' ? PHRASES.baseHeadLeft : PHRASES.baseBackLeft, t)
-              say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
-              lastNextSay = t
-              sensorRun?.stand(t, BASELINE.collect) // 胸・頭のセンサーの立った姿勢の向き（線の内側に入った3秒。測り直しを使い切ったときは、その3秒）
-              setPhase('run')
+              // 胸（なければ頭）のセンサーで、a と b の差が小さければ測り直す（POSE.retries 回まで。使い切ったら、b を立った姿勢にして今までの見方）
+              const r = sensorRun?.calibrate(t, baseTries >= POSE.retries) ?? null
+              if (r?.retry) {
+                baseTries++
+                poseStage = 'a'
+                setHud((hh) => ({ ...hh, pose: 'a' }))
+                say(PHRASES.poseRetry, t)
+                say(PHRASES.poseHabit, t)
+                restart()
+              } else {
+                // 基準（首の角度・立ち姿勢・腰の高さ）は b（胸を開いた立ち方）で取る：目指す形を今日の基準にする（いつもの猫背を基準にしない）
+                const today = median(baseNecks)
+                const createdAt = Date.now()
+                baseline = { neck: capBaseline(today, loadBaselines()), createdAt, ...st }
+                saveBaseline({ neck: today, createdAt, ...st })
+                // 決まった線（standing.ts）は、b でも越えていたら知らせるだけ（測り直さない。越えていなくても、まっすぐとは言わない）
+                const issue = standingIssue(st)
+                standing = { ...st, issue, hip: median(baseHips), habit: poseA }
+                const fallback = r?.parts.find((x) => x.mode !== 'none')?.mode === 'fallback'
+                say(fallback ? PHRASES.poseSmall : issue === 'head' ? PHRASES.baseHeadLeft : issue === 'back' ? PHRASES.baseBackLeft : PHRASES.poseDone, t)
+                say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
+                lastNextSay = t
+                setPhase('run')
+              }
             }
           }
         }
@@ -471,7 +499,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       // 基準がなかなか取れないときは、立ち方をもう一度言う
       if (phase === 'baseline' && t - lastNextSay > BASELINE.repeat) {
         lastNextSay = t
-        say(PHRASES.baseStand, t)
+        say(poseStage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen, t)
       }
 
       // 走行中
@@ -555,7 +583,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
   const dark = screenMode === 'dark' && (hud.phase === 'baseline' || hud.phase === 'run')
   const darkLabel = hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.state === 'waiting' ? 'READY' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
   const darkText =
-    hud.phase === 'setup' ? '置き方を声で案内します' : hud.phase === 'baseline' ? 'まっすぐ立って、3秒止まってください' : hud.state === 'waiting' ? '走り出すと始まります' : hud.state === 'paused' ? '一時停止中' : '画面を消しても、声でお知らせします'
+    hud.phase === 'setup' ? '置き方を声で案内します' : hud.phase === 'baseline' ? (hud.pose === 'b' ? '胸を開いて、3秒止まってください' : 'いつもの楽な立ち方で、3秒止まってください') : hud.state === 'waiting' ? '走り出すと始まります' : hud.state === 'paused' ? '一時停止中' : '画面を消しても、声でお知らせします'
   const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
   const last = hud.last
 
@@ -650,8 +678,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             <div style={{ position: 'absolute', left: 12, right: 12, top: 'max(70px, calc(env(safe-area-inset-top) + 60px))', padding: '12px 16px', borderRadius: 18, background: 'rgba(10,12,14,0.78)', display: 'flex', alignItems: 'center', gap: 16 }}>
               <div className="num" style={{ fontSize: 72, color: 'var(--accent)', width: 50, textAlign: 'center' }}>{Math.max(1, Math.min(3, hud.countdown ?? 3))}</div>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.4 }}>目線は正面に。上から吊られるように、まっすぐ立って3秒止まる</div>
-                <div style={{ fontSize: 12 }} className="muted">初回だけ。写真は残さず、骨格の角度だけを使います</div>
+                <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.4 }}>{hud.pose === 'b' ? '2つ目：胸を開いて、肩を後ろに引いて、顎を軽く引いて3秒止まる' : '1つ目：いつもの楽な立ち方で3秒止まる'}</div>
+                <div style={{ fontSize: 12 }} className="muted">2つの立ち方の違いを、猫背の物差しにします。写真は残さず、骨格の角度だけを使います</div>
               </div>
             </div>
           )}

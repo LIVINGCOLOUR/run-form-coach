@@ -100,7 +100,8 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.5, paddingTop: 4 }}>{summary}</div>
         {s.standing && (
           <div style={{ fontSize: 12 }} className="muted">
-            走る前の立ち姿勢：{s.standing.issue === 'head' ? '頭が前に出ていました' : s.standing.issue === 'back' ? '背中が丸まっていました' : '頭も背中もまっすぐ'}（頭 {Math.round(s.standing.head)}° / 上体 {Math.round(s.standing.trunk)}°）
+            走る前の立ち姿勢{s.standing.habit ? '（胸を開いた形）' : ''}：{s.standing.issue === 'head' ? '頭が前に出ていました' : s.standing.issue === 'back' ? '背中が丸まっていました' : 'カメラの線の内側'}（頭 {Math.round(s.standing.head)}° / 上体 {Math.round(s.standing.trunk)}°
+            {s.standing.habit && `、いつもの立ち方 頭 ${Math.round(s.standing.habit.head)}° / 上体 ${Math.round(s.standing.habit.trunk)}°`}）
           </div>
         )}
         {s.provisionalBaseline && <div style={{ fontSize: 12, color: 'var(--warn)' }}>動画で試したため、直立の基準は仮のものです</div>}

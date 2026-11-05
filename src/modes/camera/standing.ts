@@ -6,7 +6,9 @@ import { BASELINE } from './params'
 //   頭：肩の真上に耳があるか（頭が前に出ると、肩→耳の線が前に倒れる）
 //   上体：腰の真上に肩があるか（背中が丸まると、肩が前に落ちて腰→肩の線が前に倒れる）
 // 角度は鉛直からの前傾（度）。今日の基準ではなく、決まった線（params.ts の BASELINE.standingHead・standingTrunk。決め方もそこ）と比べる。
-// 猫背で立ったままだと、その形が胸・頭のセンサーの「立った姿勢」になってしまうので、線の内側に入ってから基準を取る
+// この線では、いつもの猫背（背中が丸く、肩が前）とまっすぐを分けられない（2026-11-05）。そこで、2つの立ち方（いつもの楽な立ち方と、胸を開いた立ち方）を
+// 胸・頭のセンサーで比べるようにし（sensor/session.ts の calibrate）、この線は、胸を開いた立ち方でも越えていたら知らせるだけにした（測り直さない）。
+// 越えていなくても「まっすぐ」とは言わない
 export const STANDING_LIMITS = { head: BASELINE.standingHead, trunk: BASELINE.standingTrunk }
 
 export interface Standing {
@@ -25,20 +27,12 @@ export function standingIssue(s: Standing): StandingIssue | null {
   return back * 2 >= head ? 'back' : 'head'
 }
 
-// 3秒の直立を測り終えたときに、どうするか。tries：これまでに測り直してもらった回数。
-//   猫背（線を越えた）で、まだ BASELINE.retries 回に届いていなければ retry（「猫背になっています。背筋をまっすぐ伸ばしてください」と言って測り直す）。
-//   線の内側か、測り直しを使い切ったら accept（その姿勢で基準を取り、センサーの立った姿勢もこの3秒で覚える）。使い切ったときは issue が残る（結果の画面に出す）
-export function standingDecision(s: Standing, tries: number): { issue: StandingIssue | null; retry: boolean } {
-  const issue = standingIssue(s)
-  return { issue, retry: issue !== null && tries < BASELINE.retries }
-}
-
 export const median = (xs: number[]) => {
   const s = xs.slice().sort((a, b) => a - b)
   return s[Math.floor(s.length / 2)]
 }
 
-// 猫背ぎみに立った日に基準が甘くならないよう、直近の基準の真ん中より5°以上悪い分は5°までに抑える
+// 基準（首の角度）は、胸を開いた立ち方（b）で取る。猫背ぎみに立った日に基準が甘くならないよう、直近の基準の真ん中より5°以上悪い分は5°までに抑える
 export const BASELINE_SLACK = BASELINE.slack
 export function capBaseline(neck: number, history: Baseline[]): number {
   if (!history.length) return neck

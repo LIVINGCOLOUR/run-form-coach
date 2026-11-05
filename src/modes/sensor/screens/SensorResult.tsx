@@ -54,7 +54,7 @@ export function SensorResult({ logId, onHome }: { logId: string; onHome: () => v
           ))}
           {!sum.stood && sum.trunk && (
             <div style={{ color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
-              立った姿勢が取れなかったので、胸と頭は見ていません（接地は見ています）。次は、始めてすぐにまっすぐ立って3秒止まってください。
+              立った姿勢が取れなかったので、胸と頭は見ていません（接地は見ています）。次は、始めてすぐに、案内に従って2つの立ち方で3秒ずつ止まってください。
             </div>
           )}
           {sum.gaps > 0 && (

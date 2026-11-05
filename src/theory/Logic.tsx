@@ -7,6 +7,17 @@ import { FORM_ORDER } from '../modes/camera/form'
 import { measure } from '../modes/camera/geometry'
 import { demoStride } from '../modes/camera/ui/figure'
 import { PHRASES } from '../core/phrases'
+import { HEAD as S_HEAD, HUNCH as S_HUNCH, HUNCH_BY_LEVEL as S_HUNCH_BY_LEVEL, POSE } from '../modes/sensor/params'
+
+// 2つの立ち方で、走っている間に猫背を見る仕組み（sensor/lean.ts の setPoses。数字は sensor/params.ts。どれも確かめ走の前の仮の値）
+const POSE_NOTE =
+  `走っている間は、胸を開いた形（2つ目）を 0、いつもの形（1つ目）を 1 とした「猫背の割合」を見る。` +
+  `走ると体ごと足首から前に傾き、それも同じ向きに出るので、走り出し${S_HUNCH.learn}秒の前傾を差し引くが、${S_HUNCH.poseCap}°までにする` +
+  `（カメラ版は、カメラの上体の前傾の増え + ${S_HUNCH.poseCamSlack}°までにも抑える。カメラの上体には猫背がほとんど映らないため）。` +
+  `猫背のまま走り出しても、差し引けない分が線を越えて知らせる。線は差し引いた分 + max(今までの線 ${S_HUNCH.margin}°, 割合 ${S_HUNCH_BY_LEVEL.beginner.poseFrac}〜${S_HUNCH_BY_LEVEL.advanced.poseFrac}（初心者〜上級）× 2つの差)、頭は max(${S_HEAD.margin}°, ${S_HEAD.poseFrac} × 頭の差)。` +
+  `${S_HUNCH.hold}秒続いたら震わせ、続けて${S_HUNCH.poseBackoffAfter}回のあとは${S_HUNCH.poseBackoffEvery}秒ごとに知らせ直す。` +
+  `線を越えた向きが猫背としてありうる（割合 ${S_HUNCH.poseIdxMin}〜${S_HUNCH.poseSlipIdx}、横の傾きが小さい）間は、センサーのずれとはみなさず黙らない（横に回った・大きすぎるときは今までどおりずれとみなす）。` +
+  `2つの差が小さい人（例：差 8°・体ごとの前傾 5°）は、猫背のまま走り出すと知らせられない。`
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる
@@ -83,7 +94,16 @@ export function Logic() {
           この立ち姿勢は、走っているときの頭の判定には使わない。走ると上体だけが前に傾くので、首の角度は立ったときより平均8.8°小さく、人によって−24〜+13°と違う（研究データ Riglet 2024、23人）。立った姿勢と比べると、頭を前に出しても2割しか気づけなかった。
         </Row>
         <Row>
-          猫背のチェック：肩→耳の前傾が{BASELINE.standingHead}°以下、腰→肩の前傾が{BASELINE.standingTrunk}°以下。今日の基準ではなく、この決まった線と比べる（猫背で立つと、それが胸・頭のセンサーの立った姿勢になってしまうため）。越えていたら「{PHRASES.baseHunch}」と言って測り直す（{BASELINE.retries}回まで。それでも越えていたら、その姿勢で始めて、結果の画面に出す）。横から見た骨格の点（耳・肩・腰・膝・足首）には背骨の途中がないので、背中を丸めたまま腰を前へ出して上体の線が後ろへ傾く立ち方は、まっすぐ立ったのと分けられない（2026-11-05、わざと猫背で立った3秒が上体 −3°・頭 13° で通った。ふだんの基準と同じ範囲）。胸と頭のセンサーは付けるたびに角度が変わるので、立った姿勢の傾きそのものでは比べられない。
+          2つの立ち方を{BASELINE.collect}秒ずつ測る（案内の声を言い終えてから）：1つ目「{PHRASES.poseHabit}」（いつもの猫背）、2つ目「{PHRASES.poseOpen}」（目指す形）。
+          胸と頭のセンサーの重力の向きの、2つ目から1つ目への回り方を「猫背の向き」、その角度を「猫背の大きさ」にする（走ったときの見方はセンサーの節）。
+          角度が胸で{S_HUNCH.poseMin}°（頭で{S_HEAD.poseMin}°）より小さければ、姿勢を変えられていないとみて「{PHRASES.poseRetry}」と言って測り直す（{POSE.retries}回まで。それでも小さければ、2つ目を立った姿勢にして今までの見方で見て、記録に残す）。
+          首の角度の基準・腰の高さは2つ目（胸を開いた形）で取る。目指す形を今日の基準にするため。
+        </Row>
+        <Row>
+          <Mark>仮</Mark>{POSE_NOTE}
+        </Row>
+        <Row>
+          カメラの立ち姿勢の線（肩→耳の前傾が{BASELINE.standingHead}°以下、腰→肩の前傾が{BASELINE.standingTrunk}°以下）は、2つ目でも越えていたら知らせるだけで、測り直さない。越えていなくても「まっすぐです」とは言わない。横から見た骨格の点（耳・肩・腰・膝・足首）には背骨の途中がないので、いつもの猫背（背中が丸く、肩が前）とまっすぐを分けられなかった（2026-11-05、わざと猫背で立った3秒が上体 −3°・頭 13° で通った。ふだんの基準と同じ範囲。研究データ Riglet 2024 でも同じ）。胸と頭のセンサーは付けるたびに角度が変わるので、立った姿勢の傾きそのものでは比べられず、その日の2つの立ち方を物差しにする。
         </Row>
       </Step>
 

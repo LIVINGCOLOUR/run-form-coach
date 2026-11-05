@@ -113,3 +113,19 @@ describe('トレッドミルの区間の時刻表', () => {
     expect((on[1] - on[0]) / 8000).toBeCloseTo(0.4, 2)
   })
 })
+
+describe('確かめ走（npm run drill:pose）', () => {
+  it('2つの立ち方 → ふつう3分 → 猫背・胸を開く・頭を前に 20秒ずつ2回（戻し40秒）。約14分', () => {
+    const p = buildPlan({ poses: 60, walk: 0, upright: 0, first: 180, steps: ['hunch', 'hunch', 'open', 'open', 'head', 'head'], sec: 20, gap: 40, speeds: [], jog: 600, moved: 0, cool: 120, hr: 0 })
+    expect(p.sections[1]).toMatchObject({ key: 'poses', kind: 'poses', plannedSec: 60 })
+    expect(p.sections.filter((s) => s.kind === 'drill').map((s) => [s.key, s.plannedSec])).toEqual([
+      ['hunch', 20], ['hunch', 20], ['open', 20], ['open', 20], ['head', 20], ['head', 20],
+    ])
+    expect(p.sections.find((s) => s.key === 'normal1').plannedSec).toBe(180)
+    expect(STEPS.open.camera).toEqual([])
+    expect(p.total / 60).toBeGreaterThan(13)
+    expect(p.total / 60).toBeLessThan(16)
+    // 入れないとき（既定）は、前と同じ
+    expect(buildPlan().sections.some((s) => s.kind === 'poses')).toBe(false)
+  })
+})

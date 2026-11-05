@@ -8,6 +8,9 @@
 //   --level：胸の線のレベル（beginner / intermediate / advanced。params.ts の HUNCH_BY_LEVEL。なければ HUNCH＝中級）
 //   --chest / --head：数字を JSON で上書きして試す（params.ts は変えない）
 //   --gate stop：歩数で走っていた行から8秒までは、立ち止まっても走っているとみる（アプリに近い。物を拾った数秒を流し直す）
+//   2つの立ち方（lean.ts の setPoses）：記録に pose（a・b の向き、mode pose）があれば、それで見る（カメラ版は b のカメラの上体も渡す）。
+//   --pose fallback：2つの立ち方の差が小さかったときの道（b を立った姿勢にして今までの見方）を、立った姿勢の3秒を a・b の両方にして通す。
+//     2つの立ち方の前の記録で、今までの見方と同じ結果になるかを確かめるため。--pose off：記録に pose があっても stand で見る
 // 記録の中身は画面に出すだけで、どこにも書かない
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -29,6 +32,7 @@ const level = opt('--level')
 // --gate stop：歩数で走っていた行から STOP 秒までは、立ち止まっても「走っている」とみる。アプリの「走っている」は1秒ごとの歩数で決めていて、
 // 立ち止まって物を拾った数秒も走っているままだった（2026-11-04）。その数秒を流し直して確かめるとき
 const gate = opt('--gate')
+const poseOpt = opt('--pose')
 const STOP = 8
 const WIN = 5
 const HOLD = 20 // 行のない間を、前の行のまま「走っている」とみる長さの上限（秒）
@@ -71,7 +75,8 @@ say(`頭：${JSON.stringify(KINDS[1].p)}`)
 
 // 1つの場所の値を流す。samples：[{ tt, a }]（時刻順）、running(t)、standT：立った姿勢を覚える t。100Hz でない記録は ema を件数に合わせる。
 // bentBy：ほかの場所（胸）の tick ごとの「体を曲げている」（頭はアプリと同じく、胸で曲げたと分かれば止める）
-function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt) {
+// pose：{ a, b, camB }（記録の2つの立ち方）・'fallback'（差が小さかった道を通す）・null（stand）
+function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt, pose = null) {
   const k = 1 - Math.pow(1 - p.ema, 100 / hz)
   const d = new LeanDetector({ ...p, ema: k, standMin: Math.round((p.standMin * hz) / 100) }, 5)
   const ticks = []
@@ -79,9 +84,16 @@ function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt) {
   let stood = false
   for (let t = t0, k = 0; t < t1; t += p.tick, k++) {
     while (i < samples.length && samples[i].tt <= t) d.sample(samples[i].tt, samples[i++].a)
-    if (!stood && t >= standT) stood = d.stand(t, BASELINE.collect)
+    if (!stood && t >= standT) {
+      if (pose && pose !== 'fallback') stood = d.setPoses(pose.a, pose.b, pose.camB ?? null) || d.stand(t, BASELINE.collect)
+      else if (pose === 'fallback') {
+        const b = d.dirOver(t, BASELINE.collect)
+        if (b && !d.setPoses(b, b)) d.standDir(b)
+        stood = !!b
+      } else stood = d.stand(t, BASELINE.collect)
+    }
     const r = d.update(t, running(t), !!bentBy?.[k], camAt?.(t) ?? null)
-    ticks.push({ t, run: running(t), ...r, bentNow: d.bent(t), line: r.ref !== null && r.ref !== undefined ? r.ref + p.margin : null })
+    ticks.push({ t, run: running(t), ...r, bentNow: d.bent(t), line: r.ref !== null && r.ref !== undefined ? r.ref + d.margin() : null })
   }
   return { d, ticks, cues: ticks.filter((x) => x.cue).map((x) => x.t), slips: ticks.filter((x) => x.slip), bends: ticks.filter((x) => x.bend !== undefined), learnedAt: ticks.find((x) => x.learned !== undefined) }
 }
@@ -161,12 +173,16 @@ function cameraLog(path) {
       continue
     }
     const hz = nodeHz(log.sensors, ni)
-    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null, K.key === 'chest' ? camAt : null)
+    const pl = K.key === 'chest' ? log.sensors.pose : log.sensors.head?.pose
+    const pose = poseOpt === 'fallback' ? 'fallback' : poseOpt !== 'off' && pl?.mode === 'pose' && pl.a && pl.b ? { a: pl.a, b: pl.b, camB: K.key === 'chest' ? (pl.cam?.b?.trunk ?? null) : null } : null
+    if (pl) say(`2つの立ち方：${pl.mode}・差 ${f1(pl.deg)}°・測った回数 ${pl.tries}${pose && pose !== 'fallback' ? '（この2つで見る）' : ''}`)
+    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null, K.key === 'chest' ? camAt : null, pose)
     if (K.key === 'chest') chestBent = r.ticks.map((x) => x.bentNow)
     say(`値の速さ ${f1(hz)}Hz・体を曲げたとみなした ${r.bends.length} 回：${r.bends.map((x) => `${f1(x.t)}（${f1(x.bend)}°）`).join(' ') || 'なし'}`)
     const mins = runMin(r.ticks, K.p)
     const last = n.samples[n.samples.length - 1].tt
     say(`値 ${f1(n.samples[0].tt)}〜${f1(last)} 秒・走った ${f1(mins)} 分（この間に値があった分）・走る前傾 ${f1(r.d.runLean)}°（${f1(r.learnedAt?.t)} 秒）・前の向き ${r.d.fwd ? 'あり' : 'なし（向きによらない角度）'}`)
+    if (r.d.pose) say(`2つの立ち方で見た：差 ${f1(r.d.pose.deg)}°・線の幅 ${f1(r.d.pose.margin)}°・差し引いた走る前傾 ${f1(r.d.offset?.deg)}°（${r.d.offset?.by ?? '-'}${r.d.offset?.cam !== null && r.d.offset?.cam !== undefined ? `、カメラの上体の増え ${f1(r.d.offset.cam)}°` : ''}）`)
     // 知らせたとき、その前の5秒のカメラの答え
     const cueRows = r.cues.map((t) => {
       const rs = runRows.filter((x) => x.t > t - WIN && x.t <= t)

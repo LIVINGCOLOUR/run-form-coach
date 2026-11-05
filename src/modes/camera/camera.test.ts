@@ -6,7 +6,7 @@ import { applyStrictness, BASELINE, FORM, GOOD, HUNCH, LIMITS, REL_LIMITS, SETUP
 import { formOver, formScale } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
-import { capBaseline, standingDecision, standingIssue, STANDING_LIMITS } from './standing'
+import { capBaseline, standingIssue, STANDING_LIMITS } from './standing'
 import { LogRecorder, LOG_POINTS } from './log'
 import { fullFrames } from './fullFrames'
 import { analyzeRun, type TimedFrame } from './slowmo'
@@ -479,12 +479,9 @@ describe('立ち姿勢（猫背）のチェック', () => {
     expect(standingIssue({ head: 18, trunk: 1.5 })).toBe('back')
   })
 
-  it('猫背なら測り直す。retries 回まで直してもらい、それでもだめならその姿勢で始める（issue は残す）', () => {
-    const hunched = { head: 26, trunk: 2 }
-    for (let tries = 0; tries < BASELINE.retries; tries++) expect(standingDecision(hunched, tries)).toEqual({ issue: 'back', retry: true })
-    expect(standingDecision(hunched, BASELINE.retries)).toEqual({ issue: 'back', retry: false })
-    expect(standingDecision({ head: 16, trunk: -5 }, 0)).toEqual({ issue: null, retry: false })
-    expect(PHRASES.baseHunch.startsWith('猫背になっています。背筋をまっすぐ伸ばしてください。')).toBe(true)
+  it('線は知らせるだけ：「まっすぐです」とは言わない（2つの立ち方の言葉）', () => {
+    for (const text of Object.values(PHRASES)) expect(text).not.toContain('まっすぐです')
+    expect(PHRASES.poseDone.startsWith('胸を開いた姿勢を登録しました。')).toBe(true)
   })
 })
 
