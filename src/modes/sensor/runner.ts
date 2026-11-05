@@ -60,6 +60,8 @@ export class SensorRunner {
     this.gate = o.running ? null : new MotionGate()
     const t0 = now()
     this.lastTick = t0
+    // 走る前に「まとめてつなぐ」で起きたこと（Bluefy でどう動いたかを、送った記録で確かめるため。ble.ts の diag）
+    for (const d of sensors.diag) o.onEvent(t0, `sensor:ble ${d.text}（${Math.round(t0 - d.t)}秒前）`)
     this.lastSay = -Infinity
     this.phase = this.gate && this.needsStand() ? 'stand' : 'ready'
     if (this.gate) {

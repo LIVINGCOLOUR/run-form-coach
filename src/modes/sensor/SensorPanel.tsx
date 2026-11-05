@@ -13,6 +13,7 @@ const TEST_BUZZ = [HUNCH.place, HEAD.place, ANKLES.L, ANKLES.R]
 export function SensorPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
   const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
+  const bulk = useSyncExternalStore(sensors.subscribe, sensors.bulkSnapshot)
   const on = nodes.filter((n) => n.status === 'connected').length
   // 電池が少ない（BATTERY_LOW % 以下）センサー。閉じていても見えるように、ボタンにも出す
   const low = nodes.filter((n) => n.status === 'connected' && n.battery !== null && batteryPercent(n.battery) <= BATTERY_LOW)
@@ -46,16 +47,32 @@ export function SensorPanel({ defaultOpen = false }: { defaultOpen?: boolean }) 
       ) : (
         <>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            スイッチを入れて、場所ごとに「つなぐ」を押し、出てきた名前を選びます（1個ずつ）。走っている間に、猫背が {HUNCH.hold} 秒続くと胸が、頭が前に出たのが {HEAD.hold} 秒続くと頭が震えます（その場所がつながっているとき）。両足首がつながっていれば、接地が長い（腰が落ちている）と両足首が、接地の長さが左右でずれると長いほうの足首が震え、直ると短く2回震えます。センサーがずれたとみたときは、その場所が短く {HUNCH.slipBuzzCount} 回震え、走ったあとの結果の画面でも知らせます。
+            スイッチを入れて「まとめてつなぐ」を押し、出てきた名前を選びます（どれからでも。どこのセンサーかは自動で見分けます）。走っている間に、猫背が {HUNCH.hold} 秒続くと胸が、頭が前に出たのが {HEAD.hold} 秒続くと頭が震えます（その場所がつながっているとき）。両足首がつながっていれば、接地が長い（腰が落ちている）と両足首が、接地の長さが左右でずれると長いほうの足首が震え、直ると短く2回震えます。センサーがずれたとみたときは、その場所が短く {HUNCH.slipBuzzCount} 回震え、走ったあとの結果の画面でも知らせます。
           </div>
           {low.length > 0 && (
             <div style={{ color: 'var(--warn)', fontSize: 13, fontWeight: 700, lineHeight: 1.6 }}>
               電池が {BATTERY_LOW}% 以下のセンサーがあります（{low.map((n) => n.place).join('、')}）。走っている途中で切れるかもしれないので、充電してください。
             </div>
           )}
+          {bulk.left > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <button disabled={bulk.busy} onClick={() => void sensors.connectAll()} style={{ height: 40, borderRadius: 20, border: '1px solid var(--text)', background: 'transparent', color: 'var(--text)', fontSize: 14, fontWeight: 700 }}>
+                {bulk.busy ? 'つないでいます…' : bulk.needTap ? '次のセンサーを選ぶ' : 'まとめてつなぐ'}
+              </button>
+              {bulk.needTap && !bulk.busy && <div style={{ fontSize: 12, lineHeight: 1.6 }}>もう1回押すと、次のセンサーを選べます（あと {bulk.left} 個）</div>}
+            </div>
+          )}
           {nodes.map((n, i) => (
             <Row key={n.place} n={n} onConnect={() => void sensors.connect(i)} onTest={TEST_BUZZ.includes(n.place) ? () => void sensors.buzz(n.place, 1, 300) : undefined} />
           ))}
+          {bulk.diag.length > 0 && (
+            // つないだときに起きたこと（Bluefy でどう動くかを確かめるため。走りの記録にも sensor:ble で入る）
+            <div className="muted" style={{ fontSize: 10, lineHeight: 1.5, wordBreak: 'break-all' }}>
+              {bulk.diag.slice(-3).map((d, k) => (
+                <div key={k}>{d}</div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

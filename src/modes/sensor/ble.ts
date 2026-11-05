@@ -3,8 +3,10 @@ import { SLOTS } from './params'
 
 // 自作のセンサーに Web Bluetooth でつなぐ（hardware/sensor/viewer/viewer.html と同じつなぎ方）。
 // iPhone の Safari は Web Bluetooth がないので、つなげるのは Bluefy などの対応ブラウザと、Mac・Android の Chrome だけ。
-// ブラウザの決まりで、選ぶ画面（requestDevice）は1回の「つなぐ」で1個ずつ、押したときにしか出せない。
-// 一度選んだセンサーは、getDevices があれば選ぶ画面なしでつなぎ直す（restore）。
+// 選ぶ画面（requestDevice）は、押したときにしか出せない。Chrome は1回押すごとに1個とされる（続けて出すと SecurityError のはず。ここでは試していない）。
+// 一度選んだセンサーは、getDevices があれば選ぶ画面なしでつなぎ直す（restore・connectAll）。
+// Bluefy が getDevices を持つか、選ぶ画面を続けて出せるかは、まだ確かめていない（調べても書いたものが見つからなかった）。
+//   「まとめてつなぐ」で起きたことを diag に残し、パネルに出し、次の走りの記録の events にも「sensor:ble …」で入れる（runner.ts）
 // つないだものは画面をまたいで残す（ホームでつないで、カメラで走るため）ので、このファイルの sensors を1つだけ使う
 //   サービス 0xFFE0：値の通知 0xFFE1、電池 0xFFE2（uint16 mV）、振動 0xFFE3（回数 uint8、長さ uint8 × 10ms）
 //   機器の情報 0x180A：ファームの版 0x2A26、どのセンサーか 0x2A24（2026-11-05.2 から「RFC-IMU-4」の形。前は「RFC-IMU」だけ）
@@ -24,6 +26,8 @@ const MODEL = uuid(0x2a24)
 const IDS_KEY = 'rfc.sensorIds' // 選んだ機器（device.id）がどのセンサーだったか。名前が古いままでも、次から選ばずにつなげるように
 const RETRIES = 3 // 「つなぐ」を押してつなげなかったとき、押さずにやり直す回数（2秒おき）
 const REJOIN_SEC = 3 // 使っている途中で切れたときは、つながるまでこの間隔で押さずにつなぎ直す（走っている途中は押せないため）
+const RESTORE_WAIT = 4 // まとめてつなぐ：覚えているセンサーがつながるのを待つ長さ（秒）。待ちすぎると、押した扱いが切れて選ぶ画面を出せなくなる（Chrome は約5秒）
+const DIAG_MAX = 20 // diag に残す行数
 
 // TypeScript の DOM には Web Bluetooth の型がないので、使う分だけ書く
 interface BtChar extends EventTarget {
@@ -52,6 +56,14 @@ interface Bluetooth {
   requestDevice(o: RequestOptions): Promise<BtDevice>
   getDevices?(): Promise<BtDevice[]>
 }
+
+// 選ぶ画面の頼み方。ブラウザによって通らない形があるので、上から順に試す
+const PICK_FORMS: RequestOptions[] = [
+  { filters: [{ services: [SERVICE] }, { namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE, DEVICE_INFO] },
+  { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE, DEVICE_INFO] },
+  { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE] },
+  { filters: [{ namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE] },
+]
 
 // エラーの中身を、何が起きたかわかる形で出す（Bluefy は数字だけのエラーを返すことがある）
 const describe = (e: unknown): string => {
@@ -101,6 +113,9 @@ const saveId = (device: BtDevice, name: string) => {
   }
 }
 
+// 押した扱いがない（続けて選ぶ画面を出せない）ときのエラーか
+const needsTap = (e: unknown) => e instanceof Error && (e.name === 'SecurityError' || e.name === 'NotAllowedError')
+
 const bluetooth = (): Bluetooth | undefined => (typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth)
 
 export type NodeStatus = 'none' | 'idle' | 'connecting' | 'connected' | 'lost' | 'error'
@@ -129,6 +144,14 @@ interface Node extends NodeView {
   wanted: boolean // 切れたらつなぎ直すか（自分で切ったときは false）
 }
 
+// 「まとめてつなぐ」の様子（画面用）
+export interface BulkView {
+  busy: boolean
+  left: number // まだつながっていない枠（つなごうとしているものは数えない）
+  needTap: boolean // 続けて選ぶ画面を出せなかった（もう1回押せば次を選べる）
+  diag: string[] // 起きたこと（新しいものが後ろ）
+}
+
 type Listener = (node: number, t: number, p: Packet) => void
 
 const MESSAGE: Record<NodeStatus, string> = {
@@ -140,7 +163,7 @@ const MESSAGE: Record<NodeStatus, string> = {
   error: 'つなげませんでした',
 }
 
-class SensorHub {
+export class SensorHub {
   readonly nodes: Node[]
   private listeners = new Set<Listener>()
   private watchers = new Set<() => void>()
@@ -148,6 +171,12 @@ class SensorHub {
   private timer: ReturnType<typeof setInterval> | null = null
   private restored = false
   private watched = new WeakSet<BtDevice>() // 切れたときの知らせを付けた機器（同じ機器に2回付けない）
+  private identifying = new Set<BtDevice>() // どのセンサーか確かめている途中の機器（同じ機器を2回確かめない）
+  private form = 0 // requestDevice で通った頼み方（PICK_FORMS の何番目）。次からそこから頼む
+  private bulkBusy = false
+  private needTap = false
+  private bulk: BulkView = { busy: false, left: 0, needTap: false, diag: [] }
+  readonly diag: { t: number; text: string }[] = [] // t は performance.now() の秒
 
   constructor() {
     this.nodes = SLOTS.map((s) => ({
@@ -183,6 +212,7 @@ class SensorHub {
     }
   }
   snapshot = () => this.views
+  bulkSnapshot = () => this.bulk
 
   // 値が届くたびに呼ぶ（node は SLOTS の何番目か、t は performance.now() の秒）
   onPacket(fn: Listener) {
@@ -204,55 +234,157 @@ class SensorHub {
       node.device = null
     }
     if (!node.device) {
-      // 名前では絞らない（iPhone が古い名前を覚えていると出てこない。上の説明）。センサーが全部出るので、どれかを選んでもらい、
-      // どのセンサーだったかは open で確かめて、違う枠のものならそちらへ移す。
-      // ブラウザによって通らない頼み方があるので、通るまで形を変えて頼む（選ばずに閉じたときは、そこでやめる）
-      const tries: RequestOptions[] = [
-        { filters: [{ services: [SERVICE] }, { namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE, DEVICE_INFO] },
-        { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE, DEVICE_INFO] },
-        { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE] },
-        { filters: [{ namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE] },
-      ]
-      const errors: string[] = []
-      for (const opts of tries) {
-        try {
-          this.attach(node, await bt.requestDevice(opts))
-          break
-        } catch (e) {
-          if (e instanceof Error && e.name === 'NotFoundError') {
-            this.set(node, 'error', `見つからないか、選ばずに閉じました（${node.name} を選ぶ。名前が AdaDFU などに見えることもある。電源と、10分たって眠っていないかも確かめる）`)
-            return
-          }
-          errors.push(describe(e))
-        }
-      }
-      if (!node.device) {
-        this.set(node, 'error', `エラー：${errors.join(' / ')}`)
+      const r = await this.pick(bt)
+      if (r.kind === 'cancel') {
+        this.set(node, 'error', `見つからないか、選ばずに閉じました（${node.name} を選ぶ。名前が AdaDFU などに見えることもある。電源と、10分たって眠っていないかも確かめる）`)
         return
       }
+      if (r.kind !== 'device') {
+        this.set(node, 'error', `エラー：${r.error}`)
+        return
+      }
+      this.attach(node, r.device)
     }
     await this.open(node)
   }
 
-  // 前に選んだことのあるセンサーに、選ぶ画面なしでつなぎにいく（getDevices があるブラウザだけ。何度呼んでも1回だけ）
-  async restore() {
-    const bt = bluetooth()
-    if (this.restored || !bt?.getDevices) return
-    this.restored = true
-    try {
-      const devices = await bt.getDevices()
-      const ids = loadIds()
-      for (const d of devices) {
-        // 前に確かめたセンサーを先に使う（名前は古いままのことがある）。違っていても open で確かめ直す
-        const name = (d.id && ids[d.id]) || whose(null, d.name)
-        const node = this.nodes.find((n) => n.name && n.name === name)
-        if (!node || node.device) continue
-        this.attach(node, d)
-        void this.open(node)
+  // 選ぶ画面を出して、センサーを1個選んでもらう。
+  // 名前では絞らない（iPhone が古い名前を覚えていると出てこない。上の説明）。センサーが全部出るので、どれかを選んでもらい、
+  // どのセンサーだったかは open・adopt で確かめる。
+  // ブラウザによって通らない頼み方があるので、通るまで形を変えて頼む（選ばずに閉じたとき・押した扱いがないときは、そこでやめる）
+  private async pick(bt: Bluetooth): Promise<{ kind: 'device'; device: BtDevice } | { kind: 'cancel' } | { kind: 'tap' | 'error'; error: string }> {
+    const errors: string[] = []
+    for (let k = this.form; k < PICK_FORMS.length; k++) {
+      try {
+        const device = await bt.requestDevice(PICK_FORMS[k])
+        this.form = k
+        return { kind: 'device', device }
+      } catch (e) {
+        if (e instanceof Error && e.name === 'NotFoundError') return { kind: 'cancel' }
+        if (needsTap(e)) return { kind: 'tap', error: describe(e) }
+        errors.push(describe(e))
       }
-    } catch {
-      /* 使えないときは、押してつなぐだけにする */
     }
+    return { kind: 'error', error: errors.join(' / ') }
+  }
+
+  // 前に選んだことのあるセンサーに、選ぶ画面なしでつなぎにいく（getDevices があるブラウザだけ。何度呼んでも1回だけ。パネルを開いたとき）
+  async restore() {
+    if (this.restored) return
+    this.restored = true
+    await this.remembered('自動')
+  }
+
+  // getDevices で覚えている機器を、つながっていないものだけ、全部いっしょにつなぎにいく。つなぎ終わる（か失敗する）まで待つ
+  private async remembered(why: string): Promise<void> {
+    const bt = bluetooth()
+    if (!bt?.getDevices) {
+      this.note(`${why}: getDevices なし`)
+      return
+    }
+    let devices: BtDevice[]
+    try {
+      devices = await bt.getDevices()
+    } catch (e) {
+      this.note(`${why}: getDevices エラー ${describe(e)}`)
+      return
+    }
+    const todo = devices.filter((d) => !this.inUse(d))
+    this.note(`${why}: getDevices ${devices.length}個（つなぎにいく ${todo.length}個）`)
+    const got = await Promise.all(todo.map((d) => this.adopt(d)))
+    if (todo.length) this.note(`${why}: 覚えていた機器 ${got.join('・')}`)
+  }
+
+  // この機器がもう、つながっているか、つなごうとしているか（同じ機器でも、取り方で別のものが返ることがあるので id でも比べる）
+  private inUse(d: BtDevice) {
+    if (this.identifying.has(d)) return true
+    return this.nodes.some((n) => n.device && (n.device === d || (!!d.id && n.device.id === d.id)) && (n.status === 'connected' || n.status === 'connecting'))
+  }
+
+  // 枠を決めずに選んだ・覚えていた機器を、どのセンサーか確かめて、その枠につなぐ。起きたことを短い言葉で返す（diag 用）
+  private async adopt(device: BtDevice): Promise<string> {
+    if (this.inUse(device)) return 'つないである'
+    const free = (n: Node) => !(n.device && n.device !== device && (n.status === 'connected' || n.status === 'connecting'))
+    // 前に確かめた番号か、センサーの形の名前なら、その枠でつなぐ（違っていても open で確かめ直して移す）
+    const guess = (device.id && loadIds()[device.id]) || whose(null, device.name)
+    let node = guess ? this.nodes.find((n) => n.name === guess && free(n)) : undefined
+    if (!node) {
+      // わからなければ、つないで型番を読んでから枠を決める
+      const gatt = device.gatt
+      if (!gatt) return 'つなげない機器'
+      this.identifying.add(device)
+      try {
+        const server = await gatt.connect()
+        const info = await server.getPrimaryService(DEVICE_INFO)
+        const model = new TextDecoder().decode(await (await info.getCharacteristic(MODEL)).readValue())
+        const id = whose(model, device.name)
+        node = this.nodes.find((n) => n.name && n.name === id)
+        if (!node || !free(node)) {
+          if (!this.nodes.some((n) => n.device === device)) gatt.disconnect()
+          return `${id ?? device.name ?? '?'}は${node ? 'ほかの機器が使用中' : 'どの場所にもない'}`
+        }
+      } catch (e) {
+        return `確かめられない（${describe(e)}）`
+      } finally {
+        this.identifying.delete(device)
+      }
+    }
+    this.attach(node, device)
+    await this.open(node)
+    // open で別の枠へ移すことがあるので、つないだ先を探す
+    const at = this.nodes.find((n) => n.device === device)
+    return at ? `${at.name}→${at.place}` : '使えない（パネルの知らせを見る）'
+  }
+
+  // 「まとめてつなぐ」：覚えている機器を選ばずにつなぎ、足りない分だけ選ぶ画面を続けて出す（選んだ順は問わない。型番で枠を決める）。
+  // 続けて出せなければ（押した扱いが要るブラウザ）、もう1回押すと次を選べるようにする
+  async connectAll() {
+    const bt = bluetooth()
+    if (!bt || this.bulkBusy) return
+    this.bulkBusy = true
+    this.refresh()
+    try {
+      // 前の押しで続けて出せなかったときは、覚えている機器は見たばかりなので、すぐ選ぶ画面を出す（待つと押した扱いが切れる）
+      if (!this.needTap) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const late = new Promise<void>((ok) => (timer = setTimeout(ok, RESTORE_WAIT * 1000)))
+        await Promise.race([this.remembered('まとめて'), late])
+        clearTimeout(timer)
+      }
+      this.needTap = false
+      const need = this.left()
+      const picking: Promise<string>[] = []
+      for (let k = 1; k <= need; k++) {
+        const r = await this.pick(bt)
+        const nth = `選ぶ画面${k}/${need}${k > 1 ? '（続けて）' : ''}`
+        if (r.kind === 'device') {
+          this.note(`${nth}: 選んだ ${r.device.name ?? '?'}`)
+          // 確かめるのを待たずに、次の選ぶ画面を出す（待つと押した扱いが切れることがある）
+          picking.push(this.adopt(r.device).then((g) => (this.note(`${nth}: ${g}`), g)))
+          continue
+        }
+        if (r.kind === 'tap') {
+          this.needTap = true
+          this.note(`${nth}: 押し直しが要る ${r.error}`)
+        } else this.note(`${nth}: ${r.kind === 'cancel' ? '選ばずに閉じた' : `エラー ${r.error}`}`)
+        break
+      }
+      await Promise.all(picking)
+    } finally {
+      this.bulkBusy = false
+      this.refresh()
+    }
+  }
+
+  // まだつながっていない（つなごうともしていない）、名前のある枠の数
+  private left() {
+    return this.nodes.filter((n) => n.name && n.status !== 'connected' && n.status !== 'connecting').length
+  }
+
+  private note(text: string) {
+    this.diag.push({ t: performance.now() / 1000, text })
+    if (this.diag.length > DIAG_MAX) this.diag.splice(0, this.diag.length - DIAG_MAX)
+    this.refresh()
   }
 
   // 振動させる（回数、1回の長さ ms。長さは最大 2550ms）。送れたら true。振動のない古いファームや、つながっていなければ false
@@ -418,6 +550,9 @@ class SensorHub {
   }
 
   private refresh() {
+    const left = this.left()
+    if (!left) this.needTap = false
+    this.bulk = { busy: this.bulkBusy, left, needTap: this.needTap, diag: this.diag.map((d) => d.text) }
     this.views = this.nodes.map(({ place, name, status, message, battery, rate, lost, fw, canBuzz }) => ({ place, name, status, message, battery, rate, lost, fw, canBuzz }))
     for (const fn of this.watchers) fn()
   }
