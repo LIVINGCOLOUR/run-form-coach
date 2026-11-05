@@ -2,7 +2,7 @@ import type { LeadSay } from '../../core/engine'
 import { CUE as CUE_P } from '../../core/params'
 import { CUE, FORM_SAY } from '../../core/phrases'
 import type { FormGroup, FormResult, ItemKey } from '../../core/types'
-import { FORM, LIMITS } from './params'
+import { CAM_YAW, FORM, HEAD_OPEN, LIMITS } from './params'
 import { landingOf, median, type Peak, type StepSec } from './landing'
 
 // 正しいフォームへ整える（カメラ版）。走り出したら、まず正しいフォームの線（params.ts の FORM）と比べ、
@@ -28,6 +28,46 @@ export interface FormValues {
   neck: number
   headLean: number
   landing?: number
+  yaw?: number // 前側・後ろ側の値（geometry の yawSign）。頭の線そのもの（headOver の ②）で、スマホの向きを見積もるのに使う
+}
+
+// 前側・後ろ側の値から見積もったスマホの向き（度。前側が正。params.ts の CAM_YAW）
+export const yawDeg = (yawSign: number) => yawSign / CAM_YAW.perDeg
+
+// スマホが前側にずれた分を差し引いた首・頭の位置（後ろ側は直さない）
+export function yawFixed(v: { neck: number; headLean: number; yaw?: number }): { neck: number; headLean: number } {
+  const d = Math.max(0, yawDeg(v.yaw ?? 0))
+  return { neck: v.neck - CAM_YAW.neck * d, headLean: v.headLean - CAM_YAW.headLean * d }
+}
+
+// 頭が線からどれだけ外れているか（params.ts の FORM の頭の説明）。どちらかの見方で、首の角度と頭の位置の両方が線を越えたら正。
+//   ① 胸を開いた立ち方（FORM.head.open）からの差 + HEAD_OPEN。同じ置き方で測った差なので、スマホの向きでずれにくい
+//   ② 線そのもの：スマホの向きの分を直した値。見積もった向きが FORM.head.yawMax 以下のときだけ
+// どちらでも比べられないときは -Infinity
+export function headOver(v: FormValues): number {
+  const h = FORM.head
+  const o = h.open
+  const rel = o ? Math.min(v.neck - o.neck + HEAD_OPEN.neck - h.neck, v.headLean - o.headLean + HEAD_OPEN.headLean - h.headLean) : -Infinity
+  if (yawDeg(v.yaw ?? 0) > h.yawMax) return rel
+  const f = yawFixed(v)
+  return Math.max(rel, Math.min(f.neck - h.neck, f.headLean - h.headLean))
+}
+
+// 頭が線の内側に入る、走っている首・頭の位置の上限（今日の基準を線の内側に寄せるとき。両方の見方の、きびしいほう）
+function headCap(yaw: number | undefined): { neck: number; headLean: number } {
+  const h = FORM.head
+  let neck = Infinity
+  let headLean = Infinity
+  if (h.open) {
+    neck = h.open.neck - HEAD_OPEN.neck + h.neck
+    headLean = h.open.headLean - HEAD_OPEN.headLean + h.headLean
+  }
+  if (yawDeg(yaw ?? 0) <= h.yawMax) {
+    const d = Math.max(0, yawDeg(yaw ?? 0))
+    neck = Math.min(neck, h.neck + CAM_YAW.neck * d)
+    headLean = Math.min(headLean, h.headLean + CAM_YAW.headLean * d)
+  }
+  return { neck, headLean }
 }
 
 // 声にする項目か（着地は FORM.landing.say）
@@ -47,8 +87,8 @@ export function formOver(g: FormGroup, v: FormValues): { key: ItemKey; over: num
     return fwd >= back ? { key: 'trunk', over: fwd } : { key: 'trunkBack', over: back }
   }
   if (g === 'landing') return { key: 'landing', over: v.landing === undefined ? -Infinity : v.landing - FORM.landing.max }
-  // 頭は、首の角度と頭の位置そのものの両方が線を越えたときだけ（小さいほうで見る）
-  return { key: 'head', over: Math.min(v.neck - FORM.head.neck, v.headLean - FORM.head.headLean) }
+  // 頭は、首の角度と頭の位置そのものの両方が線を越えたときだけ（小さいほうで見る）。胸を開いた立ち方からの差と、線そのもの（headOver）
+  return { key: 'head', over: headOver(v) }
 }
 
 // 外れた量を、点数の目盛り（LIMITS）に直す。線の内側 margin までは満点、線で声をかける線（cue）、線の外 span で0点
@@ -68,14 +108,16 @@ export function formRange(g: FormGroup): { min?: number; max: number } {
   return { max: FORM.head.neck }
 }
 
-// その秒の値の範囲に寄せる（線の内側にいた秒が足りない項目の基準）。着地の基準は coach.ts で別に作る
+// その秒の値の範囲に寄せる（線の内側にいた秒が足りない項目の基準）。着地の基準は coach.ts で別に作る。
+// 頭は、走っている値のまま（胸を開いた立ち方からの差でも、線そのものでも）線の内側に入る値まで（headCap。v.yaw はその間の向き）
 export function clampInside(g: FormGroup, v: FormValues): FormValues {
   const c = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x))
+  const cap = g === 'head' ? headCap(v.yaw) : { neck: Infinity, headLean: Infinity }
   return {
     trunk: g === 'trunk' ? c(v.trunk, FORM.trunk.min, FORM.trunk.max) : v.trunk,
     body: g === 'body' ? c(v.body, FORM.body.min, FORM.body.max) : v.body,
-    neck: g === 'head' ? Math.min(v.neck, FORM.head.neck) : v.neck,
-    headLean: g === 'head' ? Math.min(v.headLean, FORM.head.headLean) : v.headLean,
+    neck: Math.min(v.neck, cap.neck),
+    headLean: Math.min(v.headLean, cap.headLean),
   }
 }
 
@@ -83,10 +125,11 @@ interface Sec {
   t: number
   v: FormValues
   yaw: number
+  noRoll: boolean // スマホの左右の傾き（傾きセンサー）が分からなかった秒
   steps: StepSec // その秒に振り分けた着地の山と速さの目安（landing.ts の LandingWatch）
 }
 
-type Win = FormValues & { yaw: number }
+type Win = FormValues & { yaw: number; noRoll: boolean }
 
 interface GroupState {
   cues: number // この走りで、正しいフォームの線で知らせた回数
@@ -129,14 +172,17 @@ export class FormStage {
       neck: mean(xs.map((x) => x.v.neck)),
       headLean: mean(xs.map((x) => x.v.headLean)),
       yaw: mean(xs.map((x) => x.yaw)),
+      noRoll: xs.some((x) => x.noRoll),
       ...(lw ? { landing: lw.res } : {}),
     }
   }
 
-  // 線と比べられるか（頭は、斜めから撮っているように見えるときは比べない：params.ts の FORM.head.yawMax。
-  // 着地は、窓に手前の脚の山が LANDING.minSteps 以上あるときだけ）
-  static judgeable(g: FormGroup, w: { yaw: number; landing?: number }): boolean {
-    if (g === 'head') return w.yaw <= FORM.head.yawMax
+  // 線と比べられるか。頭は、胸を開いた立ち方を測っているか、斜めから撮っているように見えないとき（params.ts の FORM.head.yawMax）。
+  // 体全体・上体・着地は、スマホの左右の傾き（傾きセンサー）が分かっているときだけ（分からないと、傾きがそのまま角度と前後に入るため。記録だけ残す）。
+  // 着地は、窓に手前の脚の山が LANDING.minSteps 以上あるときだけ
+  static judgeable(g: FormGroup, w: { yaw: number; landing?: number; noRoll?: boolean }): boolean {
+    if (g === 'head') return FORM.head.open !== null || yawDeg(w.yaw) <= FORM.head.yawMax
+    if (w.noRoll) return false
     if (g === 'landing') return w.landing !== undefined
     return true
   }
@@ -173,10 +219,10 @@ export class FormStage {
 
   // 1秒ごと。t：しくみの秒、rt：走り出してからの秒、stepping：歩数で走っていた秒（それ以外は線と比べない）。
   // since：その項目（なければどれか）の前の崩れの声からの秒数（しくみの声も数える）。steps：その秒に振り分けた着地の山。
-  // 戻り値の hold は、整えている間（しくみに自分で声を決めさせない）
-  second(t: number, rt: number, stepping: boolean, v: FormValues, yaw: number, since: (k?: ItemKey) => number, steps: StepSec = NO_STEPS): { say?: LeadSay<ItemKey>; hold: boolean } {
+  // 戻り値の hold は、整えている間（しくみに自分で声を決めさせない）。noRoll：その秒にスマホの左右の傾きが分からなかった
+  second(t: number, rt: number, stepping: boolean, v: FormValues, yaw: number, since: (k?: ItemKey) => number, steps: StepSec = NO_STEPS, noRoll = false): { say?: LeadSay<ItemKey>; hold: boolean } {
     if (stepping && rt >= FORM.from) {
-      const s = { t, v, yaw, steps }
+      const s = { t, v, yaw, noRoll, steps }
       this.secs.push(s)
       this.all.push(s)
       while (this.secs.length && this.secs[0].t <= t - Math.max(FORM.window, CUE_P.cooldown) - FORM.hold) this.secs.shift()
@@ -242,7 +288,7 @@ export class FormStage {
       }
     }
 
-    // 整え終わり：どの項目も、線の内側か、FORM.tries 回知らせても入らなかったか、比べられない（頭が斜め、着地の山が足りない）か、声にしない項目。
+    // 整え終わり：どの項目も、線の内側か、FORM.tries 回知らせても入らなかったか、比べられない（頭が斜め、着地の山が足りない、傾きが分からない）か、声にしない項目。
     // 内側は、窓の平均が FORM.settle 秒続けて内側か、直ったと伝えたあと（1つの窓の当たり外れで「整った」と言わないため）。
     // 全部が線の内側なら「整いました」（声をかけずに済んだら「整っています」）。入らなかった項目があるときは、整ったとは言わない（結果の画面に出す）。
     // 声にしない着地も、線を越えているなら整ったとは言わない（整え終わりは待たせない）
@@ -250,13 +296,14 @@ export class FormStage {
       const inside = (g: FormGroup) => {
         const s = this.st[g]
         if (s.waiting) return false
-        if (!out[g]) return g === 'head' || g === 'landing'
+        if (!out[g]) return true
         return t < s.okUntil || (s.inSince !== null && t - s.inSince >= FORM.settle)
       }
       const settled = (g: FormGroup) => !voiced(g) || inside(g) || (!this.st[g].waiting && this.st[g].cues >= FORM.tries)
       if (FORM_ORDER.every(settled)) {
         this.doneAt = t
-        if (FORM_ORDER.every(inside)) say = { kind: 'note', text: this.cued ? FORM_SAY.set : FORM_SAY.good }
+        // 傾きが分からず体全体・上体・着地を比べていないときは、整ったとは言わない
+        if (FORM_ORDER.every(inside) && !win.noRoll) say = { kind: 'note', text: this.cued ? FORM_SAY.set : FORM_SAY.good }
       }
     }
     return { say, hold: doing }
@@ -288,6 +335,7 @@ export class FormStage {
       body: mean(this.all.map((x) => x.v.body)),
       neck: mean(this.all.map((x) => x.v.neck)),
       headLean: mean(this.all.map((x) => x.v.headLean)),
+      yaw: mean(this.all.map((x) => x.yaw)),
     }
     const land = this.landingResult()
     const out: FormResult[] = []

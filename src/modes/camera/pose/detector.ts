@@ -2,6 +2,7 @@ import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
 import { POWER } from '../../../core/params'
 import type { Frame } from '../../../core/types'
 import { OneEuro } from '../filter'
+import type { P3 } from '../world'
 
 let landmarker: PoseLandmarker | null = null
 
@@ -37,22 +38,26 @@ export function nextTs(ms: number) {
 
 // 複数人が映ったときは、一番大きく映っている1人だけを追う
 export function largest(poses: { x: number; y: number; visibility?: number }[][]) {
-  let best = poses[0]
+  return poses[largestIndex(poses)]
+}
+export function largestIndex(poses: { x: number; y: number }[][]): number {
+  let best = 0
   let bestArea = -1
-  for (const p of poses) {
+  poses.forEach((p, i) => {
     const xs = p.map((q) => q.x)
     const ys = p.map((q) => q.y)
     const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))
     if (area > bestArea) {
       bestArea = area
-      best = p
+      best = i
     }
-  }
+  })
   return best
 }
 
 export interface PoseTick {
   frame: Frame | null // ピクセル座標。なめらかにしたもの
+  world?: P3[] // 同じ人の worldLandmarks（腰の中心が原点、m。なめらかにしていない）。記録に残すだけ（world.ts）
   skipped?: boolean // 省電力のため骨格を取らなかったコマ（frame は null）
   t: number // 秒
   width: number
@@ -84,13 +89,15 @@ export function runPose(video: HTMLVideoElement, lm: PoseLandmarker, onTick: (p:
       const w = video.videoWidth
       const h = video.videoHeight
       if (res.landmarks.length) {
-        const pose = largest(res.landmarks)
+        const k = largestIndex(res.landmarks)
+        const pose = res.landmarks[k]
         const frame: Frame = pose.map((p, i) => ({
           x: filters[i * 2].filter(p.x * w, t),
           y: filters[i * 2 + 1].filter(p.y * h, t),
           v: p.visibility ?? 1,
         }))
-        onTick({ frame, t, width: w, height: h })
+        const world = res.worldLandmarks?.[k]?.map((q) => ({ x: q.x, y: q.y, z: q.z }))
+        onTick({ frame, t, width: w, height: h, ...(world ? { world } : {}) })
       } else {
         onTick({ frame: null, t, width: w, height: h })
       }

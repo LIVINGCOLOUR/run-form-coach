@@ -30,6 +30,9 @@ export { breakdownMinute } from '../../core/engine'
 // 走り始め・止まりは、Coach が直近のコマの割合（RunningGate）で決め直してから、しくみに渡す
 export interface CoachInput extends EngineInput<Measure> {
   frame?: Frame // 鉛直をそろえたピクセル座標（走り姿のアニメーション用）
+  // スマホの左右の傾き（傾きセンサー）が分からず、骨格の点の鉛直をそろえられなかったコマ。その秒は、体全体・上体・着地を
+  // 正しいフォームの線と比べない（記録だけ。form.ts の judgeable）。今日の基準からの崩れは、傾きが変わらなければずれないので見る
+  noRoll?: boolean
 }
 
 // Coach がしくみに渡す1コマ。steps：そのコマを走っているかの割合に入れたときの、そのコマの判定（入れなかったコマは無い）
@@ -85,7 +88,7 @@ function addSecond(p: Pool, form: FormStage, t: number, v: FormValues, hipRatio:
 // 項目ごとに、線の内側にいた秒の平均。足りなければ、走っていた秒の平均を線の内側に寄せた値（入らなかった項目は、線そのもの）。
 // 線と比べられなかった項目（頭が、ずっと斜めから撮っているように見えた）は、走っていた秒の平均（線の値は当てにならないため）
 function postureRefOf(p: Pool, form: FormStage) {
-  const typical = meanOf(p.all)
+  const typical = { ...meanOf(p.all), yaw: mean(p.yaw) }
   const at = (g: FormGroup) => (!form.judged(g) ? typical : p.in[g].length >= FORM.refMin ? meanOf(p.in[g]) : clampInside(g, typical))
   const head = at('head')
   return { lean: { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body }, hip: p.hipIn.length >= FORM.refMin ? mean(p.hipIn) : mean(p.hipAll) }
@@ -125,6 +128,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   runFrom: number | null = null
   private secOn = 0 // この1秒の、走っていると見たコマの数（割合に入れたコマだけ）
   private secOff = 0
+  private secNoRoll = false // この1秒に、スマホの左右の傾きが分からなかったコマがあった
 
   private ring: { frame: Frame; dir: 1 | -1; t: number }[] = []
   private candidates: Record<Category, { stride: Stride; speed?: number }[]> = { good: [], mid: [], bad: [] }
@@ -134,6 +138,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   input(inp: GatedInput) {
     if (inp.steps === true) this.secOn++
     else if (inp.steps === false) this.secOff++
+    if (inp.noRoll && inp.m) this.secNoRoll = true
     this.land.tick(inp.t)
     if (!inp.frame || !inp.m) return
     this.land.frame(inp.frame, inp.t)
@@ -169,8 +174,10 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     // 歩数を数え直している間）は、Coach の「走っている」に従う
     const on = this.secOn
     const off = this.secOff
+    const noRoll = this.secNoRoll
     this.secOn = 0
     this.secOff = 0
+    this.secNoRoll = false
     const stepping = this.running && (on + off === 0 || on >= off)
     // 着地：1つ前の秒の山を、その秒に走っていたかで振り分ける（骨格を取らなかった秒も、時間は進める）
     const steps = this.land.second(stepping && b.length >= 3)
@@ -178,7 +185,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (b.length < 3) return null
     const now = Object.fromEntries(REF_KEYS.map((k) => [k, mean(b.map((m) => m[k]))])) as Ref
     const { neck, headLean, trunk, body, yaw } = now
-    const v: FormValues = { trunk, body, neck, headLean }
+    const v: FormValues = { trunk, body, neck, headLean, yaw }
     const hipRatio = mean(b.map((m) => m.hipRatio))
     const rt = this.runFrom === null ? null : t - this.runFrom
 
@@ -196,7 +203,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
 
     // 正しいフォームの線と比べ、外れていれば1つずつ知らせる（走り出してからの秒が分かるときだけ）。
     // 速さが外れている秒（速さを変えている途中）は、走っていない秒と同じに、線とも比べない
-    const lead = rt === null ? { hold: false } : this.form.second(t, rt, stepping && !away, v, yaw, ctx.since, steps)
+    const lead = rt === null ? { hold: false } : this.form.second(t, rt, stepping && !away, v, yaw, ctx.since, steps, noRoll)
 
     // 今日の基準にためる：整え終わってから（走り出して HIP_REF.from 秒より後）の、歩数で走っていた秒。項目ごとに、
     // 直近 FORM.hold 秒の平均が線の内側で、知らせて直るのを待っていない秒だけ（直したあとの形。直す前の形を混ぜない）
@@ -297,10 +304,10 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (stepping && !away && rt !== null && rt >= FORM.from) {
       for (const g of FORM_ORDER) {
         if (g === 'landing') {
-          if (voiced(g) && this.form.landing !== undefined) form.landing = formScale(g, 'landing', this.form.landing - FORM.landing.max)
+          if (voiced(g) && !noRoll && this.form.landing !== undefined) form.landing = formScale(g, 'landing', this.form.landing - FORM.landing.max)
           continue
         }
-        if (!FormStage.judgeable(g, { yaw })) continue
+        if (!FormStage.judgeable(g, { yaw, noRoll })) continue
         const o = formOver(g, v)
         form[o.key] = formScale(g, o.key, o.over)
       }
@@ -314,6 +321,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const sample: Sample = { t, head, trunk, body, hipDrop, score: score ?? 100, quiet: ctx.quiet, judge, back, headLean, neck, yaw, form, chin }
     if (hunch !== undefined) sample.hunch = hunch
     if (paused) sample.paused = true
+    if (noRoll) sample.noRoll = true
     if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }
     if (score !== null) this.maybeKeepStride(sample)
     return { sample, values, ready, score, say: lead.say, hold: lead.hold }
@@ -395,7 +403,10 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   //   なければ入れ替えない（いまの線のまま。読み込んだときは中級＝ふつう。採点の道具が線を書き換えて試すため）
   // kmh：ベルトの速さ（時速 km。走る前に入れたもの）。速さで動く線（params.ts の FORM_SPEED：体全体の下の線）を
   //   その速さにする。無ければ講師の速さの線（今までの線）。カメラの速さの目安では動かさない（走り出しには分からず、置き方でずれるため）
-  constructor(opts: { pause?: boolean; items?: ItemKey[]; level?: Level; kmh?: number } = {}) {
+  // open：胸を開いた立ち方（2つの立ち方の b）で測った首・頭の位置。頭の正しいフォームの線を、そこからの差でも見る（form.ts の headOver）。
+  //   無ければ（動画で試す）線そのものだけ。コーチを作るたびに入れ替える
+  constructor(opts: { pause?: boolean; items?: ItemKey[]; level?: Level; kmh?: number; open?: { neck: number; headLean: number } } = {}) {
+    FORM.head.open = opts.open ?? null
     if (opts.level) applyStrictness(opts.level, opts.kmh)
     else if (opts.kmh !== undefined) applySpeed(opts.kmh) // 速さだけ渡されたときだけ入れ替える（採点の道具が書き換えた線を戻さないため）
     super(new CameraAnalyzer(), { holdUnjudged: true, ...opts })

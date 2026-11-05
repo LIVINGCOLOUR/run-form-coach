@@ -240,12 +240,18 @@ export const REL_LIMITS: Record<'trunk' | 'trunkBack' | 'body' | 'bodyBack', { f
 //     2° 下げる（44°・48°）と +4° 前に出したのにも 74% で気づくが、誤った声は 0.88回に増える。自分の記録（2026-11-02 20:23）で、頭のセンサーでは
 //     直前より 6〜8° 前に出ていたのに声が出なかった区間（約440秒）は、カメラでは 首 41.4°・頭の位置 44.7° で、走り出しのふつうの値と同じだった。
 //     そこで声を出せるのは 40°・44° だけで、それだと 18:43 の走りのふつうの区間でも声が出た。ふつうの値は日によっても約8°違う（10-19 は首 約34°）
-//     yawMax：走っている間の前側・後ろ側の値（geometry の yawSign）の窓の平均がこれを越えたら、頭を線と比べない。
-//     仮想実験（sim/result-form.md、Riglet の60本）で、スマホが前側に1°ずれるごとに 首 +0.72°・頭の位置 +0.55°・上体 −0.03°・体全体 −0.06°。
-//     yawSign は真横で −0.005（人による違い ±0.017）、前側に1°で +0.0047。0.1 は、前側に約20°（首 +15°）
+//     頭は2つの見方で比べ、どちらかが線を越えたら頭が前（form.ts の headOver）。数字はどれも仮の値:
+//     ① 胸を開いた立ち方（2つの立ち方の b）からの差：走っている頭 − b の頭 + HEAD_OPEN（b の頭のふつうの値）を、上の線と比べる。
+//       同じスマホの置き方で測った差なので、スマホの向きのずれがほぼ消える。基準は b（目指す形）なので、走り出しの頭が前に出ていても「ふつう」にしない。
+//       b を測っていない走り（動画で試す）は ② だけ。根拠と限りは HEAD_OPEN の上
+//     ② 線そのもの（スマホの向きの分を直した値）：前側・後ろ側の値（geometry の yawSign）の窓の平均から向きを見積もり（CAM_YAW）、
+//       前側にずれた分だけ首・頭の位置を差し引いてから比べる（後ろ側は直さない）。見積もった向きが yawMax（度）を越えたら比べない。
+//       yawMax はレベルごと（STRICT の form.headYawMax）。上級の線（32°/36°）は、仮想実験で前側に約3.6°ずれただけで、よい例の真ん中で走る人に
+//       声が出るほど線が近いので 4°。ほかのレベルは 21°（前の yawSign 0.1＝前側に約20° と同じ）
 //     走っている間の yawSign は、点の取り方でもずれる：自分の記録（2026-10-19）では、立っているとき 0.00 だった値が、
 //     腰の位置が変わらないまま歩き出した瞬間に +0.11、ジョグで +0.07〜0.08 になった（講師の動画の走りは +0.009〜+0.027）。
-//     スマホの向きのずれか点の取り方か見分けられないので、走っている間に「スマホを動かして」とは言わない（置き方は立った姿勢で確かめている）
+//     スマホの向きのずれか点の取り方か見分けられないので、走っている間に「スマホを動かして」とは言わない（置き方は立った姿勢で確かめている）。
+//     そのため自分の走りでは、② の上級の線はほとんど比べず（前側に約13〜17°と見積もる）、① で見ることになる
 //   着地（速さで補正したかかとの前＝かかとの前 − LANDING.fit で速さから見込む値。脚の長さに対する割合）：max より大きいと、足が体より前に着いている。
 //     窓の中央値で見る（平均ではない。LANDING の測り方）。
 //     max 0.14：仮想実験（sim/result-overstride.md の ②、ふつうの走り168本を10分にのばし、実機のコマの間隔）で、16秒の窓が一度でも越えた走りは
@@ -270,7 +276,8 @@ export const REL_LIMITS: Record<'trunk' | 'trunkBack' | 'body' | 'bodyBack', { f
 export const FORM = {
   body: { min: 5.5, max: 15, margin: 0.5, span: 4 },
   trunk: { min: -2, max: 12, margin: 1, span: 6 },
-  head: { neck: 48, headLean: 52, margin: 3, span: 10, yawMax: 0.1 },
+  // open：その走りの胸を開いた立ち方（b）の首・頭の位置。コーチを作るときに入れる（coach.ts。測っていなければ null）
+  head: { neck: 48, headLean: 52, margin: 3, span: 10, yawMax: 21, open: null as { neck: number; headLean: number } | null },
   landing: { max: 0.14, margin: 0.015, span: 0.07, say: true },
   from: 10, // 走り出してからこの秒数は見ない（速さに乗る間）
   window: 16, // 線と比べる平均の長さ（走っていた秒）
@@ -288,6 +295,30 @@ export const FORM = {
   // ため直しになる（2026-11-03 の走りでは、わざとの猫背の60秒がまるごと基準をためる間に入り、声が出なかった）
   early: 30,
 }
+
+// 頭の ① 胸を開いた立ち方（b）からの差で使う、b の頭のふつうの値（度。仮の値）。走っている頭 − b の頭 + これ を、FORM の頭の線と比べる。
+// 自分の記録6本（2026-10-19〜11-05。立ち方が1つ「まっすぐ立って」だったころの3秒の真ん中）の立った頭の真ん中：首 21.6°（18.1〜28.2）・頭の位置 17.5°（13.9〜20.9）。
+// その6本では、走り全体の真ん中の首は 32.7〜42.6° と日によって10°ちがったが、走り − 立ち は 首 12.8〜15.3°・頭の位置 19.8〜23.1° と ±1° ほどにそろった
+// （スマホの置き方の日ごとの違いが消える）。仮想実験（Riglet の30本）でも、前側に10°ずらしたときの 走り − 立ち の首のずれは +0.9±1.9°（走りそのものは +7.2°）。
+// この値にすると、自分の立った頭の日には ① が線そのもの（真横で撮ったとき）と同じ判定になる。
+// 限り（未確認）：b（胸を開いて顎を引く）の頭は、上の「まっすぐ立って」の頭より小さく出るかもしれず、そうなら ① は厳しくなる。
+//   人による 走り − 立ち の違いは、研究データの印では首 ±10.9°（Riglet、23人）と大きく、アプリの点で自分以外の人は確かめていない。
+//   2つの立ち方の記録がたまったら、b の頭と走りの頭で決め直す
+export const HEAD_OPEN = { neck: 21.6, headLean: 17.5 }
+
+// スマホの向き（真横からのずれ）の見積もりと、頭の値の直し（どれも仮の値）。前側・後ろ側の値（geometry の yawSign）÷ perDeg を、前側へのずれ（度）とみる。
+//   perDeg 0.0047：仮想実験（Riglet の30本、1.2m・超広角）で、yawSign は前側に1°で +0.0047（距離 1.2〜5m で 0.0047〜0.0049）。
+//   neck・headLean：前側に1°（perDeg の yawSign）あたりに差し引く首・頭の位置。仮想実験では 首 +0.78°・頭の位置 +0.61°（±10° の傾き）で、
+//     その傾きで直すと ±20° の置き方での首の誤差（その人の真横の値との差の二乗平均）は 10.2° → 3.1°、頭の位置は 8.1° → 2.6°（人ごとに ±2.5〜3° 残る）。
+//     ところが実際の骨格の推定（YouTube の切り出し、同じ動画の中で向きの違う切り出し。|yawSign| ≤ 0.1 の13本・85切り出し）では、yawSign に対する傾きは
+//     首 0.23・頭の位置 0.09（°/1°。1本ずつ抜いて決めると 首 0.10〜0.32・頭の位置 −0.13〜0.18）と、仮想実験の 1/3〜1/7 だった。
+//     仮想実験の傾きで直すと、同じ動画の中の頭の位置の散らばりは 6.8° → 7.2°（|yawSign| ≤ 0.2 では 7.0° → 8.9°）と、かえって広がった（直しすぎ）。
+//     線はアプリの点で決める決まりなので、実際の点の傾き（0.23・0.09）にした。この大きさでは、散らばりはほとんど変わらない（首 6.5° → 6.4°）：
+//     直しは、前側にずれた日の分を少し引くだけの保険。スマホの向きに強いのは ① 胸を開いた立ち方からの差のほう（FORM の頭の説明）。
+//     切り出しの中には同じ動画の別の人・わざとの崩しも入っているので、傾きは粗い（未確認。トレッドミルで向きだけ変えた自分の記録で決め直す）
+//   直すのは前側だけ（後ろ側は頭が小さく出て、声が減る向きのずれ。直しすぎて外れた声にしない）。上体・体全体は向きでほとんど変わらない（仮想実験で −0.03°・−0.06°/1°）ので直さない。
+//   worldLandmarks（3次元の点）から出した向きと角度は、仮想実験で2次元より悪かったので、記録に残すだけ（world.ts）
+export const CAM_YAW = { perDeg: 0.0047, neck: 0.23, headLean: 0.09 }
 
 // よい例の範囲。結果の画面の「よい例との差」と、次の一歩（今日の意識）に使う。走っている間は、これで声をかけない。
 // 正しいフォームの線（FORM）は、外れた声と線の際での行き来を避けるために広く取っているので、ふつうに走る人はほとんど内側に入る
@@ -528,6 +559,9 @@ export const STRIDE = {
 //     自分の記録（sim/result-head-runs.md、上級で通し直した5本）では、11-03・11-05 は走り出し約21秒に頭の線の声が出た。11-04 は走り出しの1分半は線の内側で、
 //     102秒から声が出た。ただし、スマホが少し前側から撮っている日（前側・後ろ側の値が +0.05 を越える。11-02・11-04・11-05）は頭が大きく出るので、
 //     線の声には、スマホの向きの分が混ざっているかもしれない（よい例の講師の動画は +0.009〜+0.019）。
+//     そこで、この線は胸を開いた立ち方からの差（FORM の頭の ①）でも見て、線そのもの（②）は見積もった向きが前側 headYawMax（4°）までのときだけ比べる。
+//     上の5本と 10-19 を、記録の立った姿勢を b の代わりにして通し直すと、走り出しの頭の線の声は前と同じ5本で出た（11-04 は前もいまも出ない）。
+//     今日の基準の頭が ① の線の内側に寄るので、基準からの頭の崩れの声は6本（計約152分）で 38 → 48回に増えた（docs/camera-mode.md の「スマホの向きと傾き」）
 //   研究データ（Riglet）の頭の印は、アプリの点より首の角度が小さく出て（真横で平均 11°）この線に届かないので、頭の決まった線は研究データでは確かめられない
 //   （仮想実験は、1本ごとに真ん中をそろえて、揺れだけを見ている）
 type Lim = { full: number; zero: number; cue: number }
@@ -536,7 +570,8 @@ export interface Strict {
   head: Lim
   hip: Lim
   rel: { trunk: Lim; trunkBack: Lim; body: Lim; bodyBack: Lim }
-  form: { trunkMax: number; bodyMax: number; neck: number; headLean: number }
+  // headYawMax：頭の線そのもの（FORM.head の ②）と比べる、見積もったスマホの向き（前側、度）の上限。仮の値（FORM の頭の説明）
+  form: { trunkMax: number; bodyMax: number; neck: number; headLean: number; headYawMax: number }
 }
 export const STRICT: Record<Level, Strict> = {
   beginner: {
@@ -544,21 +579,21 @@ export const STRICT: Record<Level, Strict> = {
     head: { full: 5, zero: 15, cue: 8 },
     hip: { full: 3, zero: 10, cue: 4 },
     rel: { trunk: { full: 2, zero: 10, cue: 4 }, trunkBack: { full: 2, zero: 10, cue: 4 }, body: { full: 1.5, zero: 7, cue: 3.5 }, bodyBack: { full: 1.5, zero: 7, cue: 3.5 } },
-    form: { trunkMax: 12, bodyMax: 15, neck: 48, headLean: 52 },
+    form: { trunkMax: 12, bodyMax: 15, neck: 48, headLean: 52, headYawMax: 21 },
   },
   intermediate: {
     hunch: { full: 1.5, zero: 8, cue: 3.5 },
     head: { full: 4, zero: 14, cue: 7 },
     hip: { full: 2.5, zero: 9, cue: 3.5 },
     rel: { trunk: { full: 1.5, zero: 9, cue: 3.5 }, trunkBack: { full: 1.5, zero: 9, cue: 3.5 }, body: { full: 1.2, zero: 6, cue: 3 }, bodyBack: { full: 1.2, zero: 6, cue: 3 } },
-    form: { trunkMax: 11, bodyMax: 14, neck: 46, headLean: 50 },
+    form: { trunkMax: 11, bodyMax: 14, neck: 46, headLean: 50, headYawMax: 21 },
   },
   advanced: {
     hunch: { full: 1.2, zero: 7, cue: 3 },
     head: { full: 3.5, zero: 13, cue: 6 },
     hip: { full: 2, zero: 8, cue: 3 },
     rel: { trunk: { full: 1, zero: 8, cue: 3 }, trunkBack: { full: 1, zero: 8, cue: 3 }, body: { full: 1, zero: 5, cue: 2.5 }, bodyBack: { full: 1, zero: 5, cue: 2.5 } },
-    form: { trunkMax: 10, bodyMax: 13, neck: 32, headLean: 36 },
+    form: { trunkMax: 10, bodyMax: 13, neck: 32, headLean: 36, headYawMax: 4 },
   },
 }
 // 既定は中級（ふつう）。レベルが分からない走り（前の版の記録を通し直すときなど）もこれ
@@ -600,6 +635,7 @@ export function applyStrictness(level: Level = DEFAULT_STRICT, kmh: number | und
   FORM.body.max = s.form.bodyMax
   FORM.head.neck = s.form.neck
   FORM.head.headLean = s.form.headLean
+  FORM.head.yawMax = s.form.headYawMax
   FORM.body.min = STRICT_BODY_MIN
   if (speedKmh === undefined) return
   const g = goodAt(speedKmh)

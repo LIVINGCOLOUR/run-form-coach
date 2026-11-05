@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
 import { itemScore, postureScore } from './scoring'
 import { Coach, headForward, hunchOf, toScale } from './coach'
-import { applyStrictness, BASELINE, FORM, GOOD, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
-import { formOver, formScale } from './form'
+import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, HEAD_OPEN, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
+import { formOver, formScale, FormStage, yawDeg, yawFixed } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
 import { capBaseline, standingIssue, STANDING_LIMITS } from './standing'
-import { LogRecorder, LOG_POINTS } from './log'
+import { LogRecorder, LOG_COLUMNS, LOG_POINTS } from './log'
+import { worldAngles, type P3 } from './world'
 import { fullFrames } from './fullFrames'
 import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, RunningGate, bodyVisible } from './motion'
@@ -20,7 +21,10 @@ import type { Measure } from './types'
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
 
 // このファイルの多くのテストは、初心者（やさしめ）の線で書いている。厳しさを変えるテストは、その中で入れ替える
-beforeEach(() => applyStrictness('beginner'))
+beforeEach(() => {
+  applyStrictness('beginner')
+  FORM.head.open = null
+})
 
 describe('角度の測定', () => {
   it('体幹の前傾を測れる', () => {
@@ -364,9 +368,69 @@ describe('頭', () => {
   })
   it('斜めから撮っているように見えるとき（前側・後ろ側の値が FORM.head.yawMax を越える）は、頭を正しいフォームの線と比べない', () => {
     const coach = new Coach({ pause: false })
-    const a = feedSparse(coach, 0, 230, { ...good, neck: 60, headLean: 70, yaw: FORM.head.yawMax + 0.05 }).speak
+    const a = feedSparse(coach, 0, 230, { ...good, neck: 60, headLean: 70, yaw: (FORM.head.yawMax + 10) * CAM_YAW.perDeg }).speak
     expect(a).not.toContain(PHRASES.cueHead)
     expect(coach.finish().form!.find((r) => r.group === 'head')!.judged).toBe(false)
+  })
+})
+
+describe('頭：スマホの置き方に強くする（胸を開いた立ち方からの差・向きの見積もり）', () => {
+  const deg = (d: number) => d * CAM_YAW.perDeg // 前側へ d° ずれたときの前側・後ろ側の値
+  const open = { neck: HEAD_OPEN.neck, headLean: HEAD_OPEN.headLean }
+  it('上級：胸を開いた立ち方より頭が前に出たまま走り出せば、スマホが前側に10°ずれていても（線そのものは比べない）、整える間に知らせる', () => {
+    const coach = new Coach({ pause: false, level: 'advanced', open })
+    const a = feedSparse(coach, 0, 60, { ...good, neck: STRICT.advanced.form.neck + 4, headLean: STRICT.advanced.form.headLean + 4, yaw: deg(10) }).speak
+    expect(a).toContain(PHRASES.cueHead)
+    expect(coach.cues.find((c) => c.item === 'head')!.lead).toBe(true)
+  })
+  it('上級：スマホが前側にずれて、立った頭も走った頭も同じだけ大きく出る日は、知らせない（前は線そのもので知らせていた）', () => {
+    const coach = new Coach({ pause: false, level: 'advanced', open: { neck: open.neck + 8, headLean: open.headLean + 6 } })
+    const a = feedSparse(coach, 0, 230, { ...good, neck: STRICT.advanced.form.neck + 4, headLean: STRICT.advanced.form.headLean + 4, yaw: deg(10) }).speak
+    expect(a).not.toContain(PHRASES.cueHead)
+  })
+  it('上級の線そのものは、見積もった向きが前側 4° までのときだけ比べる。胸を開いた立ち方がなければ、それより斜めでは頭を比べない', () => {
+    applyStrictness('advanced')
+    FORM.head.open = null
+    const v = { trunk: 7, body: 9, neck: STRICT.advanced.form.neck + 5, headLean: STRICT.advanced.form.headLean + 5 }
+    expect(STRICT.advanced.form.headYawMax).toBe(4)
+    expect(formOver('head', { ...v, yaw: deg(3) }).over).toBeGreaterThan(0)
+    expect(formOver('head', { ...v, yaw: deg(6) }).over).toBe(-Infinity)
+    expect(FormStage.judgeable('head', { yaw: deg(6) })).toBe(false)
+    // 中級・初心者は前のまま（前側に約21°まで）
+    applyStrictness('intermediate')
+    expect(FormStage.judgeable('head', { yaw: deg(15) })).toBe(true)
+  })
+  it('向きの直しは前側だけ：前側に d° で 首 CAM_YAW.neck × d、頭の位置 CAM_YAW.headLean × d を差し引く。後ろ側は直さない', () => {
+    expect(yawDeg(deg(10))).toBeCloseTo(10, 6)
+    const f = yawFixed({ neck: 40, headLean: 40, yaw: deg(10) })
+    expect(f.neck).toBeCloseTo(40 - CAM_YAW.neck * 10, 6)
+    expect(f.headLean).toBeCloseTo(40 - CAM_YAW.headLean * 10, 6)
+    expect(yawFixed({ neck: 40, headLean: 40, yaw: deg(-10) })).toEqual({ neck: 40, headLean: 40 })
+  })
+  it('走り出しから頭が前に出ていても、今日の基準の頭は胸を開いた立ち方から見た線の内側（いつもの頭を基準にしない）', () => {
+    const coach = new Coach({ pause: false, level: 'advanced', open })
+    feedSparse(coach, 0, 260, { ...good, neck: STRICT.advanced.form.neck + 4, headLean: STRICT.advanced.form.headLean + 4, yaw: deg(10) })
+    expect(coach.leanRef!.neck).toBeLessThanOrEqual(STRICT.advanced.form.neck + 1e-9)
+    expect(coach.leanRef!.headLean).toBeLessThanOrEqual(STRICT.advanced.form.headLean + 1e-9)
+  })
+})
+
+describe('傾きセンサーが使えないとき', () => {
+  it('体全体・上体・着地は正しいフォームの線と比べず、声もかけない（記録には残す）。頭は比べる', () => {
+    const coach = new Coach({ pause: false })
+    const big: Measure = { ...good, trunk: 16, body: 12 } // 上体が線を越えている
+    const frames = demoStride()
+    for (let i = 0; i < 120 * 15; i++) {
+      const t = i / 15
+      coach.update({ t, present: true, moving: true, m: big, frame: frames[(i * 2) % frames.length], noRoll: true })
+    }
+    expect(coach.cues.some((c) => c.item === 'trunk' || c.item === 'body')).toBe(false)
+    expect(coach.cues.some((c) => c.text === PHRASES.formSet || c.text === PHRASES.formGood)).toBe(false) // 比べていないので、整ったとは言わない
+    const form = coach.finish().form!
+    expect(form.find((r) => r.group === 'trunk')!.judged).toBe(false)
+    expect(form.find((r) => r.group === 'head')!.judged).toBe(true)
+    expect(coach.samples.at(-1)!.noRoll).toBe(true)
+    expect(coach.samples.at(-1)!.form?.trunk).toBeUndefined()
   })
 })
 
@@ -546,20 +610,61 @@ describe('立ち姿勢（猫背）のチェック', () => {
   })
 })
 
+describe('worldLandmarks の向きと角度（記録だけ）', () => {
+  // 右へ走る人を、右側（手前）から撮った3次元の点（x 右・y 下・z 奥、m）。上体 10°・頭の位置 20° の前傾。
+  // 体を鉛直のまわりに a° カメラのほうへ回し（前側から撮るのと同じ）、スマホの左右の傾き roll° で画面の中で回す
+  function body(a: number, roll: number): P3[] {
+    const R = Math.PI / 180
+    const p: P3[] = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0 }))
+    const sh = { x: 0.5 * Math.sin(10 * R), y: -0.5 * Math.cos(10 * R) }
+    const ear = { x: sh.x + 0.15 * Math.sin(20 * R), y: sh.y - 0.15 * Math.cos(20 * R) }
+    p[23] = { x: 0, y: 0, z: 0.1 } // 左の腰（奥）
+    p[24] = { x: 0, y: 0, z: -0.1 }
+    p[11] = { x: sh.x, y: sh.y, z: 0.15 }
+    p[12] = { x: sh.x, y: sh.y, z: -0.15 }
+    p[7] = { x: ear.x, y: ear.y, z: 0.07 }
+    p[8] = { x: ear.x, y: ear.y, z: -0.07 }
+    p[0] = { x: ear.x + 0.1, y: ear.y + 0.02, z: 0 }
+    return p.map((q) => {
+      const x = q.x * Math.cos(a * R) + q.z * Math.sin(a * R)
+      const z = -q.x * Math.sin(a * R) + q.z * Math.cos(a * R)
+      return { x: x * Math.cos(roll * R) - q.y * Math.sin(roll * R), y: x * Math.sin(roll * R) + q.y * Math.cos(roll * R), z }
+    })
+  }
+  it('真横なら向き 0°、体の横の面で上体・頭の位置の前傾を出す。前側から撮れば向きは正、スマホの傾きは重力で戻す', () => {
+    const s = worldAngles(body(0, 0), 0, 0, true)!
+    expect(s.yaw).toBeCloseTo(0, 6)
+    expect(s.trunk).toBeCloseTo(10, 6)
+    expect(s.headLean).toBeCloseTo(20, 6)
+    const f = worldAngles(body(12, 3), 3, 0, true)!
+    expect(f.yaw).toBeCloseTo(12, 6)
+    expect(f.trunk).toBeCloseTo(10, 6)
+    expect(f.headLean).toBeCloseTo(20, 6)
+  })
+})
+
 describe('調整用の記録', () => {
   it('取れたコマごとに、判定の数字と骨格の点を1行で残す。点がないコマは数字だけ', () => {
     const rec = new LogRecorder()
     const f = demoStride()[0]
-    rec.frame(1.234, 'run', 480, 640, f, { visible: true, moving: true, by: 'steps', cadence: 171.4, m: measure(f), sideDeg: 3, still: 5 })
+    const world = { yaw: 3.04, trunk: 5.56, neck: 20.01, headLean: 25 }
+    rec.frame(1.234, 'run', 480, 640, f, { visible: true, moving: true, by: 'steps', cadence: 171.4, m: { ...measure(f), yaw: 0.01234 }, sideDeg: 3, still: 5, roll: 1.26, world })
     rec.frame(1.3, 'setup', 480, 640, null, { visible: false, moving: false, by: null, cadence: null, sideDeg: 90, still: 1e9 })
     rec.frame(1.4, 'loading', 480, 640, null, { visible: false, moving: false, by: null, cadence: null, sideDeg: 90, still: 0 })
     rec.event(1.5, '始めます。')
     const [a, b] = rec.log.rows
+    const n = LOG_COLUMNS.length - 1 // 骨格の点の前までの列
+    const col = (name: string) => LOG_COLUMNS.indexOf(name)
     expect(rec.log.rows.length).toBe(2)
     expect(a.slice(0, 6)).toEqual([1.23, 2, 1, 1, 1, 171])
-    expect(a.length).toBe(16 + LOG_POINTS.length * 3)
-    expect(b.length).toBe(16)
+    expect(a.length).toBe(n + LOG_POINTS.length * 3)
+    expect(b.length).toBe(n)
     expect(b[11]).toBe(99)
+    // 前側・後ろ側の値は小数3桁、傾きセンサーの左右の傾きと worldLandmarks の値も残す（無ければ -999）
+    expect(a[col('yaw')]).toBe(0.012)
+    expect(a[col('roll')]).toBe(1.3)
+    expect([col('wYaw'), col('wTrunk'), col('wNeck'), col('wHeadLean')].map((i) => a[i])).toEqual([3, 5.6, 20, 25])
+    expect([col('roll'), col('wYaw'), col('wHeadLean')].map((i) => b[i])).toEqual([-999, -999, -999])
     expect(rec.log.events).toEqual([[1.5, '始めます。']])
   })
 })

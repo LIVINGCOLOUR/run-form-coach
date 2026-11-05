@@ -42,6 +42,7 @@ export interface Sample {
   headLean?: number // 頭の位置そのもの（肩→耳の前傾、度）
   neck?: number // 首の角度そのもの（肩→耳の前傾 − 腰→肩の前傾、度）
   yaw?: number // スマホが体の前側から（正）か後ろ側から（負）撮っているか（geometry の yawSign の1秒の平均）
+  noRoll?: boolean // スマホの左右の傾き（傾きセンサー）が分からなかった秒（カメラ版。体全体・上体・着地を正しいフォームの線と比べていない）
   // 正しいフォームの線（camera/params.ts の FORM）を外れた量を、LIMITS の目盛りに直したもの。判定しなかった項目は無い
   form?: Partial<Record<ItemKey, number>>
   // 顎：耳→鼻の線の上向きの、今日の基準からの変化（度。上体が起きた分は差し引く）。測って記録するだけで、声はかけない

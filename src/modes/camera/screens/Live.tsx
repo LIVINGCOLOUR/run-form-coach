@@ -4,7 +4,8 @@ import { BASELINE, CORRECT, SETUP } from '../params'
 import { ITEM_KEYS, type Baseline, type Frame, type ItemKey, type Sample, type Session } from '../../../core/types'
 import type { Measure } from '../types'
 import { Coach, judged, type CoachEvent, type CoachState } from '../coach'
-import { facing, levelFrame, measure, rotateFrame, sideOffDeg, yawSign } from '../geometry'
+import { facing, levelFrame, measure, nearSide, rotateFrame, sideOffDeg, yawSign } from '../geometry'
+import { worldAngles, type P3 } from '../world'
 import { MotionDetector, bodyVisible } from '../motion'
 import { L } from '../landmarks'
 import { overCue } from '../scoring'
@@ -87,6 +88,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let lastGuide = 0
     let stillSince: number | null = null
     let baseNecks: number[] = []
+    let baseLeans: number[] = [] // 立った姿勢の頭の位置（肩→耳の前傾）。b のものを、頭の線の「胸を開いた立ち方からの差」に使う
+    let baseYaws: number[] = [] // 立った姿勢の前側・後ろ側の値（記録用）
+    let openPose: { neck: number; headLean: number } | undefined // 胸を開いた立ち方（b）の首・頭の位置（Coach に渡す。form.ts の headOver）
+    let rollOk: boolean | null = null // 傾きセンサーの左右の傾きが分かっているか（変わったら記録に残す）
     let baseMovingSince: number | null = null
     let baseStands: Standing[] = []
     let baseHips: number[] = [] // 立った姿勢の腰の高さ（走りの数字の腰の高さを割る）
@@ -334,7 +339,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         stopPose = runPose(
           video,
           lm,
-          (tick) => (tick.skipped ? onSkip(tick.t) : onTick(tick.frame, tick.t, tick.width, tick.height)),
+          (tick) => (tick.skipped ? onSkip(tick.t) : onTick(tick.frame, tick.t, tick.width, tick.height, tick.world)),
           clock,
           want,
         )
@@ -358,10 +363,16 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       updateHud(t, lastPresent, 0)
     }
 
-    const onTick = (raw: Frame | null, t: number, w: number, h: number) => {
+    const onTick = (raw: Frame | null, t: number, w: number, h: number, world?: P3[]) => {
       nowT = t
       tickMoving = false
-      // スマホの傾きを直す：左右の傾きを戻し、下を向いているとき（または大きく上を向いているとき）は上下の向きも戻す
+      // スマホの傾きを直す：左右の傾きを戻し、下を向いているとき（または大きく上を向いているとき）は上下の向きも戻す。
+      // 傾きセンサーが使えない（許可がない・機種が出さない）間は直せないので、体全体・上体・着地を正しいフォームの線と比べない（noRoll。coach.ts）
+      const noRoll = !file && !gravityAvailable()
+      if (!file && rollOk !== !noRoll) {
+        rollOk = !noRoll
+        rec.event(t, rollOk ? 'roll:ok' : 'roll:none')
+      }
       let frame = raw
       if (raw && !file && gravityAvailable()) {
         frame = rotateFrame(raw, gravityRoll(), w / 2, h / 2)
@@ -370,6 +381,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       }
       const visible = !!frame && bodyVisible(frame, 0.5, h)
       const m: Measure | undefined = visible ? measure(frame!) : undefined
+      // worldLandmarks からの向きと角度（記録に残すだけ。world.ts）
+      const wa = visible && world ? worldAngles(world, file ? 0 : gravityRoll(), file ? 0 : gravityPitch(), nearSide(frame!) === 'right') : null
       if (m && phase === 'run') camNow = { t, trunk: m.trunk, head: m.headLean }
       const sideDeg = frame ? sideOffDeg(frame) : 90
       if (phase === 'setup' && t - lastLightAt > 1) {
@@ -456,6 +469,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         if (voicePending() || (baseMovingSince !== null && t - baseMovingSince > BASELINE.movingTolerance)) {
           stillSince = null
           baseNecks = []
+          baseLeans = []
+          baseYaws = []
           baseStands = []
           baseHips = []
         } else {
@@ -463,6 +478,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           const el = t - stillSince
           if (el > BASELINE.settle) {
             baseNecks.push(m.neck)
+            baseLeans.push(m.headLean)
+            baseYaws.push(m.yaw)
             baseStands.push({ head: m.neck + m.trunk, trunk: m.trunk })
             baseHips.push(m.hipRatio)
           }
@@ -473,12 +490,14 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             // カメラの立ち姿勢の線（standing.ts）では、いつもの猫背とまっすぐを分けられなかったので、「まっすぐです」とは言わない
             const st = { head: median(baseStands.map((x) => x.head)), trunk: median(baseStands.map((x) => x.trunk)) }
             const cam = { trunk: st.trunk, head: st.head }
-            rec.event(t, `pose:${poseStage} head ${st.head.toFixed(1)} trunk ${st.trunk.toFixed(1)} neck ${median(baseNecks).toFixed(1)}`)
+            rec.event(t, `pose:${poseStage} head ${st.head.toFixed(1)} trunk ${st.trunk.toFixed(1)} neck ${median(baseNecks).toFixed(1)} headLean ${median(baseLeans).toFixed(1)} yaw ${median(baseYaws).toFixed(3)}`)
             sensorRun?.pose(poseStage, t, BASELINE.collect, cam)
             const restart = () => {
               lastNextSay = t
               stillSince = null
               baseNecks = []
+              baseLeans = []
+              baseYaws = []
               baseStands = []
               baseHips = []
             }
@@ -501,6 +520,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
               } else {
                 // 基準（首の角度・立ち姿勢・腰の高さ）は b（胸を開いた立ち方）で取る：目指す形を今日の基準にする（いつもの猫背を基準にしない）
                 const today = median(baseNecks)
+                // 頭の線は、走っている頭を、この立ち方（b）からの差でも見る（スマホの向きでずれにくい。params.ts の FORM の頭）
+                openPose = { neck: today, headLean: median(baseLeans) }
                 const createdAt = Date.now()
                 baseline = { neck: capBaseline(today, loadBaselines()), createdAt, ...st }
                 saveBaseline({ neck: today, createdAt, ...st })
@@ -542,7 +563,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           }
         }
         // 検証中は一時停止を切っている（params.ts）。kmh：ベルトの速さ（入れたときだけ。速さで動く線をその速さにする）
-        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step), level: progress.level, kmh: beltRef.current })
+        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step), level: progress.level, kmh: beltRef.current, open: openPose })
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない
         if (coach && coach.state === 'waiting' && t - lastNextSay > RUNNING.waitRepeat) {
@@ -550,7 +571,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           say(PHRASES.waitRun, t)
         }
         if (coach) {
-          handle(coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined }), t)
+          handle(coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined, noRoll }), t)
           lastSample = coach.samples[coach.samples.length - 1]
           if (lastSample && !coach.quiet) {
             if (overCue('head', judged(lastSample, 'head'))) hot.add('head')
@@ -564,7 +585,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       else draw(null, w, h, hot)
 
       // 上限は置かない（LOG_CHUNK.every 秒ごとに端末へ書き出して、手元の rows は空にする）
-      rec.frame(t, phase, w, h, frame, { visible, moving: tickMoving, by: motion.by, cadence: motion.cadence, m, sideDeg, still: phoneStillSec(), pitch: gravityPitch() })
+      rec.frame(t, phase, w, h, frame, { visible, moving: tickMoving, by: motion.by, cadence: motion.cadence, m, sideDeg, still: phoneStillSec(), pitch: gravityPitch(), roll: noRoll || file ? null : gravityRoll(), world: wa })
       updateHud(t, visible, sideDeg)
     }
 
