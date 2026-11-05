@@ -1,7 +1,7 @@
 # スマホ版の測り方と声かけ：研究の材料
 
 腰（ランニングベルト）・胸（ベスト）に付けた慣性センサー（スマホを含む）で走りを測る研究と、走っている最中の声・音での声かけの研究をまとめる。
-今の測り方（`run-form-coach-phone/src/modes/phone/signal.ts`・`params.ts`）と比べて、直すべきところを出す。
+今の測り方（`src/modes/phone/signal.ts`・`params.ts`）と比べて、直すべきところを出す。
 
 - DOI はすべて Crossref（`api.crossref.org/works`）で実在を確かめ、数字は PubMed の要旨（一部は Europe PMC の本文）から取った。
 - 「本文で確かめていない」「見つからなかった」ものは、そう書いた（最後の節にまとめた）。

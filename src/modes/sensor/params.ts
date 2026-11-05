@@ -4,7 +4,7 @@ import type { Level } from '../../core/level'
 // しくみの数字（CUE・QUIET・SCORE など）は src/core/params.ts のものをそのまま使い、ここでは決めない
 
 // 付ける場所と、そこに付けているセンサー（name が null の枠は使わない）。付け替えたら、ここだけ直す
-// （hardware/sensor の viewer/viewer.html の SLOTS、tools/coach.py の SLOTS も同じ並び）。5番はモーターが回らず外した。手首は1個だけで、カメラから見える左手首に付ける（右手首は空き）
+// （hardware/sensor の viewer/viewer.html の SLOTS、tools/coach.py の SLOTS も同じ並び。ただし下の足首の入れ替え中は、viewer・coach.py は元の並びのまま）。5番はモーターが回らず外した。手首は1個だけで、カメラから見える左手首に付ける（右手首は空き）
 export const SLOTS: readonly { place: string; name: string | null }[] = [
   { place: '頭', name: 'RFC-IMU-1' },
   { place: '胸', name: 'RFC-IMU-2' },

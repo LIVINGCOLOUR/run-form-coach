@@ -2,21 +2,25 @@
 
 ▶ 紹介動画：https://run-form-coach.vercel.app/promo/
 
-トレッドミルの横に置いたスマホ1台で走りを見続け、外から見て分かるフォームの崩れ（猫背・前傾）を、その場で声で直すウェブアプリ。
+走っている最中にフォームの崩れを見つけ、その場で直すウェブアプリ。入り口は3つ。
+
+- **トレッドミル（本線）**：横に置いたスマホ1台で走りを見続け、外から見て分かるフォームの崩れ（猫背・頭が前・前傾・腰の落ち込み・足が体より前に着く）を、その場で声で直す
+- **腰スマホ（無料）**：スマホを腰に付けて外を走り、ピッチの崩れを声とメトロノームで直す
+- **センサーラン**：自作のセンサーを体に付けて外を走り、崩れた場所を振動で知らせる
+
+作りと記録：
 
 - 骨格の推定：MediaPipe Pose Landmarker（端末の中で動かす。映像は保存も送信もしない）
-- 記録：端末の中（IndexedDB）だけ
+- 記録：端末の中（IndexedDB）。テスト期間は、走った記録（骨格の点の数字とセンサーの値。映像は入らない）を開発者の Mac へ送っている（`CLAUDE.md` の「手順」）
 - 画面：React + Vite + TypeScript
 
-製品として決まっていること（誰に売るか・料金・無料版）は [docs/product.md](docs/product.md)。開発の決まりは [CLAUDE.md](CLAUDE.md)。
-判定の精度を上げるための検証データの集め方（水戸ランナー塾への相談を含む）は [docs/validation-plan.md](docs/validation-plan.md)。
-競合の調査（定期的に調べ直す）は [docs/competitors.md](docs/competitors.md)。
+文書の地図（方針 → 仕組み → 根拠 → 手順）は [CLAUDE.md](CLAUDE.md) のいちばん上。製品とモデルの方針は [docs/product.md](docs/product.md)、確かめ方と結果は [docs/validation-plan.md](docs/validation-plan.md)、競合の調査は [docs/competitors.md](docs/competitors.md)。
 
 ## 開発
 
 ```sh
 npm install
-npm run dev     # https が要る iPhone での確認は、公開先（Vercel）で行う
+npm run dev     # https が要る iPhone での確認は、公開先（Vercel）か npm run dev:https（docs/dev-https.md）で行う
 npm test        # 計測・判定・声かけの流れのテスト
 ```
 
