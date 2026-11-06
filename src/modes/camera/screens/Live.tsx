@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { RUNNING } from '../../../core/params'
-import { BASELINE, CORRECT, SETUP, WAIT } from '../params'
+import { BASELINE, CORRECT, FRAME_SAY, SETUP, WAIT } from '../params'
 import { ITEM_KEYS, type Baseline, type Frame, type ItemKey, type Sample, type Session } from '../../../core/types'
 import type { Measure } from '../types'
 import { Coach, judged, type CoachEvent, type CoachState } from '../coach'
@@ -9,7 +9,7 @@ import { worldAngles, type P3 } from '../world'
 import { MotionDetector, bodyVisible } from '../motion'
 import { L } from '../landmarks'
 import { headCircle } from '../ui/head'
-import { framing, FramingWindow, FRAMING_TEXT, EDGE, type Framing } from '../framing'
+import { framing, FramingVoice, FramingWindow, FRAMING_TEXT, EDGE, type FramePhase, type Framing } from '../framing'
 import { overCue } from '../scoring'
 import { gravityAvailable, gravityPitch, gravityRoll, phoneStillSec } from '../gravity'
 import { queueUpload } from '../../../core/upload/uploads'
@@ -19,7 +19,7 @@ import { activeItems, afterRun } from '../../../core/level'
 import { todayFocus } from '../nextStep'
 import { LogRecorder } from '../log'
 import { preloadVoice, speak, stopVoice, voicePending } from '../../../core/voice'
-import { PHRASES } from '../../../core/phrases'
+import { PHRASES, SAY } from '../../../core/phrases'
 import { capBaseline, median, standingIssue, type Standing, type StandingIssue } from '../standing'
 import { cameraLens, loadLandmarker, openCamera, runPose } from '../pose/detector'
 import { fullFrames } from '../fullFrames'
@@ -60,7 +60,10 @@ const SHORT: Record<string, string> = {
   [PHRASES.placeStart]: 'スマホを縦に置いてください',
   [PHRASES.guideDark]: '暗すぎます',
   [PHRASES.guideNone]: '体が映っていません',
-  [PHRASES.guideFar]: '全身が入っていません（スマホを離す）',
+  [PHRASES.guideHead]: '頭が切れています（スマホを離す）',
+  [PHRASES.guideFeet]: '足が切れています（スマホを離す）',
+  [PHRASES.guideBoth]: '頭と足が切れています（スマホを離す）',
+  [PHRASES.guideHidden]: '体の一部が見えていません',
   [PHRASES.guideNear]: '体が小さすぎます（スマホを近づける）',
   [PHRASES.guideTiltDown]: 'スマホが下を向いています',
   [PHRASES.guideHigh]: 'スマホが高すぎます（腰の高さへ）',
@@ -69,6 +72,26 @@ const SHORT: Record<string, string> = {
   [PHRASES.guideBehind]: '少し後ろ側から撮っています',
   [PHRASES.guideFront]: '少し前側から撮っています',
 }
+
+// 体の映り方ごとの声（framing.ts）。置く間は、どう直すかまで言う。2つの立ち方・走り出しを待つ・走っている間は、
+// 本人はトレッドミルの上にいるので起きていることだけを言い、映っていないときは走っている間と同じ「画面から外れました…」
+const SETUP_PHRASE: Record<Exclude<Framing, 'ok'>, string> = {
+  none: PHRASES.guideNone,
+  head: PHRASES.guideHead,
+  feet: PHRASES.guideFeet,
+  both: PHRASES.guideBoth,
+  hidden: PHRASES.guideHidden,
+}
+const FRAME_PHRASE: Record<Framing, string> = {
+  ok: PHRASES.bodyIn,
+  none: SAY.lost,
+  head: PHRASES.frameHead,
+  feet: PHRASES.frameFeet,
+  both: PHRASES.frameBoth,
+  hidden: PHRASES.frameHidden,
+}
+// 置く間に、全身が入ったかを確かめている（FRAME_SAY.okHold 秒）あいだの画面の1行。声にはしない
+const CHECKING = '全身が入ったか確かめています'
 
 // sessions：これまでの走り（新しい順）。走り出す前に言う「今日意識するのは…」を、ホームの「今日の意識」と同じ1つにするため
 export function Live({ video: file, sessions = [], onDone }: { video?: File; sessions?: Session[]; onDone: (id?: string) => void }) {
@@ -134,11 +157,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let setupAt: number | null = null
     let hintMsg = ''
     let hintSince = 0
-    // 「映っている」は、直近2秒のコマのうち見えていた割合で決める（一瞬の見間違いで切り替えない）
-    let seenHist: { t: number; seen: boolean }[] = []
     let yawHist: { t: number; v: number }[] = []
-    let present = false
-    let bodyAnnounced = false
     let firstSaid = false
     let lastPresent = true
     let lastMoving = false
@@ -147,6 +166,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     // 走り出すのを待つ間に理由を言うのは直近 WAIT.window 秒でならしたもの（骨格を取ったコマだけを入れるので、コマ数も分かる）
     const shown = new FramingWindow(1)
     const waitWin = new FramingWindow(WAIT.window)
+    // 映り方が変わったら声で言う見張り（framing.ts の FramingVoice。数字は params.ts の FRAME_SAY）。「全身が入りました」もここで確かめる
+    const framer = new FramingVoice()
+    let lastFraming: Framing = 'none' // いちばん新しいコマの映り方（走っている間、切れていれば間引かずに見るため）
 
     // 調整用の記録（骨格の点と判定の数字）。カメラで撮るときは、スマホ版の記録と時刻を合わせられるよう、時計の対応を残す
     const rec = new LogRecorder(file ? undefined : { perfMs: performance.now(), epochMs: Date.now() })
@@ -266,12 +288,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     }
 
     // 置き方の案内。背面カメラでは画面が見えないので、本人がどう動けばいいかで言う
+    // 全身が入ってから見ること（暗さと、全身が入っているかは、呼ぶ前に見る）。
     // yaw：スマホが体の前側から（正）か後ろ側から（負）撮っているか。1秒でならした値
-    const guide = (frame: Frame | null, w: number, h: number, sideDeg: number, yaw: number, light: boolean): string | null => {
-      if (!light) return PHRASES.guideDark
-      if (!frame) return PHRASES.guideNone
-      const ys = [L.nose, L.leftAnkle, L.rightAnkle].map((i) => frame[i].y)
-      if (Math.min(...ys) < h * 0.04 || Math.max(...ys) > h * 0.98 || !bodyVisible(frame)) return PHRASES.guideFar
+    const guide = (frame: Frame, w: number, h: number, sideDeg: number, yaw: number): string | null => {
       // 小さく映っていると膝や足首の点がぶれて、走り出しや角度が取れない。画面の高さの4割はほしい
       if (bodySpan(frame, h) < SPAN_MIN) return PHRASES.guideNear
       // スマホが下を向いている・高すぎる・体の後ろ側から撮っている：着地の角度などが大きくずれるので直してもらう
@@ -391,8 +410,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         if (disposed) return
         setPhase(file ? 'run' : 'setup')
         const clock = file ? () => video.currentTime : () => performance.now() / 1000
-        // 走っている間は、コーチが要ると言ったときだけ骨格を取る（人が見えなくなったら毎コマ取って探す）。全コマ記録のときは毎コマ
-        const want = () => !!file || full || phase !== 'run' || !coachRef.current || !lastPresent || coachRef.current.wantsDetail()
+        // 走っている間は、コーチが要ると言ったときだけ骨格を取る（人が見えなくなった・頭や足が切れたら毎コマ取って探す。映り方の声が続いたかを数えるため）。全コマ記録のときは毎コマ
+        const want = () => !!file || full || phase !== 'run' || !coachRef.current || !lastPresent || lastFraming !== 'ok' || coachRef.current.wantsDetail()
         stopPose = runPose(
           video,
           lm,
@@ -407,6 +426,18 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
 
     const handle = (events: CoachEvent[], t: number) => {
       for (const e of events) {
+        if (e.type === 'speak' && e.text === SAY.lost) {
+          // 走っている間に骨格が見えなくなって ABSENCE.lostSay 秒（声かけのしくみが言う）。頭や足が切れていると分かればそれを言い、
+          // 映り方の声（FramingVoice）が同じことを少し前に言っていれば、重ねない
+          const now = shown.current()
+          const f: Framing = framer.stable !== 'ok' ? framer.stable : now !== 'ok' ? now : 'none'
+          if (framer.saidRecently(f, t)) rec.event(t, `frame:${f} lost skip`)
+          else {
+            say(FRAME_PHRASE[f], t)
+            framer.said(f, t)
+          }
+          continue
+        }
         if (e.type === 'speak') say(e.text, t)
         if (e.type === 'state' && e.state === 'ended') finish()
       }
@@ -441,6 +472,12 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       const fr = framing(raw, h)
       shown.push(t, fr)
       waitWin.push(t, fr)
+      lastFraming = fr
+      // 置く間は、スマホを手に持っている間（動く映像を人と見間違えることがある）を「映っていない」として数える
+      const placed = !!file || phoneStillSec() > SETUP.phoneStill
+      const coachNow = coachRef.current
+      framer.phase = framePhaseOf(phase, coachNow?.state)
+      framer.push(t, phase === 'setup' && !placed ? 'none' : fr, raw)
       const m: Measure | undefined = visible ? measure(frame!) : undefined
       // worldLandmarks からの向きと角度（記録に残すだけ。world.ts）
       const wa = visible && world ? worldAngles(world, file ? 0 : gravityRoll(), file ? 0 : gravityPitch(), nearSide(frame!) === 'right') : null
@@ -455,29 +492,22 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       // 進む条件は、画面に出している3つ（全身・真横・明るさ）だけ。真ん中に寄っているかなどは声で案内するだけにする
       if (phase === 'setup') {
         // 真横の判定は、骨格の推定で両肩・両腰が少し開いて見えるため、35°までは通す
-        // 手に持っている間は判定しない（動く映像を人と見間違えることがある）。置いて1.5秒静止してから見る
-        const placed = !!file || phoneStillSec() > SETUP.phoneStill
-        const seen = visible && placed
-        seenHist.push({ t, seen })
-        seenHist = seenHist.filter((x) => t - x.t <= SETUP.seenWindow)
-        const ratio = seenHist.filter((x) => x.seen).length / seenHist.length
-        // 9割以上のコマで2秒見えたら「映った」、3割を切ったら「映っていない」（間で行ったり来たりしない）
-        if (!present && t - seenHist[0].t >= SETUP.seenWindow * 0.9 && ratio >= SETUP.seenOn) present = true
-        else if (present && ratio < SETUP.seenOff) {
-          present = false
-          bodyAnnounced = false
-        }
+        // 手に持っている間は判定しない（動く映像を人と見間違えることがある）。置いて1.5秒静止してから見る（placed）
+        // 全身が入っている（full）：いまのコマまで、全身が入って人の体の形らしいのが FRAME_SAY.okHold 秒続いた（framing.ts の FramingVoice）。
+        // 一瞬の見間違い・人が画面から消えたコマ・頭や足が画面のふちから出ているコマでは、全身が入ったとしない
+        const full = placed && framer.okNow
         if (frame && visible) yawHist.push({ t, v: yawSign(frame) })
         yawHist = yawHist.filter((x) => t - x.t <= SETUP.yawSmooth)
         const yaw = yawHist.length ? yawHist.reduce((a, x) => a + x.v, 0) / yawHist.length : 0
-        // 人は映っているのに頭・足が切れている（全身が「映った」にならない）ときは、「まだ体が映っていません」ではなく、離れるよう言う
+        // 全身が入るまでは、何が足りないか（体が映っていない・頭・足・両方が切れている・体の一部が見えていない）を言い分ける。
+        // 直近1秒でならした映り方が全身なら、確かめ終わるまで（FRAME_SAY.okHold 秒）黙って待つ
         const cut = shown.current()
-        const partly = !present && lastLight && (cut === 'head' || cut === 'feet' || cut === 'both' || cut === 'hidden')
-        const hint = placed ? (partly ? PHRASES.guideFar : guide(present ? frame : null, w, h, sideDeg, yaw, lastLight)) : null
-        const blocking =
-          hint === PHRASES.guideTiltDown || hint === PHRASES.guideHigh || hint === PHRASES.guideLow || hint === PHRASES.guideBehind || hint === PHRASES.guideFront || hint === PHRASES.guideNear
-        const ready = present && visible && lastLight && sideDeg <= SETUP.sideMax && !!frame && !blocking
-        lastProblem = ready ? null : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
+        const checking = placed && lastLight && !full && cut === 'ok'
+        const hint = !placed ? null : !lastLight ? PHRASES.guideDark : full ? guide(frame!, w, h, sideDeg, yaw) : cut === 'ok' ? null : SETUP_PHRASE[cut]
+        // 真横に向ける・前後に寄る案内は、声で言うだけで進むのを止めない（真横は sideMax で見る）
+        const blocking = hint !== null && hint !== PHRASES.guideSide && hint !== PHRASES.guideForward && hint !== PHRASES.guideBack
+        const ready = full && lastLight && sideDeg <= SETUP.sideMax && !blocking
+        lastProblem = ready ? null : !placed ? PHRASES.placeStart : checking ? CHECKING : hint === PHRASES.guideForward || hint === PHRASES.guideBack || !hint ? PHRASES.guideSide : hint
         // 開いてすぐは話さない（スマホを置いて離れるまでの間）
         setupAt ??= t
         const talk = t - setupAt >= SETUP.talkAfter
@@ -485,9 +515,11 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           notReadySince = null
           okSince ??= t
           if (t - okSince > SETUP.readyHold && talk) {
-            // 次に何をすればいいかまで、続けて声で言う（画面は見えない前提）
+            // 次に何をすればいいかまで、続けて声で言う（画面は見えない前提）。
+            // 「全身が入りました」を少し前に言っていれば、「見えています。全身が入りました。」は重ねない
             lastNextSay = t
-            say(PHRASES.placeOk, t)
+            if (!framer.saidRecently('ok', t, FRAME_SAY.repeat)) say(PHRASES.placeOk, t)
+            framer.said('ok', t)
             say(PHRASES.poseHabit, t)
             poseStage = 'a'
             setHud((hh) => ({ ...hh, pose: 'a' }))
@@ -498,10 +530,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           // 判定が一瞬ゆれただけなら、数えた時間を消さない
           notReadySince ??= t
           if (t - notReadySince > 0.6) okSince = null
-          // 離れていて画面が見えなくても分かるよう、全身が入ったら声で知らせる
-          if (talk && !bodyAnnounced && present) {
-            bodyAnnounced = true
+          // 離れていて画面が見えなくても分かるよう、全身が入ったら声で知らせる（切れている・映っていないと言ったあとも、また言う）
+          if (talk && full && framer.lastSaid?.f !== 'ok') {
             say(PHRASES.bodyIn, t)
+            framer.said('ok', t)
             lastGuide = t
           }
           let msg = lastProblem ?? PHRASES.guideNone
@@ -511,13 +543,16 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             hintSince = t
           }
           // 同じ案内が1.2秒続いてから言う。変わったら言い直し、同じなら6秒ごとに繰り返す
-          // 「置いてください」のあとの「まだ体が映っていません」は、同じ案内として扱う
+          // 「置いてください」のあとの「まだ体が映っていません」は、同じ案内として扱う。全身を確かめている間は言わない
           const same = msg === lastSaid || (msg === PHRASES.guideNone && lastSaid === PHRASES.placeStart)
-          if (talk && t - hintSince >= SETUP.hintStable && t - lastGuide > (same ? SETUP.hintRepeat : 1.5)) {
+          if (talk && msg !== CHECKING && t - hintSince >= SETUP.hintStable && t - lastGuide > (same ? SETUP.hintRepeat : 1.5)) {
             say(msg, t)
             lastGuide = t
             lastSaid = msg
             firstSaid = true
+            // 映り方の案内なら、映り方の見張りにも言ったと知らせる（次の場面で、また全身が入ったと言うため）
+            const said = (Object.keys(SETUP_PHRASE) as Exclude<Framing, 'ok'>[]).find((k) => SETUP_PHRASE[k] === msg)
+            if (said) framer.said(said, t)
           }
         }
       }
@@ -610,7 +645,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       // 基準がなかなか取れないときは、立ち方をもう一度言う。間隔は言い終えてから数える
       // （2026-11-06：言った時から数えていたので、胸を開く案内 7.5秒→10.4秒 では言い終えてから測る4秒が取れる前に言い直し、何度も繰り返した）
       if (phase === 'baseline' && voicePending()) lastNextSay = t
-      if (phase === 'baseline' && t - lastNextSay > BASELINE.repeat) {
+      // 体が映っていない・体の一部が見えていない（骨格の角度が取れない）間は言い直さず、映り方の声に任せる（言い直した回数にも数えない）
+      if (phase === 'baseline' && framer.stable !== 'none' && framer.stable !== 'hidden' && t - lastNextSay > BASELINE.repeat) {
         lastNextSay = t
         say(poseStage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen, t)
         poseRepeats++
@@ -637,12 +673,18 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない。
         // 走りの始まりは、全身が見えたコマだけで歩数を数える（coach.ts の RunningGate）ので、体が入っていない・頭や足が切れているなら、
-        // 「走り出すと始まります」ではなく、それを言う（言葉は置き方の案内と同じ）。記録には、そのときの見え方とコマ数を残す
+        // 「走り出すと始まります」ではなく、それを言う（映り方の声と同じ言葉。映り方の声が少し前に言っていれば重ねない）。
+        // 確かめた映り方（framer.stable）が全身でも、直近 WAIT.window 秒で全身のコマが WAIT.seenMin を切っていれば（出たり入ったり）、多かった理由を言う。
+        // 記録には、そのときの見え方とコマ数を残す
         if (coach && coach.state === 'waiting' && t - lastNextSay > RUNNING.waitRepeat) {
           lastNextSay = t
-          const why = waitWin.okRatio < WAIT.seenMin ? waitWin.current() : 'ok'
+          const why: Framing = framer.stable !== 'ok' ? framer.stable : waitWin.okRatio < WAIT.seenMin ? waitWin.current() : 'ok'
           rec.event(t, `wait:${why} ok ${waitWin.okRatio.toFixed(2)} fps ${waitWin.fps.toFixed(1)}`)
-          say(why === 'none' ? PHRASES.guideNone : why === 'ok' ? PHRASES.waitRun : PHRASES.guideFar, t)
+          if (why === 'ok') say(PHRASES.waitRun, t)
+          else if (!framer.saidRecently(why, t)) {
+            say(FRAME_PHRASE[why], t)
+            framer.said(why, t)
+          }
         }
         if (coach) {
           handle(coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined, noRoll }), t)
@@ -652,6 +694,17 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             if (overCue('trunk', judged(lastSample, 'trunk')) || overCue('trunkBack', judged(lastSample, 'trunkBack'))) hot.add('trunk')
             if (overCue('body', judged(lastSample, 'body')) || overCue('bodyBack', judged(lastSample, 'bodyBack'))) hot.add('body')
           }
+        }
+      }
+
+      // 映り方が変わったら言う（2つの立ち方・走り出しを待つ・走っている間。置く間は上の案内が言う）。
+      // 走っている間に映っていないのは、声かけのしくみの「画面から外れました…」が言う（handle。ABSENCE.lostSay）
+      if (!file && !finished && (phase === 'baseline' || phase === 'run') && coachRef.current?.state !== 'ended') {
+        const f = framer.due(t)
+        if (f && !(framer.phase === 'run' && f === 'none')) {
+          rec.event(t, `frame:${f}`)
+          say(FRAME_PHRASE[f], t)
+          framer.said(f, t)
         }
       }
 
@@ -895,6 +948,13 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       {hud.phase === 'error' && <Center text={`カメラを使えませんでした：${hud.error}`} action={() => onDone()} />}
     </div>
   )
+}
+
+// 映り方の声の場面（framing.ts の FramePhase）
+function framePhaseOf(phase: Phase, state?: CoachState): FramePhase {
+  if (phase === 'baseline') return 'pose'
+  if (phase === 'run') return !state || state === 'waiting' ? 'wait' : 'run'
+  return 'setup'
 }
 
 // 全コマ記録のときの小さな印（画面が暗いときも見える色で）

@@ -12,6 +12,9 @@ import type { GaitResult } from '../core/types'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
 
+// 開発用（記録の書き出し）は、ホームと同じく URL に ?dev=1 を付けたときだけ出す（Home.tsx）
+const dev = typeof location !== 'undefined' && new URLSearchParams(location.search).has('dev')
+
 export function Result({ session: s, sessions, go }: { session: Session; sessions: Session[]; go: (x: Screen) => void }) {
   const idx = sessions.findIndex((x) => x.id === s.id)
   const prev = sessions[idx + 1]
@@ -99,10 +102,13 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         <div style={{ fontSize: 12 }} className="muted">良い姿勢 {goodMin}分 / {Math.round(s.durationSec / 60)}分</div>
         <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.5, paddingTop: 4 }}>{summary}</div>
         {s.standing && (
-          <div style={{ fontSize: 12 }} className="muted">
+          <details className="more">
+            <summary>くわしく（走る前の立ち姿勢）</summary>
+          <div style={{ fontSize: 12, paddingTop: 6 }} className="muted">
             走る前の立ち姿勢{s.standing.habit ? '（胸を開いた形）' : ''}：{s.standing.issue === 'head' ? '頭が前に出ていました' : s.standing.issue === 'back' ? '背中が丸まっていました' : 'カメラの線の内側'}（頭 {Math.round(s.standing.head)}° / 上体 {Math.round(s.standing.trunk)}°
             {s.standing.habit && `、いつもの立ち方 頭 ${Math.round(s.standing.habit.head)}° / 上体 ${Math.round(s.standing.habit.trunk)}°`}）
           </div>
+          </details>
         )}
         {s.provisionalBaseline && <div style={{ fontSize: 12, color: 'var(--warn)' }}>動画で試したため、直立の基準は仮のものです</div>}
       </div>
@@ -159,7 +165,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
       <SlipNote logId={s.logId} />
       <div style={{ flexGrow: 1 }} />
       {s.logId && <UploadState kind="camera" logId={s.logId} startedAt={s.startedAt} />}
-      {s.logId && (
+      {dev && s.logId && (
         <button onClick={() => exportLog(s.logId)} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
           調整用の記録を書き出す（骨格の数字だけ・映像なし）
         </button>
@@ -215,9 +221,12 @@ function FormCard({ session: s, next }: { session: Session; next: Next | undefin
           {r.note && <div style={{ fontSize: 12, lineHeight: 1.5, color: '#E0B341' }}>{r.note}</div>}
         </div>
       ))}
-      <div style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--faint)' }}>
+      <details className="more">
+        <summary>くわしく（よい例について）</summary>
+      <div style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--faint)', paddingTop: 6 }}>
         よい例は、ランニングの講師1人の手本{GOOD.examples}本を、アプリと同じ骨格の推定で測った値です（時速{GOOD.kmh.min}〜{GOOD.kmh.max}km）。速く走るほど体全体と上体は前に傾くので、範囲は速さごとに持っています。{speedNote(s)}。声をかける線の内側なら、走っている間は声をかけません。
       </div>
+      </details>
       <div style={{ fontSize: 13, lineHeight: 1.6, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
         {next ? (
           <>
@@ -258,10 +267,20 @@ function GaitCard({ gait, standingHip, kmh }: { gait: GaitResult; standingHip?: 
             {r.word && <span style={{ fontSize: 13, fontWeight: 700 }}>{r.word}</span>}
           </div>
           {r.range && <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--faint)' }}>{r.range}</div>}
-          <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--faint)' }}>{r.note}</div>
         </div>
       ))}
-      <div style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--faint)' }}>{GAIT_NO_CONTACT}</div>
+      {/* 測り方の注意（値の出し方・比べ方の限り）は、数字の下に並べると長いので「くわしく」にたたむ */}
+      <details className="more">
+        <summary>くわしく（測り方）</summary>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--faint)' }}>
+          {rows.filter((r) => r.note).map((r) => (
+            <div key={r.key}>
+              {r.label}：{r.note}
+            </div>
+          ))}
+          <div>{GAIT_NO_CONTACT}</div>
+        </div>
+      </details>
     </div>
   )
 }
