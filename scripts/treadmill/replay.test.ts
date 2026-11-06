@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { makeCameraSample, type SampleSection } from './sample'
 import { classify, inventory, replayCamera, type Ev } from './replay'
+import { CUE as CUE_P } from '../../src/core/params'
 
 // ふつう3分 → 頭を前に30秒 → 戻し30秒 → 体ごと前に30秒 → 戻し30秒（区間の始まりは 17:00 から1分後）
 const t0 = new Date(2026, 9, 19, 17, 0, 0).getTime()
@@ -12,10 +13,12 @@ for (const [key, kind, sec] of parts) {
   at += sec * 1000
 }
 const cues = (evs: Ev[]) => evs.filter((e) => classify(e.text)?.kind === 'cue').map((e) => `${Math.round(e.T / 1000)}:${e.text}`)
-// 同じ声が同じ順で、時刻は1秒まで（記録の値は小数1桁に丸めてあるので、線の際では通し直した値と1秒ずれることがある）
+// 同じ声が同じ順で、時刻は CUE.sustain 秒まで（記録の値は小数1桁に丸めてあり、1秒の区切りも撮ったときと少しずれるので、
+// 1秒ごとの値が線の際の秒は、通し直すと線の内側と外側が入れ替わることがある。声は1秒ごとの値が線の外に CUE.sustain 秒続いてから
+// なので、1秒入れ替わるだけで、続いた秒の数え直しの分（CUE.sustain 秒まで）ずれる。前は1秒まで）
 const expectSame = (a: string[], b: string[]) => {
   expect(a.map((x) => x.split(':')[1])).toEqual(b.map((x) => x.split(':')[1]))
-  a.forEach((x, i) => expect(Math.abs(Number(x.split(':')[0]) - Number(b[i].split(':')[0]))).toBeLessThanOrEqual(1))
+  a.forEach((x, i) => expect(Math.abs(Number(x.split(':')[0]) - Number(b[i].split(':')[0]))).toBeLessThanOrEqual(CUE_P.sustain))
 }
 const logged = (f: ReturnType<typeof makeCameraSample>) => f.log.events.map(([t, text]) => ({ T: f.log.clock!.epochMs + t * 1000 - f.log.clock!.perfMs, text }))
 

@@ -6,6 +6,7 @@ import { decodeBlock, nodeHz, SensorRecorder } from './log'
 import { HEAD, HEAD_YIELD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG } from './params'
 import { slipNotes } from './slipText'
 import type { RunLog } from '../../core/types'
+import { CUE as CUE_P } from '../../core/params'
 
 // 自作のセンサー：通知のパーサ（hardware/sensor/viewer/test_parse.mjs と同じ例）、猫背の見分け、記録の詰め方
 
@@ -129,16 +130,17 @@ describe('胸のセンサーで猫背を見る', () => {
     expect(out.some((o) => o.cue)).toBe(false)
   })
 
-  it('猫背が1.5秒続いたら知らせ、超えたままなら4秒ごとに知らせ直す。戻れば止まる', () => {
+  it('猫背が3秒（CUE.sustain）続いたら知らせ、超えたままなら4秒ごとに知らせ直す。戻れば止まる', () => {
     const d = setup()
     play(d, 5, 50, () => 14, () => true)
     expect(d.runLean).not.toBeNull()
+    expect(HUNCH.hold).toBe(CUE_P.sustain)
     // 50秒から 27° の猫背を 20秒、そのあと 14° に戻す
     const out = play(d, 50, 80, (t) => (t < 70 ? 27 : 14), () => true)
     const cues = out.filter((o) => o.cue).map((o) => o.t)
-    expect(cues.length).toBe(5) // 約51.5秒（ならし＋1.5秒）から 4秒ごと、70秒まで
-    expect(cues[0]).toBeGreaterThan(51.5)
-    expect(cues[0]).toBeLessThan(53)
+    expect(cues.length).toBe(5) // 約53秒（ならし＋3秒）から 4秒ごと、70秒まで
+    expect(cues[0]).toBeGreaterThan(50 + CUE_P.sustain)
+    expect(cues[0]).toBeLessThan(54.5)
     cues.slice(1).forEach((t, i) => expect(t - cues[i]).toBeCloseTo(HUNCH.cooldown, 5))
     expect(cues[cues.length - 1]).toBeLessThan(71)
   })
@@ -376,7 +378,7 @@ describe('頭のセンサーで、頭が前に出たのを見る', () => {
     const d = setup()
     const out = play(d, 50, 80, (t) => (t < 65 ? 26 : 6), () => true)
     const cues = out.filter((o) => o.cue).map((o) => o.t)
-    expect(cues.length).toBe(4) // 約51.5秒から 4秒ごと、65秒まで
+    expect(cues.length).toBe(3) // 約53秒（ならし＋3秒）から 4秒ごと、65秒まで
     expect(cues[cues.length - 1]).toBeLessThan(66)
     expect(play(d, 80, 110, () => 6 + HEAD.margin - 1, () => true).some((o) => o.cue)).toBe(false)
   })
@@ -524,23 +526,38 @@ describe('猫背を頭より先に（胸が猫背のときは頭を震わせな�
     expect(first(old, 'head')!).toBeLessThan(first(old, 'chest')!)
   })
 
-  it('待ち終わりに胸がまだ上がってきていれば（線は越えていなくても）、頭の代わりに胸を震わせる', () => {
-    const chestOf = (t: number) => (t < 44 ? 14 : slight)
+  it('待ち終わりに胸が線を越えたまま3秒（CUE.sustain）続いていれば、頭の代わりに胸を震わせる。すぐあとに頭は震わせない', () => {
+    // 胸は線の手前で頭を待たせ（頭が線を越えて3秒、約53秒から）、待つ間の 53.5秒から線を越える。
+    // 胸が自分で震える前に待ち終わり（約57秒）が来るよう、胸の次の知らせまでの間を 58秒まであけておく
     const y = new HeadYield()
     const a = setup(y)
-    const now = both(a.chest, a.head, y, 44, 60, chestOf, headAt)
-    const b = setup(null)
-    const old = both(b.chest, b.head, null, 44, 60, chestOf, headAt)
-    expect(first(old, 'chest')).toBeUndefined()
-    expect(first(now, 'chest')! - first(old, 'head')!).toBeCloseTo(HEAD_YIELD.hold, 0)
+    const chestOf = (t: number) => (t < 44 ? 14 : t < 53.5 ? slight : chestLine + 4)
+    a.chest.consume(54)
+    const now = both(a.chest, a.head, y, 44, 64, chestOf, headAt)
+    expect(first(now, 'head')).toBeUndefined()
+    expect(first(now, 'chest')).toBeDefined()
     // 胸に替えたあとは、頭はすぐには震わせない（頭の次の知らせまでの間を数え直す）
     expect(now.filter((o) => o.head && o.t < first(now, 'chest')! + HEAD.cooldown - 0.05)).toEqual([])
   })
 
+  it('待ち終わりに胸が上がってきているだけ（線の手前）か、一瞬だけ線を越えたなら、胸には替えず頭を震わせる', () => {
+    for (const chestOf of [(t: number) => (t < 44 ? 14 : slight), (t: number) => (t < 44 ? 14 : t >= 55 && t < 56 ? chestLine + 4 : slight)]) {
+      const y = new HeadYield()
+      const a = setup(y)
+      const now = both(a.chest, a.head, y, 44, 60, chestOf, headAt)
+      const b = setup(null)
+      const old = both(b.chest, b.head, null, 44, 60, chestOf, headAt)
+      expect(first(old, 'chest')).toBeUndefined()
+      expect(first(now, 'chest')).toBeUndefined()
+      // 待たせた分（HEAD_YIELD.hold）だけ遅れて、頭を震わせる
+      expect(first(now, 'head')! - first(old, 'head')!).toBeCloseTo(HEAD_YIELD.hold, 0)
+    }
+  })
+
   it('待ち終わりに胸が上がってこなくなっていれば、頭を震わせる（頭が線の下に戻っていても、なくさない）', () => {
-    // 胸は 44〜52秒だけ線の手前、頭は 50〜53秒だけ前に出る
+    // 胸は 44〜52秒だけ線の手前、頭は 50〜55秒だけ前に出る（頭は越えて3秒で知らせる）
     const chestOf = (t: number) => (t >= 44 && t < 52 ? slight : 14)
-    const headOf = (t: number) => (t >= 50 && t < 53 ? headUp : 6)
+    const headOf = (t: number) => (t >= 50 && t < 55 ? headUp : 6)
     const y = new HeadYield()
     const a = setup(y)
     const now = both(a.chest, a.head, y, 44, 70, chestOf, headOf)

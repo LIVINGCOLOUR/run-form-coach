@@ -278,6 +278,11 @@ export class FormStage {
         // ふつうの間で知らせるのは FORM.tries 回まで。そのあとは FORM.later 秒に1回（整えている間は、次の項目へ進む）
         const gap = s.cues < FORM.tries ? CUE_P.cooldown : FORM.later
         if (doing && s.cues >= FORM.tries) continue
+        // 窓の平均が線を越えていても、1秒ごとの値が線の外に CUE.sustain 秒続いていなければ、まだ知らせない（一瞬の崩れは言わない。sustainedOver）
+        if (!this.sustainedOver(g, t)) {
+          if (doing) break
+          continue
+        }
         if (since() >= CUE_P.gap && since(o.key) >= gap && (doing || !defer?.(o.key))) {
           s.cues++
           s.lastCue = t
@@ -309,6 +314,18 @@ export class FormStage {
       }
     }
     return { say, hold: doing }
+  }
+
+  // 1秒ごとの値が、直近 CUE.sustain 秒（t まで、1秒も欠けずに）どれも線の外か。16秒の窓の平均は、1〜2秒の大きな跳ね
+  // （一瞬うつむいた）でも線を越えることがあるので、知らせる前にこれも見る（core/params.ts の CUE.sustain）。
+  // 比べられない秒（頭が斜め、傾きが分からない）は線の外に数えない。着地は1歩ごとの山の窓の中央値で、1秒ごとの値がないので見ない
+  sustainedOver(g: FormGroup, t: number): boolean {
+    if (g === 'landing') return true
+    for (let i = 0; i < CUE_P.sustain; i++) {
+      const x = this.secs.find((y) => y.t === t - i)
+      if (!x || !FormStage.judgeable(g, { yaw: x.yaw, noRoll: x.noRoll }) || formOver(g, x.v).over <= 0) return false
+    }
+    return true
   }
 
   // 走りが止まって、整え直すとき：窓の値と整え終わりは捨てるが、項目ごとに知らせた回数と時刻は残す

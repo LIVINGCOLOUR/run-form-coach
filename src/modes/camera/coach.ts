@@ -375,7 +375,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   }
 
   // 待たせた頭の声をどうするか（1秒ごと。猫背の値はこの秒まで）。待つ間（HUNCH.headHold 秒まで）にしくみが猫背の声を言ったら、それで済ませる。
-  // 待ち終わりに、猫背がまだ上がってきていれば猫背の声、上がってこなくなっていれば頭の声を言う（頭が線の下に戻っていても言う。待たせた声をなくさない）。
+  // 待ち終わりに、猫背の1秒の値が線の外に CUE.sustain 秒続いていれば猫背の声、そうでなければ頭の声を言う（頭が線の下に戻っていても言う。待たせた声をなくさない。
+  // 頭の声は、待たせ始めたときに1秒ごとの値が線の外に続いていたもの）。
   // 猫背の声に替えるときは、猫背の次の声までの間（CUE.cooldown）は見ない（頭の声の代わりなので）。猫背が声をかけない項目か、1時間の上限なら頭の声。
   // 前の声からの間（CUE.gap）があくまで、また見る役が自分で声を言う秒は、待ち続ける。頭も1時間の上限なら、言わずに終える
   private heldCue(t: number, ctx: SecondContext<ItemKey>, lead: { say?: { kind: string }; hold: boolean }): ItemKey | undefined {
@@ -388,12 +389,22 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     }
     if (t - from < HUNCH.headHold || ctx.since() < CUE_P.gap || lead.hold || lead.say?.kind === 'cue') return undefined
     this.headHold = null
-    const hunch = this.hunchRising(t) && ctx.active.includes('hunch') && !ctx.full('hunch')
+    const hunch = this.hunchHeld(t) && ctx.active.includes('hunch') && !ctx.full('hunch')
     if (hunch) {
       this.headTaken = t
       return 'hunch'
     }
     return ctx.full('head') ? undefined : 'head'
+  }
+
+  // 猫背の1秒の値が、直近 CUE.sustain 秒（t まで、1秒も欠けずに）続けて猫背の線を越えている。
+  // 待たせた頭の声を猫背の声に替えるのは、このときだけ（一瞬の猫背の跳ねで猫背の声にしない。core/params.ts の CUE.sustain）
+  private hunchHeld(t: number): boolean {
+    for (let i = 0; i < CUE_P.sustain; i++) {
+      const x = this.recent.find((y) => y.t === t - i)?.v.hunch
+      if (x === undefined || x <= LIMITS.hunch.cue) return false
+    }
+    return true
   }
 
   // 猫背が上がってきているか：直近 CUE.window 秒に、猫背の1秒の値が線を越えた秒がある、または平均が線の HUNCH.riseFrac 倍以上
@@ -486,7 +497,7 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
     FORM.head.open = opts.open ?? null
     if (opts.level) applyStrictness(opts.level, opts.kmh)
     else if (opts.kmh !== undefined) applySpeed(opts.kmh) // 速さだけ渡されたときだけ入れ替える（採点の道具が書き換えた線を戻さないため）
-    super(new CameraAnalyzer(), { holdUnjudged: true, ...opts })
+    super(new CameraAnalyzer(), { holdUnjudged: true, sustain: CUE_P.sustain, ...opts })
   }
 
   private get camera() {

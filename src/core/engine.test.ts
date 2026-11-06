@@ -372,3 +372,45 @@ describe('1時間の上限（LIMIT.perHour）', () => {
     expect(e2.cues.some((c) => c.lead)).toBe(true)
   })
 })
+
+// 2026-11-06 本人「一瞬だけ頭が下がったのを、すぐに言われた。3秒くらい続いたときだけ言ってほしい」（params.ts の CUE.sustain）
+describe('一瞬の崩れは言わない（CUE.sustain）', () => {
+  const CUE_A = 'a が崩れています。'
+  // 線（5）の内側の 4 で走り、len 秒だけ大きく（30）跳ねる。6秒平均は 2秒の跳ねでも (4 × 4 + 30 × 2) ÷ 6 ≈ 12.7 で線を越える
+  const spike = (e: Toy, from: number, len: number) => [...run(e, from, 10, { a: 4 }), ...run(e, from + 10, len, { a: 30 }), ...run(e, from + 10 + len, 30, { a: 4 })]
+  it('窓の平均が線を越えても、1秒ごとの値が線の外に CUE.sustain 秒続かなければ声をかけない。続けば声をかける', () => {
+    const e = new Toy(new ToyAnalyzer(), { pause: false, sustain: CUE.sustain })
+    run(e, 0, 20, { a: 0 })
+    expect(spike(e, 20, CUE.sustain - 1)).not.toContain(CUE_A)
+    expect(spike(e, 70, CUE.sustain)).toContain(CUE_A)
+  })
+  it('線の外に入ったばかりの秒には言わず、CUE.sustain 秒目に言う', () => {
+    const e = new Toy(new ToyAnalyzer(), { pause: false, sustain: CUE.sustain })
+    run(e, 0, 20, { a: 0 })
+    run(e, 20, 10, { a: 4 })
+    const t0 = Math.floor(e.active)
+    run(e, 30, 10, { a: 30 })
+    const c = e.cues.find((x) => x.item === 'a')!
+    expect(c.t - t0).toBeGreaterThanOrEqual(CUE.sustain - 1)
+    expect(c.t - t0).toBeLessThanOrEqual(CUE.sustain)
+  })
+  it('判定しなかった秒は飛ばして数える。線の内側の秒をはさんだら数え直す', () => {
+    const e = new Toy(new ToyAnalyzer(), { pause: false, sustain: CUE.sustain })
+    run(e, 0, 30, { a: 0 })
+    // 線の外・判定しない・線の外（3秒にわたって線の外）
+    const a = [...run(e, 30, 1, { a: 30 }), ...run(e, 31, 1, { a: null }), ...run(e, 32, 1, { a: 30 }), ...run(e, 33, 30, { a: 0 })]
+    expect(a).toContain(CUE_A)
+    const f = new Toy(new ToyAnalyzer(), { pause: false, sustain: CUE.sustain })
+    run(f, 0, 30, { a: 0 })
+    // 線の外・線の内側・線の外・線の内側…（6秒平均は線を越える）
+    const b: string[] = []
+    for (let i = 0; i < 6; i++) b.push(...run(f, 30 + i * 2, 1, { a: 30 }), ...run(f, 31 + i * 2, 1, { a: 4 }))
+    b.push(...run(f, 42, 20, { a: 0 }))
+    expect(b).not.toContain(CUE_A)
+  })
+  it('sustain を渡さない入り口（スマホ版）は、いままでどおり窓の平均だけで決める', () => {
+    const e = new Toy(new ToyAnalyzer(), { pause: false })
+    run(e, 0, 20, { a: 0 })
+    expect(spike(e, 20, 2)).toContain(CUE_A)
+  })
+})

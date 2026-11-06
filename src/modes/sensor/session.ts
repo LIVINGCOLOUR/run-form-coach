@@ -245,7 +245,7 @@ export class SensorSession {
   }
 
   // 待たせた頭の知らせ（HeadYield）を片づける。待つ間に胸が震えたら、頭の知らせもそれで済ませる。
-  // 待ち終わりに、胸がまだ越えている・上がってきていれば胸を、そうでなければ頭を震わせる（頭が線の下に戻っていても。待たせた知らせをなくさない）。
+  // 待ち終わりに、胸が線を越えたまま知らせる長さ続いていれば胸を、そうでなければ頭を震わせる（頭が線の下に戻っていても。待たせた知らせをなくさない）。
   // 胸に替えたら、頭も知らせたものとして、頭の次の知らせまでの間を数え直す
   private resolveHead(t: number, running: boolean, chestCued: boolean) {
     const chest = this.parts.find((y) => y.key === 'chest')

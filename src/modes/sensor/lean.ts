@@ -291,6 +291,13 @@ export class LeanDetector {
     return this.overSince !== null
   }
 
+  // 線を越えたまま、知らせる長さ（hold。2つの立ち方で見るときは poseHold、0 なら hold）続いているか。
+  // HeadYield が待たせた頭の知らせを胸に替えるのは、このときだけ（一瞬の胸の跳ねで胸を震わせない。core/params.ts の CUE.sustain）
+  sustained(t: number): boolean {
+    const hold = this.pose && this.p.poseHold > 0 ? this.p.poseHold : this.p.hold
+    return this.overSince !== null && t - this.overSince >= hold
+  }
+
   // 上がってきているか：直近 sec 秒に、傾きが線（基準 + 線の幅）を越えた tick がある、または平均が 基準 + frac × 線の幅 以上
   // （session.ts：胸の猫背が上がってきている間は、頭の知らせを待たせる。params.ts の HEAD_YIELD）
   rising(t: number, sec: number, frac: number): boolean {
@@ -461,8 +468,9 @@ export class LeanDetector {
 
 // 胸の猫背を頭より先に（params.ts の HEAD_YIELD）。頭が知らせる直前に defer を呼ぶ（頭の LeanDetector.update の defer）。
 // 胸が線を越えている・上がってきているときは、頭の知らせを HEAD_YIELD.hold 秒まで待たせる（待たせている間は、ずっと待たせる）。
-// tick ごとに resolve を呼ぶ：待つ間に胸が知らせたら 'done'（頭もそれで済ませる）。待ち終わりに、胸がまだ越えている・上がってきていれば 'chest'
-// （胸を震わせる。胸の次の知らせまでの間は見ない。胸が1時間の上限なら頭）、そうでなければ 'head'（頭を震わせる）。走りが止まったら、言わずに終える
+// tick ごとに resolve を呼ぶ：待つ間に胸が知らせたら 'done'（頭もそれで済ませる）。待ち終わりに、胸が線を越えたまま知らせる長さ（hold）続いていれば 'chest'
+// （胸を震わせる。胸の次の知らせまでの間は見ない。胸が1時間の上限なら頭）、そうでなければ 'head'（頭を震わせる。上がってきているだけ・一瞬越えただけの胸には替えない）。
+// 走りが止まったら、言わずに終える
 export class HeadYield {
   private from: number | null = null // 待たせ始めた t
 
@@ -486,6 +494,6 @@ export class HeadYield {
     }
     if (t - this.from < HEAD_YIELD.hold) return null
     this.from = null
-    return (chest.over || chest.rising(t, HEAD_YIELD.riseSec, HEAD_YIELD.riseFrac)) && !chest.full() ? 'chest' : 'head'
+    return chest.sustained(t) && !chest.full() ? 'chest' : 'head'
   }
 }

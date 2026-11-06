@@ -176,6 +176,7 @@ export class CueEngine<M, S, K extends string> {
   protected readonly activeItems: K[]
   private readonly muteOthers: boolean
   private readonly holdUnjudged: boolean
+  private readonly sustain: number
   private readonly said: EngineSay
 
   // pause: 止まったら一時停止するか（検証中は切っておく）
@@ -185,7 +186,9 @@ export class CueEngine<M, S, K extends string> {
   // holdUnjudged: 見る役がその項目を判定しなかった秒（values に入れなかった秒）には、その項目で新しく知らせず、
   //   鳴らしている音も止める。窓の平均だけで決めると、判定を止めた直後に、止める前の秒の値で知らせてしまうため
   //   （スマホ：速さが基準から外れた秒を判定しない）。一度だけかける声は、これとは別にかける
-  constructor(analyzer: ModeAnalyzer<M, S, K>, opts: { pause?: boolean; items?: K[]; muteOthers?: boolean; holdUnjudged?: boolean } = {}) {
+  // sustain：窓の平均が線を越えたうえに、1秒ごとの値が線の外にこの秒数（CUE.sustain）続いていなければ声をかけない（sustained）。
+  //   0 なら見ない（窓の平均だけ）。カメラ版は CUE.sustain、スマホ版は 0（姿勢ではなく、ピッチなどの窓の値で見ているため）
+  constructor(analyzer: ModeAnalyzer<M, S, K>, opts: { pause?: boolean; items?: K[]; muteOthers?: boolean; holdUnjudged?: boolean; sustain?: number } = {}) {
     this.analyzer = analyzer
     this.order = analyzer.items.map((s) => s.key)
     this.specs = Object.fromEntries(analyzer.items.map((s) => [s.key, s])) as Record<K, ItemSpec<K>>
@@ -193,6 +196,7 @@ export class CueEngine<M, S, K extends string> {
     this.activeItems = opts.items ?? this.order
     this.muteOthers = opts.muteOthers ?? false
     this.holdUnjudged = opts.holdUnjudged ?? false
+    this.sustain = opts.sustain ?? 0
     this.said = { ...SAY, ...analyzer.say }
   }
 
@@ -389,7 +393,35 @@ export class CueEngine<M, S, K extends string> {
     return Math.min(TONE.fadeMax, CUE_P.cooldown + (next - TONE.fadeFrom) * TONE.fadeStep)
   }
 
-  // 声をかける項目のうち、いちばん優先の項目（優先順は見る役の items の並び）。項目ごとに、その項目を判定した秒だけで平均する。
+  // 1秒ごとの値が、線の外に sustain 秒続いているか（窓の平均が1〜2秒の大きな跳ねで線を越えても、声をかけないため）。
+  // いちばん新しい秒からさかのぼって、その項目を判定した秒がどれも線の外で、線の外の最初の秒からいまの秒までが sustain 秒以上。
+  // 判定しなかった秒（腰：立脚中期のコマのない秒）は飛ばすが、判定した秒が sustain × CUE.coverage（切り上げ）より少なければ続いたとみない。
+  // 間引いて記録が1秒より空いたところ、線の内側の秒があったところで止める。
+  // 線の外：声をかける項目は cue を越えた秒、注意していない項目はその秒の点数が「ふつう」の線（SCORE.mid）を切った秒（firstOver と同じ）
+  sustained(k: K, active = this.activeItems.includes(k)): boolean {
+    if (this.sustain <= 0) return true
+    const rs = this.records
+    const now = rs.length ? rs[rs.length - 1].t : 0
+    let first: number | null = null
+    let n = 0
+    let prevT = now
+    for (let i = rs.length - 1; i >= 0; i--) {
+      const r = rs[i]
+      if (prevT - r.t > 1) break
+      prevT = r.t
+      const v = r.values[k]
+      if (v === undefined) continue
+      const out = active ? this.over(k, v) : scoreOf(this.specs[k].limits, v) < SCORE.mid
+      if (!out) break
+      first = r.t
+      n++
+      if (now - first + 1 >= this.sustain) break
+    }
+    return first !== null && now - first + 1 >= this.sustain && n >= Math.ceil(this.sustain * CUE_P.coverage)
+  }
+
+  // 声をかける項目のうち、いちばん優先の項目（優先順は見る役の items の並び）。項目ごとに、その項目を判定した秒だけで平均し、
+  // 平均が線を越えて、1秒ごとの値も線の外に続いている（sustained）項目。
   // activeOnly：声をかける項目（activeItems）の線だけを見る（声なしの見守りをやめるか決めるとき）
   private firstOver(win: Record_<K>[], r: Record_<K>, activeOnly: boolean): K | null {
     for (const k of this.order) {
@@ -404,6 +436,8 @@ export class CueEngine<M, S, K extends string> {
       if (this.full(k, r.t)) continue
       const over = active ? this.over(k, avg) : !this.muteOthers && scoreOf(this.specs[k].limits, avg) < SCORE.mid
       if (!over || r.t - (this.lastCue[k] ?? -1e9) < this.cooldown(k)) continue
+      // 1秒ごとの値が線の外に CUE.sustain 秒続いていなければ、まだ声をかけない（一瞬の崩れは言わない。sustained）
+      if (!this.sustained(k, active)) continue
       // 見る役が、この項目の声を待たせている（ModeAnalyzer.defer）。この秒は声をかけない。声なしの見守りをやめるかを見るときは、待たせない
       if (!activeOnly && this.analyzer.defer?.(k, r.t)) return null
       return k

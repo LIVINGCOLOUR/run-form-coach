@@ -1387,11 +1387,21 @@ describe('猫背（背中の丸まり）', () => {
     })
     // 背中が少し丸まった（上体 +3°・首 +1°：猫背 3°、猫背の線 4° の 0.75。riseFrac 0.6 を越える）
     const slight: Measure = { ...good, trunk: good.trunk + 3, neck: good.neck + 1, headLean: good.headLean + 4 }
-    it('待ち終わりに猫背がまだ上がってきていれば（線は越えていなくても）、頭の声の代わりに猫背の声。すぐあとに頭は言わない', () => {
+    it('待ち終わりに猫背が上がってきているだけ（線の手前）なら、猫背の声にはせず、待たせた頭の声を言う', () => {
       const coach = start()
       const t0 = Math.floor(coach.active)
       dense(coach, 260, 10, slight)
       dense(coach, 270, 30, curl(3)) // 猫背はずっと 3°（線の手前）のまま、頭だけ前に出る
+      const cues = after(coach, t0)
+      expect(cues[0]?.item).toBe('head')
+      expect(cues.some((c) => c.item === 'hunch')).toBe(false)
+    })
+    it('待ち終わりに猫背の1秒の値が線の外に3秒（CUE.sustain）続いていれば、頭の声の代わりに猫背の声。すぐあとに頭は言わない', () => {
+      const coach = start()
+      const t0 = Math.floor(coach.active)
+      dense(coach, 260, 10, slight)
+      dense(coach, 270, 4, curl(3)) // 頭が前に出て（待たせ始め）
+      dense(coach, 274, 26, curl(7)) // 待つ間に背中が丸まる
       const cues = after(coach, t0)
       expect(cues[0]?.item).toBe('hunch')
       expect(cues.filter((c) => c.item === 'head' && c.t < cues[0].t + CUE.cooldown)).toEqual([])
@@ -1470,5 +1480,58 @@ describe('厳しさ（レベルごとの線）', () => {
     expect(a.said).toContain(PHRASES.cueHead)
     expect(b.said).not.toContain(PHRASES.cueHead)
     expect(a.good).toBeLessThan(b.good)
+  })
+})
+
+// 2026-11-06 本人「一瞬だけ頭が下がったのを、すぐに言われた。3秒くらい続いたときだけ言ってほしい」（core/params.ts の CUE.sustain）
+describe('一瞬の崩れは言わない（1秒ごとの値が線の外に CUE.sustain 秒続いたときだけ）', () => {
+  const dense = (coach: Coach, from: number, sec: number, m: Measure) => {
+    const frames = demoStride()
+    const speak: string[] = []
+    for (let i = 0; i < sec * 15; i++) for (const e of coach.update({ t: from + i / 15, present: true, moving: true, m, frame: frames[(i * 2) % frames.length] })) if (e.type === 'speak') speak.push(e.text)
+    return speak
+  }
+  // 頭だけ大きく前へ（首 +40°・頭の位置 +40°。1.2秒でも6秒平均は 40 × 1.2 ÷ 6 = 8° で、線 7° を越える。
+  // 1.2秒は、1秒の区切りにどうかかっても、1秒の平均が線を越える秒は2つまで）
+  const down: Measure = { ...good, neck: good.neck + 40, headLean: good.headLean + 40 }
+  const start = () => {
+    applyStrictness('intermediate')
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 250, good)
+    dense(coach, 250, 10, good)
+    expect(coach.leanRef).not.toBeNull()
+    return coach
+  }
+  it('頭が一瞬（1.2秒）大きく前に出ただけなら、今日の基準からの頭の声は出ない', () => {
+    const coach = start()
+    const said = [...dense(coach, 260, 1.2, down), ...dense(coach, 261.2, 30, good)]
+    expect(said).not.toContain(PHRASES.cueHead)
+  })
+  it('CUE.sustain 秒より長く続けば、頭の声が出る', () => {
+    const coach = start()
+    const t0 = Math.floor(coach.active)
+    const said = dense(coach, 260, CUE.sustain + 2, down)
+    expect(said).toContain(PHRASES.cueHead)
+    const c = coach.cues.find((x) => x.item === 'head')!
+    expect(c.t - t0).toBeGreaterThanOrEqual(CUE.sustain - 1)
+  })
+  it('正しいフォームの線（16秒平均）も、1秒ごとの値が線の外に続かなければ知らせない', () => {
+    applyStrictness('intermediate')
+    const inside = { trunk: FORM.trunk.max - 3, body: (FORM.body.min + FORM.body.max) / 2, neck: 0, headLean: 0, yaw: 0 }
+    const spike = { ...inside, trunk: FORM.trunk.max + 30 }
+    const since = () => 1e9
+    const cuesOf = (len: number) => {
+      const f = new FormStage()
+      const out: string[] = []
+      for (let t = 0; t < 60; t++) {
+        const v = t >= 40 && t < 40 + len ? spike : inside
+        const r = f.second(t, t, true, v, 0, since)
+        if (r.say?.kind === 'cue') out.push(r.say.item)
+      }
+      return out
+    }
+    // 2秒の跳ねでも、16秒平均は線を越える（−3 × 14 + 30 × 2 > 0）
+    expect(cuesOf(CUE.sustain - 1)).not.toContain('trunk')
+    expect(cuesOf(CUE.sustain)).toContain('trunk')
   })
 })
