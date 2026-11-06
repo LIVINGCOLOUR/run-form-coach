@@ -7,10 +7,9 @@ import { CUE } from '../../core/params'
 // 付ける場所と、そこに付けているセンサー（name が null の枠は使わない）。付け替えたら、ここだけ直す
 // （hardware/sensor の viewer/viewer.html の SLOTS、tools/coach.py の SLOTS も同じ並び。ただし下の足首の入れ替え中は、viewer・coach.py は元の並びのまま）。5番はモーターが回らず外した。手首は1個だけで、カメラから見える左手首に付ける（右手首は空き）
 export const SLOTS: readonly { place: string; name: string | null }[] = [
-  // 2026-11-06〜：1番が見つからなくなった（壊れたかもしれない）ので、左手首の4番を頭（額）に付ける。1番が直ったら戻す
-  { place: '頭', name: 'RFC-IMU-4' },
+  { place: '頭', name: 'RFC-IMU-1' },
   { place: '胸', name: 'RFC-IMU-2' },
-  { place: '左手首', name: null },
+  { place: '左手首', name: 'RFC-IMU-4' },
   { place: '右手首', name: null },
   // 2026-11-05〜：左右の接地時間の差が体か付け方かを見るため、足首の3番と6番を入れ替えて走る（確かめたら戻す。viewer・coach.py は元のまま）
   { place: '左足首', name: 'RFC-IMU-6' },
