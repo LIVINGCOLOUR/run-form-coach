@@ -74,6 +74,10 @@ export interface SecondOut<S, K extends string> {
   score?: number | null
   say?: LeadSay<K> // 見る役が自分で決めた声。しくみはそのまま言って記録する（間を守るのは見る役。SecondContext.since で見る）
   hold?: boolean // この秒は、しくみが自分で声かけ・ほめ・声なしの見守りを決めない（見る役が声を決めている間。カメラ：走り出しに整える間）
+  // この秒に、この項目の崩れの声をかける（線を越えているかと、その項目の次の声までの間は見ない。前の声からの間 CUE.gap と1時間の上限は守る）。
+  // しくみの声かけと同じく、直ったらほめる。見る役は ctx.since() と ctx.full で、言えるかを先に確かめてから渡す
+  // （カメラ：待たせた頭の声を、待ち終わりに猫背の声か頭の声として言う。defer）
+  cue?: K
 }
 
 export interface SecondContext<K extends string> {
@@ -83,6 +87,7 @@ export interface SecondContext<K extends string> {
   // その項目の前の崩れの声から（item がなければ、どの項目でも前の声から）の秒数。まだなければとても大きい数。
   // その項目がこの1時間の上限（LIMIT.perHour）に達していれば 0（見る役が自分で決める声も、この1時間は出ないように）
   since: (item?: K) => number
+  full: (item: K) => boolean // その項目が、この1時間の上限（LIMIT.perHour）に達している
 }
 
 export interface ModeAnalyzer<M, S, K extends string> {
@@ -93,6 +98,11 @@ export interface ModeAnalyzer<M, S, K extends string> {
   input?(inp: EngineInput<M>): void
   // 1秒分の測定（bucket）をまとめる。足りなければ null
   second(bucket: M[], t: number, ctx: SecondContext<K>): SecondOut<S, K> | null
+  // 声をかける直前（その項目が線を越え、間もあいていて、いま言うところ）に呼ぶ。true なら、この秒は声をかけない
+  // （優先順で次の項目にも進まない。待たせた声の番を、あとの項目に取られないため）。
+  // カメラ：猫背が上がってきている間は、頭の声を少し待たせ、待ち終わりに SecondOut.cue で猫背か頭の声にする。
+  // 声なしの見守りをやめるかを決めるときには呼ばない。なければ待たせない
+  defer?(k: K, t: number): boolean
 }
 
 // 1秒ごとの判定の記録（しくみの中だけで使う）
@@ -286,7 +296,7 @@ export class CueEngine<M, S, K extends string> {
     this.bucket = []
     const t = Math.floor(this.active)
     const since = (item?: K) => (item !== undefined && this.full(item, t) ? 0 : t - (item === undefined ? this.lastAnyCue : (this.lastCue[item] ?? -1e9)))
-    const out = this.analyzer.second(b, t, { quiet: this.quiet, active: this.activeItems, score: (v) => this.score(v), since })
+    const out = this.analyzer.second(b, t, { quiet: this.quiet, active: this.activeItems, score: (v) => this.score(v), since, full: (k) => this.full(k, t) })
     if (!out) return null
     if (out.ready && this.refAt === null) this.refAt = t
     if (out.once) this.onceDue = out.once
@@ -393,7 +403,10 @@ export class CueEngine<M, S, K extends string> {
       // 1時間の上限（LIMIT.perHour）に達した項目は、その1時間は知らせない（測って記録はする）
       if (this.full(k, r.t)) continue
       const over = active ? this.over(k, avg) : !this.muteOthers && scoreOf(this.specs[k].limits, avg) < SCORE.mid
-      if (over && r.t - (this.lastCue[k] ?? -1e9) >= this.cooldown(k)) return k
+      if (!over || r.t - (this.lastCue[k] ?? -1e9) < this.cooldown(k)) continue
+      // 見る役が、この項目の声を待たせている（ModeAnalyzer.defer）。この秒は声をかけない。声なしの見守りをやめるかを見るときは、待たせない
+      if (!activeOnly && this.analyzer.defer?.(k, r.t)) return null
+      return k
     }
     return null
   }
@@ -407,6 +420,22 @@ export class CueEngine<M, S, K extends string> {
     // 見る役が自分で決めた声（カメラ：正しいフォームの線）。hold の秒は、しくみは自分では声を決めない
     if (out.say) this.lead(ev, t, out.say)
     if (out.hold) return ev
+
+    // 見る役が決めた崩れの声（SecondOut.cue）。声なしの見守りもやめ、前の項目の「直った」待ちは取り消す
+    if (out.cue !== undefined && t - this.lastAnyCue >= CUE_P.gap && !this.full(out.cue, t)) {
+      if (this.quiet) {
+        this.quiet = false
+        this.quietEnd = t
+        this.quietLen = QUIET.first
+      }
+      if (this.pending) {
+        this.pending = null
+        this.stopTone(ev)
+      }
+      const lim = this.specs[out.cue].limits
+      this.cue(ev, t, out.cue, (lim.full + lim.cue) / 2)
+      return ev
+    }
 
     // 声なしで見守る時間。声をかける項目（音で知らせる項目のほか）が線を越えたら、すぐに見守りをやめて、下の声かけに進む
     // （点数の平均が下がるのを待つと、小さな崩れに気づけない。カメラ版の仮想実験で、見守り中は頭を6°前に出しても見つけたのは4割だった）。

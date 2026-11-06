@@ -123,6 +123,57 @@ describe('声をかける項目', () => {
   })
 })
 
+describe('見る役が声を待たせる（defer）・見る役が決めた声（cue）', () => {
+  // a を until 秒まで待たせ、want 秒からは force の項目の声を頼む見る役（カメラ：猫背が上がってきている間の頭）
+  class Deferring extends ToyAnalyzer {
+    asked: number[] = []
+    private readonly until: number
+    force: { item: Item; from: number } | null = null
+    constructor(until: number) {
+      super()
+      this.until = until
+    }
+    defer(k: Item, t: number) {
+      if (k !== 'a') return false
+      this.asked.push(t)
+      return t < this.until
+    }
+    second(b: M[], t: number, ctx: SecondContext<Item>) {
+      const out = super.second(b, t, ctx)
+      if (out && this.force && t >= this.force.from && ctx.since() >= CUE.gap && !ctx.full(this.force.item)) {
+        const cue = this.force.item
+        this.force = null
+        return { ...out, cue }
+      }
+      return out
+    }
+  }
+  it('待たせている秒は、その項目も、優先順であとの項目も言わない。待たせ終われば言う', () => {
+    const an = new Deferring(30)
+    const e = new Toy(an)
+    expect(run(e, 0, 25, { a: 9, b: 9 }).filter((x) => x.includes('崩れて'))).toEqual([])
+    expect(an.asked.length).toBeGreaterThan(0)
+    expect(run(e, 25, 15, { a: 9, b: 9 })).toContain('a が崩れています。')
+    expect(e.cues.find((c) => c.item === 'a')!.t).toBeGreaterThanOrEqual(30)
+  })
+  it('線を越えていない間は聞かない（声なしの見守りをやめるかを見るときにも聞かない）', () => {
+    const an = new Deferring(1e9)
+    const e = new Toy(an)
+    run(e, 0, 20, { a: 0 })
+    expect(an.asked).toEqual([])
+  })
+  it('見る役が決めた声は、線の下でも言い、直ったらほめる。前の声からの間（CUE.gap）は守る', () => {
+    const an = new Deferring(0)
+    const e = new Toy(an)
+    an.force = { item: 'b', from: 5 }
+    run(e, 0, 20, { a: 0, b: 0 })
+    const b = e.cues.find((c) => c.item === 'b')!
+    expect(b.t).toBeGreaterThanOrEqual(5)
+    expect(b.t).toBeLessThan(7)
+    expect(e.cues.some((c) => c.item === 'recover')).toBe(true)
+  })
+})
+
 describe('音で知らせる項目（tone）', () => {
   const TONE_ITEMS: ItemSpec<Item>[] = [{ ...ITEMS[0], tone: true }, ITEMS[1]]
   class ToneAnalyzer extends ToyAnalyzer {

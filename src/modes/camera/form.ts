@@ -219,8 +219,10 @@ export class FormStage {
 
   // 1秒ごと。t：しくみの秒、rt：走り出してからの秒、stepping：歩数で走っていた秒（それ以外は線と比べない）。
   // since：その項目（なければどれか）の前の崩れの声からの秒数（しくみの声も数える）。steps：その秒に振り分けた着地の山。
-  // 戻り値の hold は、整えている間（しくみに自分で声を決めさせない）。noRoll：その秒にスマホの左右の傾きが分からなかった
-  second(t: number, rt: number, stepping: boolean, v: FormValues, yaw: number, since: (k?: ItemKey) => number, steps: StepSec = NO_STEPS, noRoll = false): { say?: LeadSay<ItemKey>; hold: boolean } {
+  // 戻り値の hold は、整えている間（しくみに自分で声を決めさせない）。noRoll：その秒にスマホの左右の傾きが分からなかった。
+  // defer：整え終わったあと、知らせる直前に呼ぶ。true なら、この秒はその項目で知らせない（coach.ts：猫背が線に近づいている間の頭）。
+  //   整えている間は呼ばない（走り出しの頭の声はそのまま）
+  second(t: number, rt: number, stepping: boolean, v: FormValues, yaw: number, since: (k?: ItemKey) => number, steps: StepSec = NO_STEPS, noRoll = false, defer?: (k: ItemKey) => boolean): { say?: LeadSay<ItemKey>; hold: boolean } {
     if (stepping && rt >= FORM.from) {
       const s = { t, v, yaw, noRoll, steps }
       this.secs.push(s)
@@ -276,7 +278,7 @@ export class FormStage {
         // ふつうの間で知らせるのは FORM.tries 回まで。そのあとは FORM.later 秒に1回（整えている間は、次の項目へ進む）
         const gap = s.cues < FORM.tries ? CUE_P.cooldown : FORM.later
         if (doing && s.cues >= FORM.tries) continue
-        if (since() >= CUE_P.gap && since(o.key) >= gap) {
+        if (since() >= CUE_P.gap && since(o.key) >= gap && (doing || !defer?.(o.key))) {
           s.cues++
           s.lastCue = t
           s.waiting = true

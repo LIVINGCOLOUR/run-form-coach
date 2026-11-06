@@ -40,8 +40,8 @@ interface GatedInput extends CoachInput {
   steps?: boolean
 }
 
-// 測る項目。並び順が、今日の基準からの崩れで声をかける優先順（頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰 → 着地）。
-// 正しいフォームの線で知らせる順は form.ts の FORM_ORDER
+// 測る項目。並び順が、今日の基準からの崩れで声をかける優先順（猫背 → 頭 → 上体 → 上体の起きすぎ → 体全体 → 体全体の起きすぎ → 腰 → 着地）。
+// 正しいフォームの線で知らせる順は form.ts の FORM_ORDER。猫背が上がってきている間は、頭の声を少し待たせて猫背の声に替える（CameraAnalyzer.defer、params.ts の HUNCH）
 export const CAMERA_ITEMS: ItemSpec<ItemKey>[] = ITEM_KEYS.map((key) => ({ key, limits: LIMITS[key], cue: CUE[key] }))
 
 type Ref = { neck: number; trunk: number; body: number; headLean: number; yaw: number; chin: number }
@@ -121,6 +121,13 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   private earlyRef: Pick<Ref, 'neck' | 'headLean' | 'trunk' | 'body'> | null = null
   // 直近の秒の、基準からの崩れ（点数の目盛り）。CUE.window 秒の平均で、崩れた秒を基準にためないためと、猫背が線を越えている間に上体・頭の声を重ねないため
   private recent: { t: number; v: Values<ItemKey> }[] = []
+  // 頭の声を待たせ始めた秒（待たせていなければ null）と、頭の声を猫背の声に替えた秒（defer。猫背を先に）
+  private headHold: number | null = null
+  private headTaken = -1e9
+  // 頭の声を待たせている（間引かずに見て、待ち終わりの秒を逃さない）
+  get holding() {
+    return this.headHold !== null
+  }
 
   // 今日の基準は、歩数で走っていると見た秒だけで作る。running は Coach が決めた「走っている」（RunningGate）。
   // runFrom は、いまの走りの始まり（しくみの秒）。基準ができる前に止まったら null にして、整え直す
@@ -203,7 +210,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
 
     // 正しいフォームの線と比べ、外れていれば1つずつ知らせる（走り出してからの秒が分かるときだけ）。
     // 速さが外れている秒（速さを変えている途中）は、走っていない秒と同じに、線とも比べない
-    const lead = rt === null ? { hold: false } : this.form.second(t, rt, stepping && !away, v, yaw, ctx.since, steps, noRoll)
+    // 整え終わったあとの頭の声も、猫背が上がってきている間は待たせる（defer。猫背の値は前の秒までのもの）
+    const lead = rt === null ? { hold: false } : this.form.second(t, rt, stepping && !away, v, yaw, ctx.since, steps, noRoll, (k) => this.defer(k, t))
 
     // 今日の基準にためる：整え終わってから（走り出して HIP_REF.from 秒より後）の、歩数で走っていた秒。項目ごとに、
     // 直近 FORM.hold 秒の平均が線の内側で、知らせて直るのを待っていない秒だけ（直したあとの形。直す前の形を混ぜない）
@@ -324,7 +332,51 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (noRoll) sample.noRoll = true
     if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }
     if (score !== null) this.maybeKeepStride(sample)
-    return { sample, values, ready, score, say: lead.say, hold: lead.hold }
+    const cue = this.heldCue(t, ctx, lead)
+    return { sample, values, ready, score, say: lead.say, hold: lead.hold, ...(cue ? { cue } : {}) }
+  }
+
+  // 声を待たせるか（しくみの ModeAnalyzer.defer と、整え終わったあとの正しいフォームの線の声から、言う直前に呼ぶ）。
+  // 猫背が線を越えている・上がってきている（hunchRising）ときは、頭の声を待たせ始める。待たせている間は、猫背のほかの項目も言わない
+  // （頭の声の番を、あとの項目に取られないため）。待ち終わりの声は heldCue が決める。
+  // 頭の声を猫背の声に替えたあと CUE.cooldown 秒は、頭の声も出したものとして待たせる
+  defer(k: ItemKey, t: number): boolean {
+    if (this.headHold !== null) return k !== 'hunch'
+    if (k !== 'head') return false
+    if (t - this.headTaken < CUE_P.cooldown) return true
+    if (!this.recentOver(['hunch']) && !this.hunchRising(t)) return false
+    this.headHold = t
+    return true
+  }
+
+  // 待たせた頭の声をどうするか（1秒ごと。猫背の値はこの秒まで）。待つ間（HUNCH.headHold 秒まで）にしくみが猫背の声を言ったら、それで済ませる。
+  // 待ち終わりに、猫背がまだ上がってきていれば猫背の声、上がってこなくなっていれば頭の声を言う（頭が線の下に戻っていても言う。待たせた声をなくさない）。
+  // 猫背の声に替えるときは、猫背の次の声までの間（CUE.cooldown）は見ない（頭の声の代わりなので）。猫背が声をかけない項目か、1時間の上限なら頭の声。
+  // 前の声からの間（CUE.gap）があくまで、また見る役が自分で声を言う秒は、待ち続ける。頭も1時間の上限なら、言わずに終える
+  private heldCue(t: number, ctx: SecondContext<ItemKey>, lead: { say?: { kind: string }; hold: boolean }): ItemKey | undefined {
+    const from = this.headHold
+    if (from === null) return undefined
+    if (!ctx.full('hunch') && ctx.since('hunch') <= t - from) {
+      this.headHold = null
+      this.headTaken = t
+      return undefined
+    }
+    if (t - from < HUNCH.headHold || ctx.since() < CUE_P.gap || lead.hold || lead.say?.kind === 'cue') return undefined
+    this.headHold = null
+    const hunch = this.hunchRising(t) && ctx.active.includes('hunch') && !ctx.full('hunch')
+    if (hunch) {
+      this.headTaken = t
+      return 'hunch'
+    }
+    return ctx.full('head') ? undefined : 'head'
+  }
+
+  // 猫背が上がってきているか：直近 CUE.window 秒に、猫背の1秒の値が線を越えた秒がある、または平均が線の HUNCH.riseFrac 倍以上
+  // （平均は、しくみの窓と同じく値のある秒が CUE.coverage 以上のときだけ）
+  private hunchRising(t: number): boolean {
+    const xs = this.recent.flatMap((x) => (x.v.hunch === undefined || x.t <= t - CUE_P.window ? [] : [x.v.hunch]))
+    const line = LIMITS.hunch.cue
+    return xs.some((x) => x > line) || (xs.length >= CUE_P.window * CUE_P.coverage && mean(xs) >= HUNCH.riseFrac * line)
   }
 
   // 直近の秒の、基準からの崩れをためる（同じ秒はあと勝ち）。CUE.window 秒より古いものは捨てる
@@ -452,7 +504,7 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   // 見えにくい1秒で「止まった」になり、基準を何度も作り直してしまう）。
   // そのあとも、正しいフォームの線を越えている・知らせて直るのを待っている間は毎コマ見る
   wantsDetail(): boolean {
-    return !this.gate.running || this.leanRef === null || this.camera.form.busy(Math.floor(this.active)) || super.wantsDetail()
+    return !this.gate.running || this.leanRef === null || this.camera.holding || this.camera.form.busy(Math.floor(this.active)) || super.wantsDetail()
   }
 
   // 走り始めの基準にためた秒の数

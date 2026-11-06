@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { parseBattery, parsePacket, type Vec3 } from './parse'
-import { LeanDetector, type LeanStep } from './lean'
+import { HeadYield, LeanDetector, type LeanStep } from './lean'
 import { batteryPercent } from './battery'
 import { decodeBlock, nodeHz, SensorRecorder } from './log'
-import { HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG } from './params'
+import { HEAD, HEAD_YIELD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG } from './params'
 import { slipNotes } from './slipText'
 import type { RunLog } from '../../core/types'
 
@@ -464,6 +464,107 @@ describe('体を曲げた（物を拾う）ときは、胸も頭も知らせな�
     const out = both(chest, head, 50, 60, (t) => (t < 52 ? 14 : 24), () => 6)
     const first = out.find((o) => o.chest.cue)!
     expect(first.t).toBeLessThan(52 + HUNCH.hold + 0.6)
+  })
+})
+
+describe('猫背を頭より先に（胸が猫背のときは頭を震わせない）', () => {
+  // アプリ（session.ts の tick・resolveHead）と同じく胸を先に見て、頭が知らせる直前に HeadYield に聞き、tick ごとに待たせた知らせを片づける。
+  // chest・head：その tick に震わせたか（待ち終わりに替えた知らせも入れる）。y が null なら前と同じ（胸と頭は別々）
+  type Tick = { t: number; chest: boolean; head: boolean }
+  const both = (chest: LeanDetector, head: LeanDetector, y: HeadYield | null, from: number, to: number, c: (t: number) => number, h: (t: number) => number) => {
+    const out: Tick[] = []
+    for (let i = Math.round(from * 100); i < Math.round(to * 100); i++) {
+      const t = i / 100
+      chest.sample(t, lean(c(t)))
+      head.sample(t, lean(h(t)))
+      if (i % 10 !== 0) continue
+      const rc = chest.update(t, true)
+      const rh = head.update(t, true, chest.bent(t), null, y ? () => y.defer(t, chest) : undefined)
+      const o = { t, chest: rc.cue, head: rh.cue }
+      const r = y?.resolve(t, true, chest, rc.cue) ?? null
+      if (r === 'done' || r === 'chest') head.consume(t)
+      if (r === 'chest') {
+        chest.force(t)
+        o.chest = true
+      }
+      if (r === 'head') {
+        head.force(t)
+        o.head = true
+      }
+      out.push(o)
+    }
+    return out
+  }
+  // 立つ → 走る（胸 14°・頭 6°）。走る前傾を覚えたあとの 44秒で返す（続きは 44秒から流す）
+  const setup = (y: HeadYield | null) => {
+    const chest = new LeanDetector(HUNCH, 5, Infinity)
+    const head = new LeanDetector(HEAD, 5, Infinity)
+    both(chest, head, y, 0, 5, () => 0, () => 0)
+    chest.stand(5, 3)
+    head.stand(5, 3)
+    both(chest, head, y, 5, 44, () => 14, () => 6)
+    return { chest, head }
+  }
+  const chestLine = 14 + HUNCH.margin
+  const slight = 14 + 0.8 * HUNCH.margin // 胸が線の手前（線の幅の 0.8。直近 riseSec 秒の平均が riseFrac を越える）
+  const headUp = 6 + HEAD.margin + 10 // 頭が線を 10° 越える（confirmAbove には届かない）
+  const headAt = (t: number) => (t < 50 ? 6 : headUp) // 頭は 50秒で前に出る
+  const first = (out: Tick[], k: 'chest' | 'head') => out.find((o) => o[k])?.t
+
+  it('頭が先に線を越えても、胸の猫背が上がってきていれば頭を待たせ、胸が越えたら胸だけを震わせる', () => {
+    const chestOf = (t: number) => (t < 50 ? 14 : t < 51.5 ? slight : chestLine + 4)
+    const y = new HeadYield()
+    const { chest, head } = setup(y)
+    const out = both(chest, head, y, 44, 70, chestOf, headAt)
+    expect(first(out, 'chest')).toBeDefined()
+    expect(first(out, 'head')).toBeUndefined()
+    // 待たせないと、頭が胸より先に震える
+    const b = setup(null)
+    const old = both(b.chest, b.head, null, 44, 70, chestOf, headAt)
+    expect(first(old, 'head')!).toBeLessThan(first(old, 'chest')!)
+  })
+
+  it('待ち終わりに胸がまだ上がってきていれば（線は越えていなくても）、頭の代わりに胸を震わせる', () => {
+    const chestOf = (t: number) => (t < 44 ? 14 : slight)
+    const y = new HeadYield()
+    const a = setup(y)
+    const now = both(a.chest, a.head, y, 44, 60, chestOf, headAt)
+    const b = setup(null)
+    const old = both(b.chest, b.head, null, 44, 60, chestOf, headAt)
+    expect(first(old, 'chest')).toBeUndefined()
+    expect(first(now, 'chest')! - first(old, 'head')!).toBeCloseTo(HEAD_YIELD.hold, 0)
+    // 胸に替えたあとは、頭はすぐには震わせない（頭の次の知らせまでの間を数え直す）
+    expect(now.filter((o) => o.head && o.t < first(now, 'chest')! + HEAD.cooldown - 0.05)).toEqual([])
+  })
+
+  it('待ち終わりに胸が上がってこなくなっていれば、頭を震わせる（頭が線の下に戻っていても、なくさない）', () => {
+    // 胸は 44〜52秒だけ線の手前、頭は 50〜53秒だけ前に出る
+    const chestOf = (t: number) => (t >= 44 && t < 52 ? slight : 14)
+    const headOf = (t: number) => (t >= 50 && t < 53 ? headUp : 6)
+    const y = new HeadYield()
+    const a = setup(y)
+    const now = both(a.chest, a.head, y, 44, 70, chestOf, headOf)
+    expect(first(now, 'chest')).toBeUndefined()
+    expect(now.filter((o) => o.head).length).toBe(1)
+  })
+
+  it('胸がふつう（14°のまま）なら、頭だけ前に出たのを前と同じ時刻に震わせる', () => {
+    const y = new HeadYield()
+    const a = setup(y)
+    const now = both(a.chest, a.head, y, 44, 70, () => 14, () => headUp)
+    const b = setup(null)
+    const old = both(b.chest, b.head, null, 44, 70, () => 14, () => headUp)
+    expect(first(now, 'head')).toBeDefined()
+    expect(first(now, 'head')).toBe(first(old, 'head'))
+  })
+
+  it('胸が線を越えている間は、頭は震わせない（胸が知らせ続ける）。胸が戻れば、頭を震わせる', () => {
+    const y = new HeadYield()
+    const { chest, head } = setup(y)
+    const out = both(chest, head, y, 44, 90, (t) => (t < 70 ? chestLine + 5 : 14), () => headUp)
+    expect(out.filter((o) => o.t < 70 && o.chest).length).toBeGreaterThan(1)
+    expect(out.some((o) => o.t < 70 && o.head)).toBe(false)
+    expect(out.some((o) => o.t >= 70 && o.head)).toBe(true)
   })
 })
 

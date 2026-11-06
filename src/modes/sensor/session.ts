@@ -4,7 +4,7 @@ import { speak, voiceBusy } from '../../core/voice'
 import { sensors } from './ble'
 import { ContactCoach, type ContactKey } from './contactCoach'
 import type { GpsSec } from './gps'
-import { angleDeg, LeanDetector, type CamValues } from './lean'
+import { angleDeg, HeadYield, LeanDetector, type CamValues } from './lean'
 import type { Vec3 } from './parse'
 import { SensorRecorder } from './log'
 import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
@@ -71,6 +71,8 @@ export class SensorSession {
   // 走り終わりのまとめ（runLog.ts の summary）に残す。あとで、知らせを減らしていく決まりを考えるため（いまは数えるだけ）
   readonly counts = { cues: zeroCounts(), capped: zeroCounts(), slips: { chest: 0, head: 0 } }
   private cappedSeen = 0 // 接地のしくみ（engine.capped）のうち、もう数えた件数
+  // 胸の猫背を先に：胸が線を越えている・上がってきている間は、頭の知らせを待たせる（lean.ts の HeadYield）
+  private headYield = new HeadYield()
 
   // onEvent：区切り（覚えた・知らせた）を、カメラの記録の events にも残す。level：ランナーのレベル（胸の線を選ぶ）
   constructor(onEvent: (t: number, text: string) => void, level?: Level) {
@@ -184,10 +186,12 @@ export class SensorSession {
   // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」。cam：カメラ版で、いまのカメラの上体と頭の位置（胸だけに渡す）。
   // gps：センサーランで、いまの GPS の速さと高さ（1秒ごとのまとめに残すだけ。知らせには使わない）
   tick(t: number, running: boolean, cam: CamValues | null = null, gps: GpsSec | null = null) {
+    let chestCued = false
     for (const x of this.parts) {
-      // 頭は、胸で体を曲げたと分かっていれば止める（胸を先に見る）
+      // 頭は、胸で体を曲げたと分かっていれば止める（胸を先に見る）。胸の猫背が線を越えている・上がってきている間は、頭の知らせを待たせる（HeadYield）
       const chest = this.parts.find((y) => y.key === 'chest')
-      const r = x.d.update(t, running, x.key !== 'chest' && !!chest && chest.d.bent(t), x.key === 'chest' ? cam : null)
+      const head = x.key !== 'chest' && !!chest
+      const r = x.d.update(t, running, head && chest.d.bent(t), x.key === 'chest' ? cam : null, head ? () => this.headYield.defer(t, chest.d) : undefined)
       this.lastLean[x.key] = { tilt: r.tilt, ref: r.ref ?? null, bent: !!r.bent }
       // 体を曲げた（物を拾うなど）：走る姿勢ではないので知らせない。記録だけ
       if (r.bend !== undefined) {
@@ -211,17 +215,8 @@ export class SensorSession {
         void sensors.buzz(x.p.place, x.p.slipBuzzCount, x.p.slipBuzzMs)
       }
       if (r.cue && r.tilt !== null) {
-        const tilt = r.tilt
-        this.counts.cues[x.key]++
-        void sensors.buzz(x.p.place, x.p.buzzCount, x.p.buzzMs).then((ok) => {
-          this.rec?.cue(t, tilt, ok, x.key)
-          this.onEvent(t, `${x.ev.cue} ${tilt.toFixed(1)}${ok ? '' : ' (no buzz)'}`)
-        })
-        // 1時間の上限に達した（この1時間は、これが最後の知らせ）：sensor:capped 胸
-        if (r.capped) {
-          this.counts.capped[x.key]++
-          this.onEvent(t, `sensor:capped ${x.p.place}`)
-        }
+        if (x.key === 'chest') chestCued = true
+        this.notify(x, t, r.tilt, !!r.capped)
       }
       // 知らせたあと直った：短く2回震わせる（知らせの1秒1回・ずれの0.3秒×3回と分ける）
       if (r.praise) {
@@ -229,8 +224,40 @@ export class SensorSession {
         this.onEvent(t, `${x.ev.ok}${r.tilt !== null ? ` ${r.tilt.toFixed(1)}` : ''}`)
       }
     }
+    this.resolveHead(t, running, chestCued)
     this.tickContact(t, running)
     this.tickLog(t, running, gps)
+  }
+
+  // 崩れを知らせる：その場所を震わせ、記録と events に残す。capped：この知らせで1時間の上限に達した
+  private notify(x: SensorSession['parts'][number], t: number, tilt: number, capped: boolean) {
+    this.counts.cues[x.key]++
+    void sensors.buzz(x.p.place, x.p.buzzCount, x.p.buzzMs).then((ok) => {
+      this.rec?.cue(t, tilt, ok, x.key)
+      this.onEvent(t, `${x.ev.cue} ${tilt.toFixed(1)}${ok ? '' : ' (no buzz)'}`)
+    })
+    // 1時間の上限に達した（この1時間は、これが最後の知らせ）：sensor:capped 胸
+    if (capped) {
+      this.counts.capped[x.key]++
+      this.onEvent(t, `sensor:capped ${x.p.place}`)
+    }
+  }
+
+  // 待たせた頭の知らせ（HeadYield）を片づける。待つ間に胸が震えたら、頭の知らせもそれで済ませる。
+  // 待ち終わりに、胸がまだ越えている・上がってきていれば胸を、そうでなければ頭を震わせる（頭が線の下に戻っていても。待たせた知らせをなくさない）。
+  // 胸に替えたら、頭も知らせたものとして、頭の次の知らせまでの間を数え直す
+  private resolveHead(t: number, running: boolean, chestCued: boolean) {
+    const chest = this.parts.find((y) => y.key === 'chest')
+    const head = this.parts.find((y) => y.key === 'head')
+    if (!chest || !head) return
+    const r = this.headYield.resolve(t, running, chest.d, chestCued)
+    if (r === null) return
+    if (r !== 'head') head.d.consume(t)
+    const x = r === 'head' ? head : r === 'chest' ? chest : null
+    const tilt = x ? this.lastLean[x.key].tilt : null
+    if (!x || tilt === null) return
+    this.onEvent(t, `sensor:yield ${r === 'chest' ? '頭→胸' : '頭'}`)
+    this.notify(x, t, tilt, x.d.force(t))
   }
 
   // 1秒ごとのまとめと、電池の電圧を記録に残す

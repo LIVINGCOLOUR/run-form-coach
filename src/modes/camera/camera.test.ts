@@ -12,7 +12,7 @@ import { worldAngles, type P3 } from './world'
 import { fullFrames } from './fullFrames'
 import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, RunningGate, bodyVisible } from './motion'
-import { HIP_REF, RUNNING } from '../../core/params'
+import { CUE, HIP_REF, RUNNING } from '../../core/params'
 import { FOCUS, PHRASES, phraseId } from '../../core/phrases'
 import { demoStride, strideStats, DEMO_FRAMES, DEMO_SPM, REFERENCE } from './ui/figure'
 import type { FormGroup, FormResult, Frame, Session } from '../../core/types'
@@ -1277,6 +1277,69 @@ describe('猫背（背中の丸まり）', () => {
     expect(said).not.toContain(PHRASES.cueTrunk)
     expect(said).not.toContain(PHRASES.cueHead)
   })
+  // 2026-11-06 本人の決め：両方出ていたら猫背を言う。わざとの猫背では、首の角度・頭の位置が上体より大きく跳ね、頭の平均が先に線を越える
+  describe('猫背を頭より先に（params.ts の HUNCH.headHold・riseFrac）', () => {
+    // 上体 +d・首 +12°・頭の位置 +(d + 12)°（頭は上体といっしょに回り、さらに前へ）
+    const curl = (d: number): Measure => ({ ...good, trunk: good.trunk + d, neck: good.neck + 12, headLean: good.headLean + d + 12 })
+    // 間引かずに毎コマ見る（間引いた数秒に跳ねが入って見逃さないように）
+    const dense = (coach: Coach, from: number, sec: number, m: Measure) => {
+      const frames = demoStride()
+      for (let i = 0; i < sec * 15; i++) coach.update({ t: from + i / 15, present: true, moving: true, m, frame: frames[(i * 2) % frames.length] })
+    }
+    const after = (coach: Coach, from: number) => coach.cues.filter((c) => c.t >= from && (c.item === 'head' || c.item === 'hunch'))
+    const start = () => {
+      applyStrictness('intermediate')
+      const coach = new Coach({ pause: false })
+      feedSparse(coach, 0, 250, good)
+      dense(coach, 250, 10, good)
+      expect(coach.leanRef).not.toBeNull()
+      return coach
+    }
+    // 頭が先に跳ね（上体は線の手前の +3°）、3秒あとに背中が丸まる（上体 +7°）
+    const hunchLater = (coach: Coach) => {
+      const t0 = Math.floor(coach.active)
+      dense(coach, 260, 3, curl(3))
+      dense(coach, 263, 37, curl(7))
+      return after(coach, t0)
+    }
+
+    it('頭が先に線を越えても、猫背が上がってきていれば頭の声を待たせ、猫背が越えたら猫背の声にする', () => {
+      const cues = hunchLater(start())
+      expect(cues[0]?.item).toBe('hunch')
+      expect(cues.some((c) => c.item === 'head')).toBe(false)
+    })
+    // 背中が少し丸まった（上体 +3°・首 +1°：猫背 3°、猫背の線 4° の 0.75。riseFrac 0.6 を越える）
+    const slight: Measure = { ...good, trunk: good.trunk + 3, neck: good.neck + 1, headLean: good.headLean + 4 }
+    it('待ち終わりに猫背がまだ上がってきていれば（線は越えていなくても）、頭の声の代わりに猫背の声。すぐあとに頭は言わない', () => {
+      const coach = start()
+      const t0 = Math.floor(coach.active)
+      dense(coach, 260, 10, slight)
+      dense(coach, 270, 30, curl(3)) // 猫背はずっと 3°（線の手前）のまま、頭だけ前に出る
+      const cues = after(coach, t0)
+      expect(cues[0]?.item).toBe('hunch')
+      expect(cues.filter((c) => c.item === 'head' && c.t < cues[0].t + CUE.cooldown)).toEqual([])
+    })
+    it('待ち終わりに猫背が上がってこなくなっていれば、頭の声を言う（頭が線の下に戻っていても、なくさない）', () => {
+      const coach = start()
+      const t0 = Math.floor(coach.active)
+      dense(coach, 260, 10, slight)
+      dense(coach, 270, 3, curl(3)) // 背中が少し丸まったまま頭が前に出て
+      dense(coach, 273, 1, curl(0))
+      dense(coach, 274, 26, good) // すぐに全部戻る
+      const cues = after(coach, t0)
+      expect(cues.map((c) => c.item)).toEqual(['head'])
+      expect(cues[0].t - t0).toBeGreaterThanOrEqual(10 + HUNCH.headHold)
+    })
+    it('頭だけ前に出したときは、待たせずに頭の声（猫背とは言わない）', () => {
+      const coach = start()
+      const t0 = Math.floor(coach.active)
+      dense(coach, 260, 40, curl(0))
+      const cues = after(coach, t0)
+      expect(cues[0]?.item).toBe('head')
+      expect(cues.some((c) => c.item === 'hunch')).toBe(false)
+    })
+  })
+
   it('股関節から上体ごと倒した（首の角度は変わらない）ときは、猫背ではなく前かがみ', () => {
     applyStrictness('intermediate')
     const coach = new Coach({ pause: false })

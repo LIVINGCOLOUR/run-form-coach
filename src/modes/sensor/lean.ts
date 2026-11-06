@@ -1,5 +1,5 @@
 import { LIMIT } from '../../core/params'
-import type { LeanParams } from './params'
+import { HEAD_YIELD, type LeanParams } from './params'
 import type { Vec3 } from './parse'
 
 // 1個のセンサーの前への傾きで崩れを見分ける（胸＝猫背、頭＝頭が前に出る。数字は params.ts の HUNCH・HEAD）
@@ -51,6 +51,7 @@ export type PoseScale = { deg: number; margin: number; camB: number | null }
 export type PoseOffset = { deg: number; by: 'sensor' | 'cap' | 'camera'; cam: number | null }
 
 const DEG = 180 / Math.PI
+const RECENT_SEC = 10 // rising のために残す傾きの長さ（秒）。HEAD_YIELD.riseSec より長く
 const norm = (v: Vec3): Vec3 | null => {
   const n = Math.hypot(v[0], v[1], v[2])
   return n > 1e-6 ? [v[0] / n, v[1] / n, v[2] / n] : null
@@ -95,6 +96,8 @@ export class LeanDetector {
   private hourCues = { hour: -1, n: 0 } // いまの1時間の枠（走った時間 ÷ 3600）で知らせた回数（LIMIT.perHour の上限）
   private underSince: number | null = null // 線の下に入った t
   private owed = false // 知らせたあと、まだほめていない（2つの立ち方で見るとき、posePraise）
+  private lastRef: number | null = null // 前の update で使った基準（rising で線と比べる）
+  private recentTilts: { t: number; v: number }[] = [] // 線と比べた tick の傾き（rising。直近 HEAD_YIELD.riseSec 秒ほど）
   readonly p: LeanParams
   private readonly perHour: number
 
@@ -258,8 +261,47 @@ export class LeanDetector {
     return t < this.bendUntil
   }
 
-  // bentElsewhere：ほかの場所（胸）で、体を曲げたと分かっている。cam：カメラ版で、いまのカメラの値。なければ null
-  update(t: number, running: boolean, bentElsewhere = false, cam: CamValues | null = null): LeanStep {
+  // いまの1時間の枠で、知らせの上限（LIMIT.perHour）に達しているか
+  full(): boolean {
+    return this.hourCues.hour === Math.floor(this.runSec / 3600) && this.hourCues.n >= this.perHour
+  }
+
+  // 外から決めた知らせを、知らせたものとして数える（session.ts：待たせた頭の知らせを、胸か頭で知らせたとき）。
+  // 次の知らせまでの間・1時間の上限・ほめるのも、ふつうの知らせと同じに数える。戻り値は、この知らせで1時間の上限に達したか
+  force(t: number): boolean {
+    const hour = Math.floor(this.runSec / 3600)
+    if (this.hourCues.hour !== hour) this.hourCues = { hour, n: 0 }
+    this.lastCue = t
+    this.streak++
+    if (this.pose && this.p.posePraise > 0) this.owed = true
+    return ++this.hourCues.n >= this.perHour
+  }
+
+  // 知らせたものとして、次の知らせまでの間（続けて知らせた回数による間ののびも）を数え直す。震わせず、1時間の上限にも数えない
+  // （session.ts：頭の知らせを胸の知らせに替えたとき、頭をすぐあとに震わせない）
+  consume(t: number) {
+    this.lastCue = t
+    this.streak++
+  }
+
+  // 線を越えているか（いまの tick で。走っていない・曲げている間は越えていない）
+  get over(): boolean {
+    return this.overSince !== null
+  }
+
+  // 上がってきているか：直近 sec 秒に、傾きが線（基準 + 線の幅）を越えた tick がある、または平均が 基準 + frac × 線の幅 以上
+  // （session.ts：胸の猫背が上がってきている間は、頭の知らせを待たせる。params.ts の HEAD_YIELD）
+  rising(t: number, sec: number, frac: number): boolean {
+    if (this.lastRef === null) return false
+    const xs = this.recentTilts.filter((x) => x.t > t - sec).map((x) => x.v)
+    if (!xs.length) return false
+    const line = this.margin()
+    return xs.some((v) => v > this.lastRef! + line) || xs.reduce((a, b) => a + b, 0) / xs.length >= this.lastRef + frac * line
+  }
+
+  // bentElsewhere：ほかの場所（胸）で、体を曲げたと分かっている。cam：カメラ版で、いまのカメラの値。なければ null。
+  // defer：知らせる直前に呼ぶ。true なら、この tick は知らせない（線を越えたままなら、次の tick でまた聞く。session.ts：胸の猫背を先に、頭を待たせる）
+  update(t: number, running: boolean, bentElsewhere = false, cam: CamValues | null = null, defer?: () => boolean): LeanStep {
     const dt = this.lastT === null ? 0 : Math.max(0, Math.min(1, t - this.lastT))
     this.lastT = t
     const u = t - this.lastSample > this.p.stale ? null : this.dir()
@@ -269,6 +311,7 @@ export class LeanDetector {
       this.overSince = null
       this.waitSince = null
       this.bending = false
+      this.recentTilts = []
       return out
     }
     this.runSec += dt
@@ -281,6 +324,7 @@ export class LeanDetector {
     }
     if (t < this.bendUntil) {
       if (this.overSince !== null) this.overAcc = this.overAccAtStart
+      this.recentTilts = []
       this.overSince = null
       this.waitSince = null
       this.bending = true
@@ -318,6 +362,9 @@ export class LeanDetector {
     const ref = learning ? p.poseCap : (this.ref ?? this.runLean!)
     this.tilts.push({ t, v: tilt })
     while (t - this.tilts[0].t > p.slipRef) this.tilts.shift()
+    this.lastRef = ref
+    this.recentTilts.push({ t, v: tilt })
+    while (t - this.recentTilts[0].t > RECENT_SEC) this.recentTilts.shift()
     if (this.pose) {
       this.sides.push({ t, v: this.side(u) ?? 0 })
       while (t - this.sides[0].t > p.slipRef) this.sides.shift()
@@ -342,7 +389,7 @@ export class LeanDetector {
       // 1時間の枠が変わったら数え直す。上限に達した枠では知らせない
       const hour = Math.floor(this.runSec / 3600)
       if (this.hourCues.hour !== hour) this.hourCues = { hour, n: 0 }
-      if (this.hourCues.n < this.perHour && t - this.overSince >= hold && t - this.lastCue >= every) {
+      if (this.hourCues.n < this.perHour && t - this.overSince >= hold && t - this.lastCue >= every && !defer?.()) {
         // 越えて最初の知らせで大きく傾いているときは、曲げる途中かもしれないので少し待つ（越えたままの知らせ直しは待たない）
         const wait = p.confirmAbove > 0 && p.confirmSec > 0 && this.lastCue < this.overSince && tilt >= ref + p.confirmAbove
         if (wait) this.waitSince ??= t
@@ -407,5 +454,36 @@ export class LeanDetector {
     }
     out.ref = learning ? ref : this.ref
     return out
+  }
+}
+
+// 胸の猫背を頭より先に（params.ts の HEAD_YIELD）。頭が知らせる直前に defer を呼ぶ（頭の LeanDetector.update の defer）。
+// 胸が線を越えている・上がってきているときは、頭の知らせを HEAD_YIELD.hold 秒まで待たせる（待たせている間は、ずっと待たせる）。
+// tick ごとに resolve を呼ぶ：待つ間に胸が知らせたら 'done'（頭もそれで済ませる）。待ち終わりに、胸がまだ越えている・上がってきていれば 'chest'
+// （胸を震わせる。胸の次の知らせまでの間は見ない。胸が1時間の上限なら頭）、そうでなければ 'head'（頭を震わせる）。走りが止まったら、言わずに終える
+export class HeadYield {
+  private from: number | null = null // 待たせ始めた t
+
+  defer(t: number, chest: LeanDetector): boolean {
+    if (this.from !== null) return true
+    if (!chest.over && !chest.rising(t, HEAD_YIELD.riseSec, HEAD_YIELD.riseFrac)) return false
+    this.from = t
+    return true
+  }
+
+  // chestCued：この tick に胸が知らせた
+  resolve(t: number, running: boolean, chest: LeanDetector, chestCued: boolean): 'done' | 'chest' | 'head' | null {
+    if (this.from === null) return null
+    if (!running) {
+      this.from = null
+      return null
+    }
+    if (chestCued) {
+      this.from = null
+      return 'done'
+    }
+    if (t - this.from < HEAD_YIELD.hold) return null
+    this.from = null
+    return (chest.over || chest.rising(t, HEAD_YIELD.riseSec, HEAD_YIELD.riseFrac)) && !chest.full() ? 'chest' : 'head'
   }
 }
