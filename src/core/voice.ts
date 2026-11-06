@@ -23,7 +23,14 @@ export const voiceBusy = () => performance.now() < busyUntil
 // 話している間か、まだ話す言葉が待っているか（直立の基準は、案内を言い終えてから測る）
 export const voicePending = () => voiceBusy() || queued.length > 0 || timer !== null
 
-const url = (k: VoiceKind, id: PhraseId) => `${import.meta.env.BASE_URL}voices/${k}/${id}.m4a`
+// 言葉を変えて音声を作り直したとき、スマホに残った古い音声を使わないよう、言葉の中身から作った印を付ける
+// （2026-11-06：胸を開く案内を直して公開したのに、iPhone では前の言葉のまま流れた）
+const tag = (s: string) => {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
+const url = (k: VoiceKind, id: PhraseId) => `${import.meta.env.BASE_URL}voices/${k}/${id}.m4a?v=${tag(PHRASES[id])}`
 
 export function unlockVoice() {
   // iPhone の消音スイッチがオンでも鳴るようにする（Safari 16.4 以降の Audio Session）
