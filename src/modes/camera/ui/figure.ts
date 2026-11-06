@@ -8,6 +8,8 @@ import { legacyCycle } from '../stride'
 const CX = 170
 const CY = 262
 const LEG = 164
+const HEAD_BACK = 4 // 頭の丸の中心を耳から後ろへ（下の paths）
+const HEAD_UP = 8 // 同じく上へ
 
 // 前の記録（1周ではない1.2秒）は、ここで1周に直してから描く。cadence：その走りのピッチ（あれば、1周の長さの目安にする）
 export function normalizeStride(s: Stride, cadence?: number): Frame[] {
@@ -109,8 +111,11 @@ export function paths(f: Frame, nearLeft: boolean): Paths {
   const sh = shoulderMid(f)
   const ear = f[n.e]
   const nose = f[L.nose]
-  // 頭の丸の中心：耳から鼻の方へ3割、耳より少し上。鼻は耳より前で下にあるので、耳と鼻の真ん中に描くと、頭が前に屈んで見える
-  const head = { x: ear.x + (nose.x - ear.x) * 0.3, y: ear.y - 6 }
+  // 頭の丸の中心：耳より少し後ろ（鼻と反対の側へ HEAD_BACK）・少し上（HEAD_UP）。頭の中心は耳より後ろ・上にある。
+  //   前は耳から鼻の方へ3割寄せていて、丸（半径 26）が顔の前に出て、頭が前に突き出て見えた（2026-11-06 本人。撮る画面の丸と同じ直し＝head.ts）。
+  //   描画の座標は脚の長さ 164 ≒ 85cm（約 1.9 / cm）なので、後ろ 4 ≒ 2cm・上 8 ≒ 4cm。半径 26 ≒ 13cm で、顔の前は耳から約 11cm 先まで
+  const back = nose.x >= ear.x ? -HEAD_BACK : HEAD_BACK
+  const head = { x: ear.x + back, y: ear.y - HEAD_UP }
   return {
     legBack: `M${P(hip)} L${P(f[o.k])} L${P(f[o.a])} L${P(f[o.ft])}`,
     legFront: `M${P(hip)} L${P(f[n.k])} L${P(f[n.a])} L${P(f[n.ft])}`,

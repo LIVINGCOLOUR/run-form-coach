@@ -15,3 +15,19 @@ describe('撮る画面の頭の丸', () => {
     }
   })
 })
+
+// ホームの人形（figure.ts の paths）も、頭の丸の中心が耳より鼻の側に出ない（顔の前に出て頭が突き出て見えたため）
+describe('人形の頭の丸（figure.ts）', () => {
+  it('右向き・左向きとも、中心は耳より後ろ・上', async () => {
+    const { paths, demoStride } = await import('./figure')
+    const { L } = await import('../landmarks')
+    const f = demoStride()[0]
+    const p = paths(f, true)
+    const ear = f[L.leftEar]
+    expect(p.hx).toBeLessThan(ear.x) // 右向き（鼻が右）なので、後ろ＝左
+    expect(p.hy).toBeLessThan(ear.y)
+    const m = f.map((q) => ({ ...q, x: -q.x }))
+    const pm = paths(m, true)
+    expect(pm.hx).toBeGreaterThan(m[L.leftEar].x)
+  })
+})
