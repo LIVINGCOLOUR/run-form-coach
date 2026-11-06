@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { RUNNING } from '../../../core/params'
-import { BASELINE, CORRECT, SETUP } from '../params'
+import { BASELINE, CORRECT, SETUP, WAIT } from '../params'
 import { ITEM_KEYS, type Baseline, type Frame, type ItemKey, type Sample, type Session } from '../../../core/types'
 import type { Measure } from '../types'
 import { Coach, judged, type CoachEvent, type CoachState } from '../coach'
@@ -8,6 +8,8 @@ import { facing, levelFrame, measure, nearSide, rotateFrame, sideOffDeg, yawSign
 import { worldAngles, type P3 } from '../world'
 import { MotionDetector, bodyVisible } from '../motion'
 import { L } from '../landmarks'
+import { headCircle } from '../ui/head'
+import { framing, FramingWindow, FRAMING_TEXT, EDGE, type Framing } from '../framing'
 import { overCue } from '../scoring'
 import { gravityAvailable, gravityPitch, gravityRoll, phoneStillSec } from '../gravity'
 import { queueUpload } from '../../../core/upload/uploads'
@@ -42,6 +44,9 @@ interface Hud {
   error?: string
   problem?: string | null // 置き方で、いま足りないこと（null ならそろっている）
   pose?: 'a' | 'b' // 直立の基準で、いま測っている立ち方（a：いつもの楽な立ち方、b：胸を開いた立ち方）
+  framing: Framing // 体が画面にどう収まっているか（直近1秒でならしたもの。framing.ts）
+  fps: number // 骨格を取ったコマの毎秒の数（直近 WAIT.window 秒）
+  slow: boolean // 走り出すのを待つ間に、骨格のコマが少なくて走りを数えにくい（WAIT.slowFps）
 }
 
 // 頭から足までが画面の高さの何割か。超広角で 1m 前後なら約6割、3m だと約2割
@@ -49,6 +54,21 @@ const SPAN_MIN = SETUP.spanMin
 const bodySpan = (f: Frame, h: number) => (Math.max(f[L.leftAnkle].y, f[L.rightAnkle].y, f[L.leftHeel].y, f[L.rightHeel].y) - f[L.nose].y) / h
 
 const ITEM_TEXT: Record<ItemKey, string> = { hunch: '背中が丸まっています', head: '頭が前に出ています', trunk: '上体が倒れすぎています', trunkBack: '上体が起きています', body: '体が倒れすぎています', bodyBack: '体が後ろに残っています', hip: '腰が落ちています', landing: '足が体より前に着いています' }
+
+// 置き方の案内（声の言葉）を、画面の1行に出す短い言葉にする。声はそのまま言い、くわしい文は「くわしく」に出す
+const SHORT: Record<string, string> = {
+  [PHRASES.placeStart]: 'スマホを縦に置いてください',
+  [PHRASES.guideDark]: '暗すぎます',
+  [PHRASES.guideNone]: '体が映っていません',
+  [PHRASES.guideFar]: '全身が入っていません（スマホを離す）',
+  [PHRASES.guideNear]: '体が小さすぎます（スマホを近づける）',
+  [PHRASES.guideTiltDown]: 'スマホが下を向いています',
+  [PHRASES.guideHigh]: 'スマホが高すぎます（腰の高さへ）',
+  [PHRASES.guideLow]: 'スマホが低すぎます（腰の高さへ）',
+  [PHRASES.guideSide]: '体の横をスマホに向けてください',
+  [PHRASES.guideBehind]: '少し後ろ側から撮っています',
+  [PHRASES.guideFront]: '少し前側から撮っています',
+}
 
 // sessions：これまでの走り（新しい順）。走り出す前に言う「今日意識するのは…」を、ホームの「今日の意識」と同じ1つにするため
 export function Live({ video: file, sessions = [], onDone }: { video?: File; sessions?: Session[]; onDone: (id?: string) => void }) {
@@ -62,7 +82,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
   const mirror = !file && loadSettings().camera === 'front'
   // 検証用の「全コマ記録」（URL に ?full=1）。走っている間も間引かず毎コマ骨格を取る。動画で試すときはもともと毎コマ取る
   const full = !file && fullFrames()
-  const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true } })
+  const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true }, framing: 'none', fps: 0, slow: false })
   // ベルトの速さ（時速 km。走る前に入れる。前回の値を覚えている。空欄なら使わない）。belt.ts
   const [beltText, setBeltText] = useState<string>(() => (file ? '' : loadBeltText()))
   const beltRef = useRef<number | undefined>(undefined)
@@ -123,6 +143,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let lastPresent = true
     let lastMoving = false
     let lastNextSay = 0 // 次に何をすればいいかを最後に言った時刻
+    // 体が画面にどう収まっているか（framing.ts）。画面に出すのは直近1秒でならしたもの、
+    // 走り出すのを待つ間に理由を言うのは直近 WAIT.window 秒でならしたもの（骨格を取ったコマだけを入れるので、コマ数も分かる）
+    const shown = new FramingWindow(1)
+    const waitWin = new FramingWindow(WAIT.window)
 
     // 調整用の記録（骨格の点と判定の数字）。カメラで撮るときは、スマホ版の記録と時刻を合わせられるよう、時計の対応を残す
     const rec = new LogRecorder(file ? undefined : { perfMs: performance.now(), epochMs: Date.now() })
@@ -272,14 +296,42 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       return null
     }
 
-    const draw = (frame: Frame | null, w: number, h: number, hot: Set<string>) => {
+    // guideOf：置く・立つ・走り出すのを待つ間は、映像のふちを色で囲み（全身が入っていれば緑、足りなければ橙）、
+    // 頭・足が切れている側のふちを太く塗る。離れていても、どこが切れているかが色で分かるように
+    const draw = (frame: Frame | null, w: number, h: number, hot: Set<string>, guideOf?: Framing) => {
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w
         canvas.height = h
       }
       ctx.clearRect(0, 0, w, h)
-      if (!frame) return
       const s = Math.max(2, w / 220)
+      if (guideOf) {
+        const ok = guideOf === 'ok'
+        ctx.setLineDash([])
+        ctx.strokeStyle = ok ? '#C8F03C' : '#FF8A3D'
+        ctx.lineWidth = s * 3
+        ctx.strokeRect(s * 1.5, s * 1.5, w - s * 3, h - s * 3)
+        // 頭と足が収まってほしい線（点線）。この線の内側に頭から足までが入れば「全身」
+        ctx.setLineDash([s * 4, s * 3])
+        ctx.lineWidth = s
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'
+        for (const y of [h * EDGE.top, h * EDGE.bottom]) {
+          ctx.beginPath()
+          ctx.moveTo(0, y)
+          ctx.lineTo(w, y)
+          ctx.stroke()
+        }
+        ctx.setLineDash([])
+        const band = h * 0.1
+        ctx.fillStyle = 'rgba(255,138,61,0.55)'
+        if (guideOf === 'head' || guideOf === 'both') ctx.fillRect(0, 0, w, band)
+        if (guideOf === 'feet' || guideOf === 'both') ctx.fillRect(0, h - band, w, band)
+        if (guideOf === 'none') {
+          ctx.fillStyle = 'rgba(255,138,61,0.18)'
+          ctx.fillRect(0, 0, w, h)
+        }
+      }
+      if (!frame) return
       const line = (a: number, b: number, color: string, width = s * 2.2) => {
         if (frame[a].v < 0.3 || frame[b].v < 0.3) return
         ctx.strokeStyle = color
@@ -315,7 +367,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       ctx.strokeStyle = headColor
       ctx.lineWidth = s * 2.2
       ctx.beginPath()
-      ctx.arc((ear.x + frame[L.nose].x) / 2, (ear.y + frame[L.nose].y) / 2, Math.hypot(ear.x - frame[L.nose].x, ear.y - frame[L.nose].y) * 0.9, 0, Math.PI * 2)
+      // 頭の丸は、耳から少し後ろ・上を中心にする（見た目だけ。ui/head.ts）
+      const hc = headCircle(ear, frame[L.nose])
+      ctx.arc(hc.x, hc.y, hc.r, 0, Math.PI * 2)
       ctx.stroke()
     }
 
@@ -383,6 +437,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         if (pitch > CORRECT.pitchDownFrom || pitch < CORRECT.pitchUpFrom) frame = levelFrame(frame, pitch, cameraLens === 'ultra' ? CORRECT.vfovUltra : CORRECT.vfovNormal, w, h)
       }
       const visible = !!frame && bodyVisible(frame, 0.5, h)
+      // 画面に映ったまま（傾きを直す前）の点で、頭・足が切れていないかを見る
+      const fr = framing(raw, h)
+      shown.push(t, fr)
+      waitWin.push(t, fr)
       const m: Measure | undefined = visible ? measure(frame!) : undefined
       // worldLandmarks からの向きと角度（記録に残すだけ。world.ts）
       const wa = visible && world ? worldAngles(world, file ? 0 : gravityRoll(), file ? 0 : gravityPitch(), nearSide(frame!) === 'right') : null
@@ -412,7 +470,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         if (frame && visible) yawHist.push({ t, v: yawSign(frame) })
         yawHist = yawHist.filter((x) => t - x.t <= SETUP.yawSmooth)
         const yaw = yawHist.length ? yawHist.reduce((a, x) => a + x.v, 0) / yawHist.length : 0
-        const hint = placed ? guide(present ? frame : null, w, h, sideDeg, yaw, lastLight) : null
+        // 人は映っているのに頭・足が切れている（全身が「映った」にならない）ときは、「まだ体が映っていません」ではなく、離れるよう言う
+        const cut = shown.current()
+        const partly = !present && lastLight && (cut === 'head' || cut === 'feet' || cut === 'both' || cut === 'hidden')
+        const hint = placed ? (partly ? PHRASES.guideFar : guide(present ? frame : null, w, h, sideDeg, yaw, lastLight)) : null
         const blocking =
           hint === PHRASES.guideTiltDown || hint === PHRASES.guideHigh || hint === PHRASES.guideLow || hint === PHRASES.guideBehind || hint === PHRASES.guideFront || hint === PHRASES.guideNear
         const ready = present && visible && lastLight && sideDeg <= SETUP.sideMax && !!frame && !blocking
@@ -574,10 +635,14 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         // 検証中は一時停止を切っている（params.ts）。kmh：ベルトの速さ（入れたときだけ。速さで動く線をその速さにする）
         if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step), level: progress.level, kmh: beltRef.current, open: openPose })
         const coach = coachRef.current
-        // 走り出すのを待っている間は、黙ったままにしない
+        // 走り出すのを待っている間は、黙ったままにしない。
+        // 走りの始まりは、全身が見えたコマだけで歩数を数える（coach.ts の RunningGate）ので、体が入っていない・頭や足が切れているなら、
+        // 「走り出すと始まります」ではなく、それを言う（言葉は置き方の案内と同じ）。記録には、そのときの見え方とコマ数を残す
         if (coach && coach.state === 'waiting' && t - lastNextSay > RUNNING.waitRepeat) {
           lastNextSay = t
-          say(PHRASES.waitRun, t)
+          const why = waitWin.okRatio < WAIT.seenMin ? waitWin.current() : 'ok'
+          rec.event(t, `wait:${why} ok ${waitWin.okRatio.toFixed(2)} fps ${waitWin.fps.toFixed(1)}`)
+          say(why === 'none' ? PHRASES.guideNone : why === 'ok' ? PHRASES.waitRun : PHRASES.guideFar, t)
         }
         if (coach) {
           handle(coach.update({ t, present: visible, moving, m, frame: visible ? frame! : undefined, noRoll }), t)
@@ -590,7 +655,11 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         }
       }
 
-      if (screenMode === 'show' || phase === 'setup') draw(frame, w, h, hot)
+      // 置く・立つ・走り出すのを待つ間は、映像と骨格と、収まり方の印を出す
+      const waiting = phase === 'run' && (!coachRef.current || coachRef.current.state === 'waiting')
+      const previewNow = phase === 'setup' || phase === 'baseline' || waiting
+      if (previewNow) draw(frame, w, h, hot, shown.current())
+      else if (screenMode === 'show') draw(frame, w, h, hot)
       else draw(null, w, h, hot)
 
       // 上限は置かない（LOG_CHUNK.every 秒ごとに端末へ書き出して、手元の rows は空にする）
@@ -612,6 +681,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           caption: t - captionAt < 6 ? caption : '',
           checks: { body: visible, side: sideDeg <= SETUP.sideMax, sideDeg: Math.round(sideDeg), light: lastLight },
           problem: lastProblem,
+          framing: shown.current(),
+          fps: Math.round(waitWin.fps * 10) / 10,
+          slow: phase === 'run' && coach?.state === 'waiting' && waitWin.fps < WAIT.slowFps,
         }))
       }
     }
@@ -633,19 +705,109 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 背面カメラで画面は見えないので、基準・走行中は真っ暗にする（案内は声で行う）。
-  // 置き方のときだけは、置く人が画面をのぞいて全身が入るか確かめられるよう、映像と骨格を出す
-  const dark = screenMode === 'dark' && (hud.phase === 'baseline' || hud.phase === 'run')
-  const darkLabel = hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.state === 'waiting' ? 'READY' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
-  const darkText =
-    hud.phase === 'setup' ? '置き方を声で案内します' : hud.phase === 'baseline' ? (hud.pose === 'b' ? '胸を開いて、3秒止まってください' : 'いつもの楽な立ち方で、3秒止まってください') : hud.state === 'waiting' ? '走り出すと始まります' : hud.state === 'paused' ? '一時停止中' : '画面を消しても、声でお知らせします'
+  // 置く・2つの立ち方・走り出すのを待つ間（preview）は、映像と骨格を出し、文字は1行（と、たたんだ「くわしく」）だけにする。
+  // 置く人が画面をのぞいて、全身が入っているか・頭や足が切れていないかを確かめられるように（2026-11-06 本人：文字でいっぱいで、体が枠に収まっているかが見えなかった）。
+  // 走り出したあとは、背面カメラで画面は見えないので真っ暗にする（案内は声で行う）
+  const preview = hud.phase === 'setup' || hud.phase === 'baseline' || (hud.phase === 'run' && hud.state === 'waiting')
+  const dark = screenMode === 'dark' && !preview && (hud.phase === 'baseline' || hud.phase === 'run')
+  const darkLabel = hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
+  const darkText = hud.state === 'paused' ? '一時停止中' : '画面を消しても、声でお知らせします'
   const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
   const last = hud.last
+  const label =
+    hud.phase === 'loading' || hud.phase === 'error' ? '' : hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'waiting' ? 'READY' : hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
+  // 大事な1行：体が収まっていなければまずそれ（どこが切れているか）。そろっていれば、いますること
+  const status: { text: string; ok: boolean } =
+    hud.framing !== 'ok'
+      ? { text: FRAMING_TEXT[hud.framing], ok: false }
+      : hud.phase === 'setup'
+        ? hud.problem
+          ? { text: SHORT[hud.problem] ?? hud.problem, ok: false }
+          : { text: '✓ そろいました。待つと次へ進みます', ok: true }
+        : hud.phase === 'baseline'
+          ? { text: hud.pose === 'b' ? '2つ目：胸を開いて3秒止まる' : '1つ目：いつもの楽な立ち方で3秒止まる', ok: true }
+          : hud.slow
+            ? { text: `処理が追いつきません（毎秒${hud.fps}コマ）`, ok: false }
+            : { text: '✓ 走り出すと始まります', ok: true }
 
   return (
-    <div className="live">
-      <video ref={videoRef} playsInline muted style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
-      <canvas ref={canvasRef} style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
+    <div className={preview ? 'live preview' : 'live'}>
+      <div className="live-top" style={dark ? { display: 'none' } : undefined}>
+        <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+        <div style={{ width: 10, height: 10, borderRadius: 5, background: 'var(--accent)' }} />
+        <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 3 }} className="muted">
+          {label}
+        </div>
+        {full && <FullBadge />}
+      </div>
+
+      <div className="live-stage">
+        <video ref={videoRef} playsInline muted style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
+        <canvas ref={canvasRef} style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
+      </div>
+
+      {preview && (
+        <div className="live-panel">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {hud.phase === 'baseline' && hud.framing === 'ok' && (
+              <div className="num" style={{ fontSize: 44, lineHeight: 1, color: 'var(--accent)' }}>{Math.max(1, Math.min(3, hud.countdown ?? 3))}</div>
+            )}
+            <div className="live-status" role="status" style={{ color: status.ok ? 'var(--accent)' : 'var(--warn)' }}>
+              {status.text}
+            </div>
+          </div>
+          {hud.phase === 'setup' && !file && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <span style={{ flexGrow: 1 }}>ベルトの速さ</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step={0.1}
+                min={SPEED_FIT.kmhMin}
+                max={SPEED_FIT.kmhMax}
+                placeholder="空欄可"
+                aria-label="ベルトの速さ（時速 km）"
+                value={beltText}
+                onChange={(e) => {
+                  setBeltText(e.target.value)
+                  saveBeltText(e.target.value)
+                }}
+                style={{ width: 110, padding: '6px 8px', borderRadius: 10, border: `1px solid ${beltInvalid ? 'var(--warn)' : 'var(--line)'}`, background: 'rgba(255,255,255,0.06)', color: 'var(--text)', fontSize: 16, fontFamily: 'var(--num)' }}
+              />
+              <span className="muted">km/h</span>
+            </label>
+          )}
+          {hud.phase === 'setup' && beltInvalid && (
+            <div style={{ fontSize: 12, color: 'var(--warn)' }}>
+              時速{SPEED_FIT.kmhMin}〜{SPEED_FIT.kmhMax}kmの数字を入れてください（このままだと使いません）
+            </div>
+          )}
+          <details>
+            <summary>くわしく</summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 8, fontSize: 12, lineHeight: 1.5 }} className="muted">
+              {hud.phase === 'setup' && (
+                <>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <Chip ok={hud.framing === 'ok'} label="全身" />
+                    <Chip ok={hud.checks.side} label={hud.checks.side ? '真横' : `真横（ずれ ${hud.checks.sideDeg}°）`} />
+                    <Chip ok={hud.checks.light} label="明るさ" />
+                  </div>
+                  {hud.problem && <div style={{ color: 'var(--text)', fontSize: 14 }}>{hud.problem}</div>}
+                  <div>そろうと、触らなくても次へ進みます{cameraLens === 'ultra' ? '（超広角）' : ''}。点線の間に頭から足まで入れてください</div>
+                  {!file && <div>ベルトの速さは、入れるとよい例の範囲と足首のセンサーの速さをこの速さに合わせます。途中で変えるなら走り出しの速さを。前回の値を覚えています</div>}
+                </>
+              )}
+              {hud.phase === 'baseline' && (
+                <div>{hud.pose === 'b' ? '胸を開いて、肩を後ろに引いて、顎を軽く引いて止まります。' : ''}2つの立ち方の違いを、猫背の物差しにします。写真は残さず、骨格の角度だけを使います</div>
+              )}
+              {hud.phase === 'run' && <div>全身が映った状態で走り出すと、歩数を数えて約10秒で始まります。頭や足が切れていると数えられません</div>}
+              <div>骨格：毎秒{hud.fps}コマ{hud.fps < WAIT.slowFps ? `（${WAIT.slowFps}コマより少ないと、走りを数えにくくなります）` : ''}</div>
+            </div>
+          </details>
+        </div>
+      )}
 
       {dark && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
@@ -660,24 +822,13 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         </div>
       )}
 
-      {!dark && (
+      {!dark && !preview && (
         <>
-          <div style={{ position: 'absolute', left: 16, top: 'max(16px, env(safe-area-inset-top))', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
-            </button>
-            <div style={{ width: 10, height: 10, borderRadius: 5, background: 'var(--accent)' }} />
-            <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 3 }} className="muted">
-              {hud.phase === 'loading' || hud.phase === 'error' ? '' : hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'}
-            </div>
-            {full && <FullBadge />}
-          </div>
-
           {hud.phase === 'run' && (
             <div style={{ position: 'absolute', right: 16, top: 'max(16px, env(safe-area-inset-top))', textAlign: 'right' }}>
               <div className="num" style={{ fontSize: 56 }}>{mmss(hud.elapsed)}</div>
               <div style={{ fontSize: 13 }} className="muted">
-                {hud.state === 'waiting' ? '走り出すと始まります' : hud.state === 'paused' ? '一時停止中' : hud.quiet ? '声なしで確認中' : ''}
+                {hud.state === 'paused' ? '一時停止中' : hud.quiet ? '声なしで確認中' : ''}
               </div>
             </div>
           )}
@@ -702,71 +853,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             </div>
           )}
 
-          {hud.phase === 'setup' && (
-            <>
-              {/* 離れていても色で分かるよう、画面のふち全体を光らせる */}
-              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', border: `12px solid ${hud.checks.body ? 'var(--accent)' : 'var(--warn)'}`, opacity: 0.85 }} />
-              <div style={{ position: 'absolute', left: 0, right: 0, top: 'max(70px, calc(env(safe-area-inset-top) + 60px))', display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-                <div style={{ padding: '10px 22px', borderRadius: 20, background: hud.checks.body ? 'var(--accent)' : 'var(--warn)', color: '#0A0C0E', fontWeight: 900, fontSize: 34 }}>
-                  {hud.checks.body ? '✓ 全身 OK' : '全身が入っていません'}
-                </div>
-              </div>
-            </>
-          )}
-          {hud.phase === 'setup' && (
-            <div style={{ position: 'absolute', left: 12, right: 12, bottom: 'max(12px, env(safe-area-inset-bottom))', padding: '12px 14px', borderRadius: 18, background: 'rgba(10,12,14,0.82)', border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Chip ok={hud.checks.body} label="全身" />
-                <Chip ok={hud.checks.side} label={hud.checks.side ? '真横' : `真横（ずれ ${hud.checks.sideDeg}°）`} />
-                <Chip ok={hud.checks.light} label="明るさ" />
-              </div>
-              <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.45 }}>{hud.problem ?? 'そろいました。このまま待つと次へ進みます。'}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flexGrow: 1, fontSize: 12 }} className="muted">
-                  3つそろうと、触らなくても自動で次へ進みます{cameraLens === 'ultra' ? '（超広角）' : ''}
-                </div>
-              </div>
-              {!file && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 6, borderTop: '1px solid var(--line)' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
-                    <span style={{ flexGrow: 1 }}>ベルトの速さ（時速 km）</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step={0.1}
-                      min={SPEED_FIT.kmhMin}
-                      max={SPEED_FIT.kmhMax}
-                      placeholder="空欄なら使わない"
-                      aria-label="ベルトの速さ（時速 km）"
-                      value={beltText}
-                      onChange={(e) => {
-                        setBeltText(e.target.value)
-                        saveBeltText(e.target.value)
-                      }}
-                      style={{ width: 150, padding: '8px 10px', borderRadius: 10, border: `1px solid ${beltInvalid ? 'var(--warn)' : 'var(--line)'}`, background: 'rgba(255,255,255,0.06)', color: 'var(--text)', fontSize: 16, fontFamily: 'var(--num)' }}
-                    />
-                  </label>
-                  <div style={{ fontSize: 11, lineHeight: 1.5 }} className="muted">
-                    {beltInvalid
-                      ? `時速${SPEED_FIT.kmhMin}〜${SPEED_FIT.kmhMax}kmの数字を入れてください（このままだと使いません）`
-                      : '入れると、よい例の範囲と、足首のセンサーの速さの見積もりを、この速さに合わせます。途中で変えるなら走り出しの速さを。前回の値を覚えています'}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {hud.phase === 'baseline' && (
-            <div style={{ position: 'absolute', left: 12, right: 12, top: 'max(70px, calc(env(safe-area-inset-top) + 60px))', padding: '12px 16px', borderRadius: 18, background: 'rgba(10,12,14,0.78)', display: 'flex', alignItems: 'center', gap: 16 }}>
-              <div className="num" style={{ fontSize: 72, color: 'var(--accent)', width: 50, textAlign: 'center' }}>{Math.max(1, Math.min(3, hud.countdown ?? 3))}</div>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.4 }}>{hud.pose === 'b' ? '2つ目：胸を開いて、肩を後ろに引いて、顎を軽く引いて3秒止まる' : '1つ目：いつもの楽な立ち方で3秒止まる'}</div>
-                <div style={{ fontSize: 12 }} className="muted">2つの立ち方の違いを、猫背の物差しにします。写真は残さず、骨格の角度だけを使います</div>
-              </div>
-            </div>
-          )}
-
-          {hud.caption && hud.phase !== 'setup' && (
+          {hud.caption && (
             <div style={{ position: 'absolute', left: '50%', bottom: 90, transform: 'translateX(-50%)', maxWidth: '90%' }}>
               <div className="pill">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7" /></svg>

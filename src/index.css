@@ -170,6 +170,78 @@ a {
   object-fit: contain;
 }
 
+/* カメラ版：置く・立つ・走り出すのを待つ間（preview）は、映像を文字でふさがない。
+   上に1行の帯、真ん中に映像（骨格と、頭・足が切れているときの印）、下（横置きでは右）に短い案内。
+   走っている間は、映像を画面いっぱいに置き、その上に数字を重ねる */
+.live-stage {
+  position: absolute;
+  inset: 0;
+}
+.live-top {
+  position: absolute;
+  left: 16px;
+  top: max(16px, env(safe-area-inset-top));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.live.preview {
+  display: flex;
+  flex-direction: column;
+}
+.live.preview .live-top {
+  position: static;
+  flex: none;
+  padding: max(8px, env(safe-area-inset-top)) 12px 6px;
+}
+.live.preview .live-stage {
+  position: relative;
+  inset: auto;
+  flex: 1;
+  min-height: 0;
+}
+.live-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.live-status {
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+.live-panel details summary {
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .live.preview {
+    display: grid;
+    grid-template-columns: 1fr minmax(220px, 36%);
+    grid-template-rows: auto 1fr;
+  }
+  .live.preview .live-top {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .live.preview .live-stage {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+  .live.preview .live-panel {
+    grid-column: 2;
+    grid-row: 2;
+    overflow-y: auto;
+    border-top: none;
+    border-left: 1px solid var(--line);
+  }
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
