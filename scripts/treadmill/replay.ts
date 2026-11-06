@@ -20,6 +20,7 @@ import { CUE, RECOVER, SAY, PHRASES, FORM_SAY, phraseId } from '../../src/core/p
 import { activeItems } from '../../src/core/level'
 import { ITEM_KEYS, type Frame, type ItemKey, type RunLog, type Session } from '../../src/core/types'
 import type { Measure } from '../../src/modes/camera/types'
+import { midstance } from '../../src/modes/camera/geometry'
 import { PhoneRun } from '../../src/modes/phone/session'
 import { PHONE_CUE } from '../../src/modes/phone/analyzer'
 import { MOUNT, PHONE_LIMITS } from '../../src/modes/phone/params'
@@ -146,6 +147,7 @@ export interface ReplayOut {
   warnings: string[]
   runStartT: number | null // 走り始めた（しくみが running になった）時刻
   // 走り始めの自分の基準（HIP_REF の区間）を作った時刻（ふつうの時刻）と、その値。カメラ版だけ。基準ができなければ null
+  // hipRatio：腰の基準（立脚中期の 腰の高さ ÷ 立脚側の脚の長さ。coach.ts の hipOf）
   ref?: { from: number; to: number; neck: number; trunk: number; body: number; headLean: number; hipRatio: number | null } | null
   // カメラ版の1秒ごとの記録（ふつうの時刻）：前側・後ろ側の値（yawSign）と、着地の窓の値（Sample.land。窓の山が足りない秒は無い）。
   // あわせて、着地の今日の基準と、速さが変わって作り直した回数
@@ -248,14 +250,20 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     const visible = r[iv] === 1
     const moving = opts.running === 'steps' ? r[iby] === BY_STEPS : r[imov] === 1
     const m: Measure | undefined = visible && r[ineck] !== -999 ? { neck: r[ineck], trunk: r[itrunk], body: r[ibody], hipRatio: r[ihip], yaw: r[iyaw], headLean: r[ilean], chin: ichin < 0 ? 0 : r[ichin], dir: 1 } : undefined
-    handle(coach.update({ t, present: visible, moving, m, frame: m ? frameOf(r) : undefined }), t)
+    // 腰（立脚中期のコマの腰の高さと膝の曲がり）は記録の列にないので、骨格の点から測り直す（撮ったときと同じ geometry の midstance）
+    const frame = m ? frameOf(r) : undefined
+    if (m && frame) {
+      const mid = midstance(frame)
+      if (mid) m.mid = mid
+    }
+    handle(coach.update({ t, present: visible, moving, m, frame }), t)
     lastT = t
     lastPresent = visible
     lastMoving = moving
   }
   const lr = coach.leanRef
-  const analyzer = (coach as unknown as { analyzer: { hipRef: number | null; drift: { ref: ReplayOut['landRef']; rebuilds: number } } }).analyzer
-  const hipRef = analyzer.hipRef
+  const analyzer = (coach as unknown as { analyzer: { hipRef: { hip: number; knee: number } | null; drift: { ref: ReplayOut['landRef']; rebuilds: number } } }).analyzer
+  const hipRef = analyzer.hipRef?.hip ?? null
   const ref = lr && refFrom !== null && refTo !== null ? { from: refFrom, to: refTo, neck: lr.neck, trunk: lr.trunk, body: lr.body, headLean: lr.headLean, hipRatio: hipRef } : null
   return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref, secs, landRef: analyzer.drift.ref, landRebuilds: analyzer.drift.rebuilds, form: coach.finish().form }
 }

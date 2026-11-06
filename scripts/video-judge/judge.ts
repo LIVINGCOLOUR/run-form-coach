@@ -17,7 +17,7 @@ import { OneEuro } from '../../src/modes/camera/filter'
 import { bodyVisible, MotionDetector } from '../../src/modes/camera/motion'
 import { measure } from '../../src/modes/camera/geometry'
 import { L } from '../../src/modes/camera/landmarks'
-import { Coach, headForward } from '../../src/modes/camera/coach'
+import { Coach, headForward, hipDropOf, hipOf } from '../../src/modes/camera/coach'
 import { FORM, LIMITS, REL_LIMITS } from '../../src/modes/camera/params'
 import { CUE } from '../../src/core/params'
 import { analyzeRun, type TimedFrame } from '../../src/modes/camera/slowmo'
@@ -94,7 +94,8 @@ export interface Second {
   yaw: number
   trunk: number
   body: number
-  hipRatio: number
+  hipRatio: number // 前の測り方（浮いたコマも含めた平均）。記録だけ
+  hip: { hip: number; knee: number; n: number } | null // 腰落ちの判定に使う、立脚中期のコマの平均（coach.ts の hipOf。測れない秒は null）
   chin: number
 }
 
@@ -105,7 +106,7 @@ export function perSecond(ticks: Tick[], from: number, to: number): Second[] {
     const b = ticks.filter((k) => k.m && k.t >= Math.max(s, from) && k.t < Math.min(s + 1, to))
     if (b.length < 3) continue
     const g = (f: (m: Measure, k: Tick) => number) => mean(b.map((k) => f(k.m!, k)))
-    out.push({ t: s, n: b.length, neck: g((m) => m.neck), headLean: g((m) => m.headLean), yaw: g((m) => m.yaw), trunk: g((m) => m.trunk), body: g((m) => m.body), hipRatio: g((m) => m.hipRatio), chin: g((_, k) => k.chin!) })
+    out.push({ t: s, n: b.length, neck: g((m) => m.neck), headLean: g((m) => m.headLean), yaw: g((m) => m.yaw), trunk: g((m) => m.trunk), body: g((m) => m.body), hipRatio: g((m) => m.hipRatio), hip: hipOf(b.map((k) => k.m!)), chin: g((_, k) => k.chin!) })
   }
   return out
 }
@@ -141,6 +142,10 @@ export interface WindowStat {
   bodySd: number
   hipRatio: number
   hipSd: number
+  // 腰落ちの判定の値：立脚中期のコマで測れた秒（hipSeconds）の、腰の高さ ÷ 立脚側の脚の長さ（hipMid）と膝の曲がり（kneeMid、度）の平均
+  hipMid: number
+  kneeMid: number
+  hipSeconds: number
   chin: number
   chinSd: number
 }
@@ -171,6 +176,9 @@ export function windowStat(ticks: Tick[], from: number, to: number): WindowStat 
     bodySd: sd(col('body')),
     hipRatio: mean(col('hipRatio')),
     hipSd: sd(col('hipRatio')),
+    hipMid: mean(secs.flatMap((s) => (s.hip ? [s.hip.hip] : []))),
+    kneeMid: mean(secs.flatMap((s) => (s.hip ? [s.hip.knee] : []))),
+    hipSeconds: secs.filter((s) => s.hip).length,
     chin: mean(col('chin')),
     chinSd: sd(col('chin')),
   }
@@ -202,7 +210,10 @@ export function compare(bad: WindowStat, good: WindowStat) {
   const head = headForward(neck, headLean)
   const trunk = bad.trunk - good.trunk
   const body = bad.body - good.body
-  const hip = ((good.hipRatio - bad.hipRatio) / good.hipRatio) * 100 // 腰の下がり（%）。上がったときは負
+  // 腰落ち（%）：アプリと同じ hipDropOf（立脚中期の腰の高さの下がりと、膝の曲がりの増え × HIP_MID.kneePct の大きいほう。0 より下にしない）。
+  // どちらかの窓で立脚中期の秒がなければ NaN。hipOld は前の測り方（浮いたコマも含めた平均）の下がり（上がったときは負）
+  const hip = bad.hipSeconds && good.hipSeconds ? hipDropOf({ hip: good.hipMid, knee: good.kneeMid }, { hip: bad.hipMid, knee: bad.kneeMid }) : NaN
+  const hipOld = ((good.hipRatio - bad.hipRatio) / good.hipRatio) * 100
   const chin = bad.chin - good.chin
   return {
     head,
@@ -211,6 +222,7 @@ export function compare(bad: WindowStat, good: WindowStat) {
     trunk,
     body,
     hip,
+    hipOld,
     chin,
     chinAdj: chin + trunk, // 上体が起きた分（頭も上体といっしょに回る）を差し引いた顎
     cues: {

@@ -32,7 +32,9 @@ export interface Sample {
   hunch?: number
   trunk: number
   body: number
-  hipDrop: number // 今日の基準の腰の高さからの下がり（%）
+  hipDrop: number // 腰落ち（%）：今日の基準からの、立脚中期の腰の高さの下がりと、膝の曲がりの増え × HIP_MID.kneePct の大きいほう。測れなかった秒・基準ができるまでは 0
+  // 腰（カメラ版）：その秒の立脚中期のコマ（n コマ）の、腰の高さ ÷ 立脚側の脚の長さ（hip）と膝の曲がり（knee、度）の平均。測れなかった秒は無い（腰を判定していない）
+  hipMid?: { hip: number; knee: number; n: number }
   score: number // 姿勢スコア 0〜100
   quiet: boolean // 声なしで確認している時間か
   // 今日の基準からの崩れ（上体と体全体の増え方を LIMITS の目盛りに直したもの）。基準ができるまでは無い
@@ -177,7 +179,7 @@ export type SensorCounts = { chest: number; head: number; sit: number; longL: nu
 // 2つの立ち方（src/modes/sensor/session.ts の calibrate）。あとで、2つの立ち方の差と知らせた時刻を、確かめ走の区切りと比べるため。
 //   t：決めた t、tries：測った回数（差が小さくて測り直したぶんを含む）、a・b：最後に測った、いつもの楽な立ち方・胸を開いた立ち方の重力の向き、
 //   deg：a と b の角度（度）、mode：pose（2つの立ち方で見た）・fallback（差が poseMin より小さい、または片方しか測れず、b を立った姿勢にして今までの見方）、
-//   margin：使う線の幅（度）、frac：poseFrac、degs：測った回ごとの角度、cam：カメラ版で a・b のときのカメラの上体と頭の位置（度）
+//   margin：使う線の幅（度）、line：決まった度数の線の幅 poseLine（胸）、frac：poseFrac（poseLine が 0 のとき。頭）、degs：測った回ごとの角度、cam：カメラ版で a・b のときのカメラの上体と頭の位置（度）
 export interface SensorPoseLog {
   t: number
   tries: number
@@ -186,6 +188,7 @@ export interface SensorPoseLog {
   deg: number | null
   mode: 'pose' | 'fallback'
   margin?: number
+  line?: number
   frac?: number
   degs?: (number | null)[]
   cam?: { a?: { trunk: number; head: number }; b?: { trunk: number; head: number } }

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { levelFrame, measure, rotateFrame, sideOffDeg } from './geometry'
+import { levelFrame, measure, midstance, rotateFrame, sideOffDeg } from './geometry'
 import { itemScore, postureScore } from './scoring'
-import { Coach, headForward, hunchOf, toScale } from './coach'
-import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, HEAD_OPEN, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
+import { Coach, headForward, hipDropOf, hipOf, hunchOf, toScale } from './coach'
+import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, HEAD_OPEN, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
 import { formOver, formScale, FormStage, yawDeg, yawFixed } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
@@ -228,7 +228,8 @@ function feed(coach: Coach, from: number, sec: number, m: Measure, moving = true
 }
 
 // ふつうの走り：正しいフォームの線（FORM）の内側（体全体 5.5〜15°、上体 −2〜12°、頭は首 48°・頭の位置 52° まで）
-const good: Measure = { neck: 2, headLean: 12, chin: -20, yaw: 0, trunk: 7, body: 9, hipRatio: 0.9, dir: 1 }
+// mid：立脚中期のコマの腰の高さと膝の曲がり（腰落ちはこれで見る。geometry の midstance）
+const good: Measure = { neck: 2, headLean: 12, chin: -20, yaw: 0, trunk: 7, body: 9, hipRatio: 0.9, dir: 1, mid: { hip: 0.9, knee: 30 } }
 const bent: Measure = { ...good, trunk: 20 }
 // 頭が前に出ると、首の角度も頭の位置そのものも増える
 const headDown: Measure = { ...good, neck: 14, headLean: 24 }
@@ -525,7 +526,7 @@ describe('省電力（間引いて見る）', () => {
   it('点数はまだ高いが、声をかける線を少し越えた崩れでも、間引かずに見て声をかける', () => {
     const coach = new Coach()
     feedSparse(coach, 0, 200, good)
-    const b = feedSparse(coach, 200, 20, { ...good, hipRatio: 0.9 * (1 - 0.043) }) // 腰 4.3%：線（4%）は越えるが点数は81
+    const b = feedSparse(coach, 200, 20, { ...good, mid: { hip: 0.9 * (1 - 0.043), knee: 30 } }) // 腰 4.3%：線（4%）は越えるが点数は81
     expect(b.speak.some((x) => x === PHRASES.cueHip)).toBe(true)
   })
 
@@ -537,6 +538,82 @@ describe('省電力（間引いて見る）', () => {
     // 走り姿は、見本の走り（1周 DEMO_FRAMES コマ）のちょうど1周
     expect(s.strides.good?.frames.length).toBe(DEMO_FRAMES)
     expect(s.strides.good?.sec).toBeCloseTo(DEMO_FRAMES / 30, 1)
+  })
+})
+
+describe('腰落ち：立脚中期のコマだけで測る（geometry の midstance、coach.ts の hipOf、params.ts の HIP_MID）', () => {
+  // 腰の中心 (300, 500)。右脚が立脚（足首 (sx, ankleY)）、左脚の足首は lift 画素上。もも・すね 各100画素で、膝を knee 寄りに出す
+  const legFrame = (o: { sx?: number; hipH?: number; lift?: number } = {}): Frame => {
+    const hipH = o.hipH ?? 0.92
+    const f: Frame = Array.from({ length: 33 }, () => ({ x: 300, y: 300, v: 0.9 }))
+    f[23] = { x: 298, y: 500, v: 0.9 }
+    f[24] = { x: 302, y: 500, v: 0.9 }
+    const sx = o.sx ?? 300
+    f[26] = { x: (302 + sx) / 2 + 100 * Math.sqrt(1 - hipH * hipH), y: 500 + 100 * hipH, v: 0.9 }
+    f[28] = { x: sx, y: 500 + 200 * hipH, v: 0.9 }
+    f[25] = { x: 330, y: 580, v: 0.9 }
+    f[27] = { x: 330, y: 500 + 200 * hipH - (o.lift ?? 40), v: 0.9 }
+    return f
+  }
+
+  it('立脚側の足首が腰の真下で、もう一方が浮いているコマだけ測る。腰の高さ ÷ 立脚側の脚の長さと、膝の曲がり', () => {
+    const m = midstance(legFrame())!
+    expect(m.hip).toBeCloseTo(0.92, 2)
+    expect(m.knee).toBeCloseTo(2 * (Math.acos(0.92) * 180) / Math.PI, 0) // もも・すねが同じ長さなら、曲がり = 2 × acos(腰の高さ)
+    // 腰を落とすと、腰の高さが下がり、膝がもっと曲がる
+    const low = midstance(legFrame({ hipH: 0.88 }))!
+    expect(low.hip).toBeLessThan(m.hip)
+    expect(low.knee).toBeGreaterThan(m.knee)
+    // 足首が腰より前（脚の長さの dx 以上）、両足が同じ高さ（浮いていない）なら測らない
+    expect(midstance(legFrame({ sx: 300 + 200 * HIP_MID.dx + 5 }))).toBeNull()
+    expect(midstance(legFrame({ lift: 5 }))).toBeNull()
+    // measure() も同じ値を mid に入れる
+    expect(measure(legFrame()).mid?.hip).toBeCloseTo(m.hip, 6)
+  })
+
+  it('その秒の立脚中期のコマが足りない・スマホの向きが真横から yawMax 度よりずれた・腰の高さが hipMax を越えたコマは、測らない', () => {
+    const at = (hip: number, yaw = 0): Measure => ({ ...good, yaw, mid: { hip, knee: 30 } })
+    expect(hipOf([{ ...good, mid: undefined }, { ...good, mid: undefined }, { ...good, mid: undefined }])).toBeNull()
+    expect(hipOf([at(0.9), at(0.92)])).toMatchObject({ n: 2 })
+    expect(hipOf([at(0.9), at(0.92)])!.hip).toBeCloseTo(0.91, 6)
+    expect(hipOf([at(0.9, (HIP_MID.yawMax + 1) * CAM_YAW.perDeg)])).toBeNull()
+    expect(hipOf([at(0.9, -(HIP_MID.yawMax + 1) * CAM_YAW.perDeg)])).toBeNull()
+    expect(hipOf([at(HIP_MID.hipMax + 0.01)])).toBeNull()
+  })
+
+  it('腰落ちの値は、腰の高さの下がり（%）。1秒ごとに0で切らない。kneePct を入れると、膝の曲がりの増え × kneePct との大きいほう', () => {
+    expect(HIP_MID.kneePct).toBe(0) // いまは膝の曲がりは記録だけ（params.ts の HIP_MID）
+    expect(hipDropOf({ hip: 0.9, knee: 30 }, { hip: 0.9 * 0.97, knee: 40 })).toBeCloseTo(3, 6)
+    expect(hipDropOf({ hip: 0.9, knee: 30 }, { hip: 0.9 * 1.02, knee: 25 })).toBeCloseTo(-2, 6)
+    const keep = HIP_MID.kneePct
+    try {
+      HIP_MID.kneePct = 0.4
+      expect(hipDropOf({ hip: 0.9, knee: 30 }, { hip: 0.9, knee: 40 })).toBeCloseTo(4, 6)
+      expect(hipDropOf({ hip: 0.9, knee: 30 }, { hip: 0.9 * 0.95, knee: 32 })).toBeCloseTo(5, 6)
+    } finally {
+      HIP_MID.kneePct = keep
+    }
+  })
+
+  it('浮いたコマも混ぜた前の値（hipRatio）が下がっただけでは、声をかけない。膝の曲がりだけ増えても、いまは声をかけない（記録だけ）', () => {
+    const b = new Coach()
+    feedSparse(b, 0, 200, good)
+    expect(feedSparse(b, 200, 20, { ...good, hipRatio: 0.8 }).speak).not.toContain(PHRASES.cueHip)
+    const k = new Coach()
+    feedSparse(k, 0, 200, good)
+    expect(feedSparse(k, 200, 20, { ...good, mid: { hip: 0.9, knee: 50 } }).speak).not.toContain(PHRASES.cueHip)
+    expect(k.samples[k.samples.length - 1].hipMid?.knee).toBe(50)
+  })
+
+  it('立脚中期のコマがない秒は腰を判定しない（記録の hipMid も無い）', () => {
+    const coach = new Coach()
+    feedSparse(coach, 0, 200, good)
+    const before = coach.samples.length
+    feedSparse(coach, 200, 20, { ...good, mid: undefined })
+    const last = coach.samples.slice(before)
+    expect(last.length).toBeGreaterThan(5)
+    expect(last.every((x) => x.hipMid === undefined && x.hipDrop === 0)).toBe(true)
+    expect(coach.samples.slice(0, before).some((x) => x.hipMid?.n)).toBe(true)
   })
 })
 

@@ -175,7 +175,8 @@ export class SensorSession {
       if (b[x.key]) log.b = r4v(b[x.key]!)
       if (pose) {
         log.margin = Math.round(pose.margin * 10) / 10
-        log.frac = x.p.poseFrac
+        if (x.p.poseLine > 0) log.line = x.p.poseLine
+        else log.frac = x.p.poseFrac
       }
       if (this.poseCam.a || this.poseCam.b) log.cam = { ...(this.poseCam.a && { a: this.poseCam.a }), ...(this.poseCam.b && { b: this.poseCam.b }) }
       slot.pose = log

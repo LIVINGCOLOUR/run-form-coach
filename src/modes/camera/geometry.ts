@@ -1,6 +1,7 @@
 import type { Frame, Pt } from '../../core/types'
 import type { Measure } from './types'
 import { L } from './landmarks'
+import { HIP_MID } from './params'
 
 const DEG = 180 / Math.PI
 
@@ -111,6 +112,39 @@ export function measure(frame: Frame): Measure {
   const chin = Math.atan2(ear.y - frame[L.nose].y, (frame[L.nose].x - ear.x) * dir) * DEG
   const leg = legLength(frame)
   const hipRatio = leg > 0 ? (stance.y - mid(frame[L.leftHip], frame[L.rightHip]).y) / leg : 0
+  const m: Measure = { neck: neckLean - trunkNear, headLean: neckLean, chin, yaw: yawSign(frame), trunk, body, hipRatio, dir }
+  const ms = midstance(frame)
+  if (ms) m.mid = ms
+  return m
+}
 
-  return { neck: neckLean - trunkNear, headLean: neckLean, chin, yaw: yawSign(frame), trunk, body, hipRatio, dir }
+// 3点 a-b-c の b での曲がり（度）。まっすぐで 0
+function bend(a: Pt, b: Pt, c: Pt): number {
+  const v1x = a.x - b.x, v1y = a.y - b.y, v2x = c.x - b.x, v2y = c.y - b.y
+  const n = Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y)
+  if (!n) return 0
+  return 180 - Math.acos(Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / n))) * DEG
+}
+
+// 立脚中期のコマなら、腰の高さと膝の曲がりを測る（腰落ちの判定に使う。params.ts の HIP_MID）。そうでなければ null。
+// 立脚中期：画像で低いほう（接地している側）の足首が、腰の中心の真下（前後に脚の長さの HIP_MID.dx 以内）にあり、
+// もう一方の足首がそれより脚の長さの HIP_MID.sep 以上高い（浮いている）コマ。
+//   hip：腰の中心から立脚側の足首までの高さ ÷ 立脚側の脚の長さ（腰→膝 + 膝→足首）。knee：立脚側の膝の曲がり（度）
+// 全部のコマの平均（hipRatio）では、浮いている（両足が地面から離れた）コマも混ざるので、弾んでよく走るほど低く出て、
+// 腰落ちと逆の向きになった（人の動画の腰落ちの悪い例とよい例の12組で、悪い例が2%以上低かったのは 3組。立脚中期だけなら 10組、
+// 膝の曲がり（+5°以上）も見ると 11組。docs/camera-mode.md の「腰」）
+export function midstance(frame: Frame): { hip: number; knee: number } | null {
+  const la = frame[L.leftAnkle]
+  const ra = frame[L.rightAnkle]
+  const left = la.y >= ra.y
+  const A = left ? la : ra
+  const K = left ? frame[L.leftKnee] : frame[L.rightKnee]
+  const H = left ? frame[L.leftHip] : frame[L.rightHip]
+  const leg = legLength(frame)
+  const stanceLeg = dist(H, K) + dist(K, A)
+  if (!(leg > 0) || !(stanceLeg > 0)) return null
+  const hipC = mid(frame[L.leftHip], frame[L.rightHip])
+  if (Math.abs(A.x - hipC.x) / leg >= HIP_MID.dx) return null
+  if (Math.abs(la.y - ra.y) / leg <= HIP_MID.sep) return null
+  return { hip: (A.y - hipC.y) / stanceLeg, knee: bend(H, K, A) }
 }

@@ -7,6 +7,7 @@ import { activeItems, startProgress } from '../../src/core/level'
 import { RUNNING } from '../../src/core/params'
 import type { Frame } from '../../src/core/types'
 import type { Measure } from '../../src/modes/camera/types'
+import { midstance } from '../../src/modes/camera/geometry'
 import { PhoneRun } from '../../src/modes/phone/session'
 import { rng, simulateJumps, simulateRun, simulateStanding } from '../../src/modes/phone/simulate'
 
@@ -79,6 +80,15 @@ export function makeCameraSample(sections: SampleSection[], jumpAt: number | nul
     const frame: Frame = Array.from({ length: 33 }, (_, i) => ({ x: 300 + i * 3, y: 150 + i * 15 + jump, v: 0.9 }))
     frame[23] = { x: 300, y: 500 + jump, v: 0.9 }
     frame[24] = { x: 305, y: 500 + jump, v: 0.9 }
+    // 脚：右脚が立脚中期（足首が腰の真下）で、腰の高さ ÷ 立脚側の脚の長さが hipRatio になるように膝を曲げる（もも・すね 各100画素）。
+    // 左脚は浮いている（足首が40画素高い）。geometry の midstance で、腰落ちの値（m.mid）になる
+    const hr = Math.min(1, m.hipRatio)
+    frame[26] = { x: 302.5 + 100 * Math.sqrt(1 - hr * hr), y: 500 + 100 * hr, v: 0.9 }
+    frame[28] = { x: 302.5, y: 500 + 200 * hr, v: 0.9 }
+    frame[25] = { x: 340, y: 580, v: 0.9 }
+    frame[27] = { x: 320, y: 500 + 200 * hr - 40, v: 0.9 }
+    const mid = midstance(frame)
+    if (mid) m.mid = mid
     if (phase === 'run' && coach) for (const e of coach.update({ t, present: true, moving, m })) if (e.type === 'speak') rec.event(t, e.text)
     rec.frame(t, phase, 720, 1280, frame, { visible: true, moving, by: moving ? 'steps' : null, cadence: moving ? 172 : null, m, sideDeg: 3, still: 99, pitch: 0 })
     lastPresent = true

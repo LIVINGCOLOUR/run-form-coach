@@ -87,15 +87,17 @@ it('2つの立ち方：猫背のまま走り出しても知らせ、胸を開い
     '# 2つの立ち方で猫背を見る（仮想実験）',
     '',
     `sim/pose.sim.ts。胸の前への傾きを作って LeanDetector に流した（${SEEDS}通りの揺れ、走り出して${END}秒、中級）。体の形は仮定（ファイルの頭の説明）。`,
-    `2つの立ち方：poseCap ${p.poseCap}°・poseFrac ${p.poseFrac}・線の幅 max(margin ${p.margin}°, poseFrac × 差)。今まで：b を立った姿勢にして、走り出しの前傾 + margin ${p.margin}°（差が小さいときの fallback と同じ）。`,
+    `2つの立ち方：poseCap ${p.poseCap}°・線の幅 ${p.poseLine > 0 ? `${p.poseLine}°（決まった度数 poseLine）` : `max(margin ${p.margin}°, poseFrac ${p.poseFrac} × 差)`}。今まで：b を立った姿勢にして、走り出しの前傾 + margin ${p.margin}°（差が小さいときの fallback と同じ）。`,
     '回数は真ん中の値（かっこは最小〜最大）。「猫背の間」は猫背の割合 1 の間（と戻って3秒）、「ほか」はそれ以外。走り出しの40秒（前傾を覚える間）は、どちらも知らせない。',
-    `ずれの見張り：今までの見方は slipSec ${p.slipSec}秒のまま。2つの立ち方では、線を越えた向きが猫背としてありうる（割合 ${p.poseIdxMin}〜${p.poseSlipIdx}・横の傾きが小さい）間は数えない。知らせ直す間隔は、続けて${p.poseBackoffAfter}回のあと ${p.poseBackoffEvery}秒ごと。`,
+    `ずれの見張り：今までの見方は slipSec ${p.slipSec}秒のまま。2つの立ち方では、線を越えた向きが猫背としてありうる（b→a に沿った傾きが min(${p.poseIdxMin} × 差, 線の幅)〜${p.poseSlipIdx} × 差・横の傾きが小さい）間は数えない。知らせ直す間隔は、続けて${p.poseBackoffAfter}回のあと ${p.poseBackoffEvery}秒ごと。`,
     `猫背のまま走り出して知らせる条件：差 + 体ごとの前傾 > min(差 + 体ごと, poseCap) + 線の幅。差 6°、差 10° で体ごと 4°、差 15° で体ごと 4° はこれを満たさないか、ぎりぎり（揺れしだい）。`,
     '',
   ]
   const checks: (() => void)[] = []
+  // 線の幅（lean.ts の setPoses と同じ）
+  const widthOf = (theta: number) => (p.poseLine > 0 ? p.poseLine : Math.max(p.margin, p.poseFrac * theta))
   for (const theta of THETAS) {
-    lines.push(`## 2つの立ち方の差 ${theta}°（線の幅 ${Math.max(p.margin, p.poseFrac * theta).toFixed(1)}°）`, '')
+    lines.push(`## 2つの立ち方の差 ${theta}°（線の幅 ${widthOf(theta).toFixed(1)}°）`, '')
     lines.push('| 体ごとの前傾 | 場面 | 猫背の間（今まで → 2つ） | ほか（今まで → 2つ） | ずれ（今まで → 2つ） |', '|---|---|---|---|---|')
     for (const body of BODY) {
       for (const sc of SCENES) {
@@ -111,7 +113,7 @@ it('2つの立ち方：猫背のまま走り出しても知らせ、胸を開い
         const label = `${theta}° ${body}° ${sc.label}`
         // 確かめること：線から 3° 以上離れているときだけ（揺れで線をまたぐ場合は見ない）
         //   猫背のまま走り出したときの、線より上の分 ＝ 差 + 体ごと −（min(差 + 体ごと, poseCap) + 線の幅）
-        const width = Math.max(p.margin, p.poseFrac * theta)
+        const width = widthOf(theta)
         const over = theta + body - (Math.min(theta + body, p.poseCap) + width)
         checks.push(() => {
           if (sc.label === '胸を開いたまま走る' && body <= p.poseCap) expect(med(outNew), label).toBe(0)

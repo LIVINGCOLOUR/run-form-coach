@@ -25,7 +25,7 @@ import type { Vec3 } from './parse'
 // 2つの立ち方（setPoses。params.ts の POSE の説明）：stand の代わりに、a「いつもの楽な立ち方」と b「胸を開いた立ち方」の向きを渡す。
 //   b を立った姿勢、b から a へ傾く向きを「前（猫背の向き）」、a と b の角度を猫背の大きさにする（走り出しの前傾から前の向きを決めない）。
 //   走る前傾（その向きに沿った、走り出し30秒の真ん中）は、基準として poseCap 度まで（カメラ版は、カメラの上体の増え + poseCamSlack 度まで）しか差し引かない。
-//   線は「基準 + max(margin, poseFrac × a と b の角度)」。ほかのしくみ（寄せる・ずれの見張り・曲げた）は stand と同じ。
+//   線は「基準 + poseLine」（決まった度数。胸）。poseLine が 0 なら「基準 + max(margin（poseMargin）, poseFrac × a と b の角度)」（頭）。ほかのしくみ（寄せる・ずれの見張り・曲げた）は stand と同じ。
 //   a と b の角度が poseMin より小さければ覚えずに false（呼ぶ側が測り直すか、b を stand として今までの見方にする）
 //   2つの立ち方で見るときだけの、場所ごとの決まり（0 なら今までと同じ。params.ts の HEAD の説明）：
 //     線の幅の下限 poseMargin（0 なら margin）・続いたら知らせる長さ poseHold（0 なら hold）・
@@ -143,7 +143,8 @@ export class LeanDetector {
     if (!fwd) return false
     this.standDir(b)
     this.fwd = fwd
-    this.pose = { deg, margin: Math.max(this.p.poseMargin > 0 ? this.p.poseMargin : this.p.margin, this.p.poseFrac * deg), camB: camB !== null && Number.isFinite(camB) ? camB : null }
+    const margin = this.p.poseLine > 0 ? this.p.poseLine : Math.max(this.p.poseMargin > 0 ? this.p.poseMargin : this.p.margin, this.p.poseFrac * deg)
+    this.pose = { deg, margin, camB: camB !== null && Number.isFinite(camB) ? camB : null }
     return true
   }
 
@@ -159,17 +160,18 @@ export class LeanDetector {
   }
 
   // 線を越えている向きが、猫背としてありうるか（2つの立ち方で見ているときだけ）：
-  //   猫背の割合（差し引いた走る前傾を除く）が poseIdxMin〜poseSlipIdx で、横の傾きが max(poseSlipSide, poseSlipSideFrac × 差) 以下。
+  //   b→a に沿った傾き（差し引いた走る前傾を除く）が min(poseIdxMin × 差, 線の幅)〜poseSlipIdx × 差 で、横の傾きが max(poseSlipSide, poseSlipSideFrac × 差) 以下。
+  //   下の端を線の幅までにするのは、線が決まった度数（poseLine）のとき、差が大きい人の線のすぐ上の猫背を、ずれの見張りに数えないため（params.ts の POSE の説明）。
   //   1歩ごとの揺れで割合が一瞬はみ出すので、直近 slipRef 秒の傾きと横の傾きの真ん中の値で見る
   private plausible(): boolean {
     const pose = this.pose!
     const p = this.p
-    const idx = (median(this.tilts.map((x) => x.v)) - (this.offset?.deg ?? 0)) / pose.deg
+    const along = median(this.tilts.map((x) => x.v)) - (this.offset?.deg ?? 0)
     const side = Math.abs(median(this.sides.map((x) => x.v)))
-    return idx >= p.poseIdxMin && idx <= p.poseSlipIdx && side <= Math.max(p.poseSlipSide, p.poseSlipSideFrac * pose.deg)
+    return along >= Math.min(p.poseIdxMin * pose.deg, pose.margin) && along <= p.poseSlipIdx * pose.deg && side <= Math.max(p.poseSlipSide, p.poseSlipSideFrac * pose.deg)
   }
 
-  // 線の幅（度）：2つの立ち方で見ているときは max(poseMargin（0 なら margin）, poseFrac × 角度)、そうでなければ margin
+  // 線の幅（度）：2つの立ち方で見ているときは poseLine（0 なら max(poseMargin（0 なら margin）, poseFrac × 角度)）、そうでなければ margin
   margin(): number {
     return this.pose?.margin ?? this.p.margin
   }

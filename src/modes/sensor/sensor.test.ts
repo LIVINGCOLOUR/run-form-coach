@@ -721,11 +721,13 @@ describe('2つの立ち方で猫背を見る', () => {
     return out
   }
 
-  it('a と b の角度を猫背の大きさ、b → a を前の向きにする。線は max(margin, poseFrac × 角度)', () => {
+  it('a と b の角度を猫背の大きさ、b → a を前の向きにする。胸の線は決まった度数（poseLine）で、a と b の差によらない', () => {
     const { d, ok } = setup()
     expect(ok).toBe(true)
     expect(d.pose!.deg).toBeCloseTo(A, 1)
-    expect(d.margin()).toBeCloseTo(Math.max(HUNCH.margin, HUNCH.poseFrac * A), 5)
+    expect(HUNCH.poseLine).toBe(5)
+    expect(d.margin()).toBe(HUNCH.poseLine)
+    expect(setup(HUNCH, null, 25).d.margin()).toBe(HUNCH.poseLine) // 胸をよく開ける人でも、線は遠くならない
     expect(d.fwd![0]).toBeCloseTo(1, 3) // 前（x）
     // 猫背の割合：b ＝ 0、a ＝ 1
     run(d, 6, 10, () => A)
@@ -765,7 +767,7 @@ describe('2つの立ち方で猫背を見る', () => {
   })
 
   it('体ごとの前傾が大きくても、poseCap + 線の幅の内なら知らせない。越えると知らせる（体ごとの前傾と猫背は分けられない）', () => {
-    const line = HUNCH.poseCap + Math.max(HUNCH.margin, HUNCH.poseFrac * A)
+    const line = HUNCH.poseCap + HUNCH.poseLine
     for (const [lean, cue] of [[line - 1, false], [line + 2, true]] as const) {
       const { d } = setup()
       expect(run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => lean).some((o) => o.cue)).toBe(cue)
@@ -842,7 +844,8 @@ describe('2つの立ち方で猫背を見る', () => {
     expect(d.margin()).toBe(HUNCH.margin)
   })
 
-  it('頭：差が HEAD.poseMin 以上なら同じ見方、線は max(頭の poseMargin, poseFrac × 差)（今までの頭の margin 18° より狭い）', () => {
+  it('頭：差が HEAD.poseMin 以上なら同じ見方、線は max(頭の poseMargin, poseFrac × 差)（今までの頭の margin 18° より狭い。頭は poseLine 0 で、割合のまま）', () => {
+    expect(HEAD.poseLine).toBe(0)
     const { d, ok } = setup(HEAD, null, 12)
     expect(ok).toBe(true)
     expect(d.margin()).toBe(Math.max(HEAD.poseMargin, HEAD.poseFrac * 12))
@@ -850,12 +853,22 @@ describe('2つの立ち方で猫背を見る', () => {
     expect(setup(HEAD, null, HEAD.poseMin - 1).ok).toBe(false)
   })
 
-  it('レベルで線の割合が変わる（初心者ほどゆるい）', () => {
-    expect(HUNCH_BY_LEVEL.beginner.poseFrac).toBeGreaterThan(HUNCH_BY_LEVEL.intermediate.poseFrac)
-    expect(HUNCH_BY_LEVEL.intermediate.poseFrac).toBeGreaterThan(HUNCH_BY_LEVEL.advanced.poseFrac)
-    const big = 30
-    const m = (lv: keyof typeof HUNCH_BY_LEVEL) => setup(HUNCH_BY_LEVEL[lv], null, big).d.margin()
-    expect(m('beginner')).toBeGreaterThan(m('advanced'))
+  it('2つの立ち方の胸の線は、どのレベルも同じ決まった度数（仮の 5°）。2つの立ち方で見られないときの線（margin）はレベルごと', () => {
+    const m = (lv: keyof typeof HUNCH_BY_LEVEL) => setup(HUNCH_BY_LEVEL[lv], null, 30).d.margin()
+    expect(m('beginner')).toBe(5)
+    expect(m('intermediate')).toBe(5)
+    expect(m('advanced')).toBe(5)
+    expect(HUNCH_BY_LEVEL.beginner.margin).toBeGreaterThan(HUNCH_BY_LEVEL.advanced.margin)
+  })
+
+  it('差が大きい人（25°）でも、線（5°）のすぐ上の猫背は、猫背としてありうる（ずれの見張りに数えない）。割合の下の端 poseIdxMin × 差 は 10°', () => {
+    const { d } = setup(HUNCH, null, 25)
+    run(d, 6, L0 + 20, () => BODY)
+    const out = run(d, L0 + 20, L0 + 200, () => d.offset!.deg + HUNCH.poseLine + 3)
+    expect(HUNCH.poseIdxMin * 25).toBeGreaterThan(HUNCH.poseLine + 3)
+    expect(out.filter((o) => o.tilt !== null && o.t > L0 + 32).every((o) => o.plausible)).toBe(true)
+    expect(out.some((o) => o.slip)).toBe(false)
+    expect(out.filter((o) => o.cue).length).toBeGreaterThan(5)
   })
 })
 

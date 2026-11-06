@@ -1,23 +1,24 @@
 import type { ReactNode } from 'react'
 import { LEVEL_LABEL, STEPS } from '../core/level'
 import { ABSENCE, BREAKDOWN, CUE, HIP_REF, LEVEL, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../core/params'
-import { BASELINE, CAM_YAW, CORRECT, FORM, FORM_SPEED, GAIT, GOOD, GOOD_SPEED, goodAt, HEAD_OPEN, HUNCH, LANDING, LIMITS, REL_LIMITS, SETUP, STRICT, STRIDE } from '../modes/camera/params'
+import { BASELINE, CAM_YAW, CORRECT, FORM, FORM_SPEED, GAIT, GOOD, GOOD_SPEED, goodAt, HEAD_OPEN, HIP_MID, HUNCH, LANDING, LIMITS, REL_LIMITS, SETUP, STRICT, STRIDE } from '../modes/camera/params'
 import { SPEED_FIT } from '../modes/sensor/params'
 import { ITEM_KEYS } from '../core/types'
 import { FORM_ORDER } from '../modes/camera/form'
 import { measure } from '../modes/camera/geometry'
 import { demoStride } from '../modes/camera/ui/figure'
 import { PHRASES } from '../core/phrases'
-import { HEAD as S_HEAD, HUNCH as S_HUNCH, HUNCH_BY_LEVEL as S_HUNCH_BY_LEVEL, POSE } from '../modes/sensor/params'
+import { HEAD as S_HEAD, HUNCH as S_HUNCH, POSE } from '../modes/sensor/params'
 
 // 2つの立ち方で、走っている間に猫背を見る仕組み（sensor/lean.ts の setPoses。数字は sensor/params.ts。どれも確かめ走の前の仮の値）
 const POSE_NOTE =
   `走っている間は、胸を開いた形（2つ目）を 0、いつもの形（1つ目）を 1 とした「猫背の割合」を見る。` +
   `走ると体ごと足首から前に傾き、それも同じ向きに出るので、走り出し${S_HUNCH.learn}秒の前傾を差し引くが、${S_HUNCH.poseCap}°までにする` +
   `（カメラ版は、カメラの上体の前傾の増え + ${S_HUNCH.poseCamSlack}°までにも抑える。カメラの上体には猫背がほとんど映らないため）。` +
-  `猫背のまま走り出しても、差し引けない分が線を越えて知らせる。線は差し引いた分 + max(今までの線 ${S_HUNCH.margin}°, 割合 ${S_HUNCH_BY_LEVEL.beginner.poseFrac}〜${S_HUNCH_BY_LEVEL.advanced.poseFrac}（初心者〜上級）× 2つの差)、頭は max(${S_HEAD.margin}°, ${S_HEAD.poseFrac} × 頭の差)。` +
+  `猫背のまま走り出しても、差し引けない分が線を越えて知らせる。胸の線は差し引いた分 + ${S_HUNCH.poseLine}°（どのレベルも同じ決まった度数。2つの差は向きと基準を決めるのに使い、線の幅には使わない。2つの差の割合で決めると、胸をよく開ける人ほど線が遠くなり、短い猫背（胸 +4〜6°）に届かなかった）、` +
+  `頭は max(${S_HEAD.poseMargin}°, ${S_HEAD.poseFrac} × 頭の差)。` +
   `${S_HUNCH.hold}秒続いたら震わせ、続けて${S_HUNCH.poseBackoffAfter}回のあとは${S_HUNCH.poseBackoffEvery}秒ごとに知らせ直す。` +
-  `線を越えた向きが猫背としてありうる（割合 ${S_HUNCH.poseIdxMin}〜${S_HUNCH.poseSlipIdx}、横の傾きが小さい）間は、センサーのずれとはみなさず黙らない（横に回った・大きすぎるときは今までどおりずれとみなす）。` +
+  `線を越えた向きが猫背としてありうる（猫背の向きに沿った傾きが「2つの差 × ${S_HUNCH.poseIdxMin} と線の幅の小さいほう」〜「2つの差 × ${S_HUNCH.poseSlipIdx}」、横の傾きが小さい）間は、センサーのずれとはみなさず黙らない（横に回った・大きすぎるときは今までどおりずれとみなす）。` +
   `2つの差が小さい人（例：差 8°・体ごとの前傾 5°）は、猫背のまま走り出すと知らせられない。`
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
@@ -53,7 +54,7 @@ const DRIFT = {
   head: `今日の基準から頭が前に出た量（首の角度の増えと、頭の位置の増えの、小さいほう）が +${LIMITS.head.cue}°`,
   trunk: `今日の基準から +${REL_LIMITS.trunk.cue}°（前かがみ）／−${REL_LIMITS.trunkBack.cue}°（起きすぎ）`,
   body: `今日の基準から +${REL_LIMITS.body.cue}°（倒れすぎ）／−${REL_LIMITS.bodyBack.cue}°（体が後ろに残る）`,
-  hip: `今日の基準の腰の高さから ${LIMITS.hip.cue}% 下がった（脚の長さに対する割合）`,
+  hip: `今日の基準の腰の高さ（立脚中期）から ${LIMITS.hip.cue}% 下がった（立脚側の脚の長さに対する割合）`,
   landing: `今日の基準より、かかとが脚の長さの ${p0(LIMITS.landing.cue)} 前に着いた（${LANDING.window}秒の中央値。測り方は 13）`,
 } as const
 
@@ -226,6 +227,12 @@ export function Logic() {
         <Row>
           研究データ（16人）で、ふつうに走ったときの上体の傾きは人により0.6〜8.8°とばらばらだが、わざと前に倒すと平均7.5°増えた（15人は約6〜13°）。決まった線だけでは、もともと前傾の大きい人の崩れ（線の内側での増え）を見逃すので、整えた形からの増え方でも見る。
           トレッドミルで撮った人の動画で、作者が「上体が起きている」「ブレーキ」「腰落ち」と言う走りは、よい例より上体が5.7〜9.4°、体全体が3.6〜9.0°後ろだった。起きすぎ（後ろ側）は、歩くと上体も体全体も起きるので、歩数で走っていた秒だけ判定する。
+        </Row>
+        <Row>
+          腰の高さは、立脚中期のコマだけで測る：画面で低いほうの足首が腰の中心の真下（前後に脚の長さの{HIP_MID.dx}未満）にあり、もう一方の足首が脚の長さの{HIP_MID.sep}より高く浮いているコマの、腰の中心から立脚側の足首までの高さ ÷ 立脚側の脚の長さ（腰→膝 + 膝→足首）。
+          浮いている（両足が地面から離れた）コマも混ぜて平均すると、弾んでよく走るほど低く出て、腰落ちと逆の向きになった（人の動画の腰落ちの悪い例とよい例12組で、悪い例が2%以上低かったのは、混ぜた平均で3組、立脚中期だけで10組）。
+          その秒に立脚中期のコマが{HIP_MID.minFrames}つもない秒、スマホの向きが真横から{HIP_MID.yawMax}°より離れていると見積もった秒、歩数で走っていない秒は、腰を判定しない。高さ ÷ 脚の長さが{HIP_MID.hipMax}を越えたコマ（映り方のくずれ）は使わない。
+          1秒に1〜2コマしかなく揺れが大きいので、1秒ごとの値は0で切らずに平均する。立脚側の膝の曲がりも測って記録するが、{HIP_MID.kneePct > 0 ? `その増え × ${HIP_MID.kneePct} が腰の下がりより大きければ、そちらで見る` : 'いまは判定に使わない（1秒に1〜2コマの膝の曲がりは揺れが大きく、自分の記録で外れた声が増えた）'}。骨盤の傾きそのものは、横からの点では測れない。数字はどれも仮の値。
         </Row>
         <Row>
           着地は、1秒ごとに平均するのではなく、直近{LANDING.window}秒の、手前の脚の山（1歩おき）の中央値と、今日の基準の差で見る（手前の脚の山が{LANDING.minSteps}歩以上あるときだけ。仮想実験で、6秒の中央値では、ふつうに走っても10分に約1.5回の誤った声が出た）。基準より{sp0(LIMITS.landing.cue)}で、ふつうに走る10分あたりの誤った声は約0.1回（研究データ185本）、同じ速さでピッチを約10%下げた人の半分あまりに声が出た。

@@ -4,7 +4,7 @@ import { category } from '../../core/scoring'
 import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
-import { applySpeed, applyStrictness, FORM, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
+import { applySpeed, applyStrictness, CAM_YAW, FORM, HIP_MID, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
 import type { Level } from '../../core/level'
 import { CUE as CUE_P } from '../../core/params'
 import { RunningGate } from './motion'
@@ -48,9 +48,11 @@ type Ref = { neck: number; trunk: number; body: number; headLean: number; yaw: n
 const REF_KEYS = ['neck', 'trunk', 'body', 'headLean', 'yaw', 'chin'] as const
 
 // 今日の基準にためる値：項目ごとに、その項目が正しいフォームの線の内側にいた秒だけ（in）と、走っていた秒のすべて（all）。
-// 腰は、体全体と上体の両方が線の内側にいた秒（整えた形）。着地は、その秒に振り分けた山と速さの目安（着地の線の内側にいた秒だけと、すべて）
+// 腰は、体全体と上体の両方が線の内側にいた秒（整えた形）で、立脚中期のコマで測れた秒だけ（hipOf）。着地は、その秒に振り分けた山と速さの目安（着地の線の内側にいた秒だけと、すべて）
 type Steps = { peaks: Peak[]; sv: number[]; secs: number }
-type Pool = { in: Record<FormGroup, FormValues[]>; all: FormValues[]; hipIn: number[]; hipAll: number[]; yaw: number[]; chin: number[]; landIn: Steps; landAll: Steps }
+// 腰：立脚中期のコマの、腰の高さ ÷ 立脚側の脚の長さ（hip）と立脚側の膝の曲がり（knee、度）の1秒の平均
+type Hip = { hip: number; knee: number }
+type Pool = { in: Record<FormGroup, FormValues[]>; all: FormValues[]; hipIn: Hip[]; hipAll: Hip[]; yaw: number[]; chin: number[]; landIn: Steps; landAll: Steps }
 const emptySteps = (): Steps => ({ peaks: [], sv: [], secs: 0 })
 const emptyPool = (): Pool => ({ in: { body: [], landing: [], trunk: [], head: [] }, all: [], hipIn: [], hipAll: [], yaw: [], chin: [], landIn: emptySteps(), landAll: emptySteps() })
 const addSteps = (p: Steps, s: { peaks: Peak[]; sv: number[] }) => {
@@ -67,19 +69,38 @@ const earlyDrift = () => {
 }
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
+const meanHip = (xs: Hip[]): Hip | null => (xs.length ? { hip: mean(xs.map((x) => x.hip)), knee: mean(xs.map((x) => x.knee)) } : null)
+
+// その秒の腰（params.ts の HIP_MID）：立脚中期のコマ（geometry の midstance）の平均。立脚中期のコマが minFrames に足りない秒、
+// 見積もったスマホの向きが真横から yawMax（度）よりずれた秒は、測らない（null。判定せず、基準にもためない）。
+// 腰の高さ ÷ 立脚側の脚の長さ が hipMax を越えたコマ（映り方のくずれ）は使わない
+export function hipOf(b: Measure[]): (Hip & { n: number }) | null {
+  if (!b.length || Math.abs(mean(b.map((m) => m.yaw)) / CAM_YAW.perDeg) > HIP_MID.yawMax) return null
+  const ms = b.flatMap((m) => (m.mid && m.mid.hip <= HIP_MID.hipMax ? [m.mid] : []))
+  if (ms.length < HIP_MID.minFrames) return null
+  return { ...meanHip(ms)!, n: ms.length }
+}
+
+// 腰落ち（%）：今日の基準からの、腰の高さの下がり（%）と、膝の曲がりの増え（度）× HIP_MID.kneePct の、大きいほう（kneePct が 0 なら腰の高さだけ）。
+// 1秒ごとに0で切らない（立脚中期のコマは1秒に1〜2つで揺れが大きく、切ると揺れの正の側だけが残って、窓の平均が実際より大きく出るため。頭と同じ）
+export function hipDropOf(ref: Hip, now: Hip): number {
+  const h = ((ref.hip - now.hip) / ref.hip) * 100
+  return HIP_MID.kneePct > 0 ? Math.max(h, (now.knee - ref.knee) * HIP_MID.kneePct) : h
+}
+
 const meanOf = (xs: FormValues[]): FormValues => ({ trunk: mean(xs.map((x) => x.trunk)), body: mean(xs.map((x) => x.body)), neck: mean(xs.map((x) => x.neck)), headLean: mean(xs.map((x) => x.headLean)) })
 
 // 今日の基準にためる1秒（走り出しに作るときと、速さが変わって作り直すときに使う）
-function addSecond(p: Pool, form: FormStage, t: number, v: FormValues, hipRatio: number, yaw: number, chin: number, steps: { peaks: Peak[]; sv: number[] }) {
+function addSecond(p: Pool, form: FormStage, t: number, v: FormValues, hip: Hip | null, yaw: number, chin: number, steps: { peaks: Peak[]; sv: number[] }) {
   p.all.push(v)
-  p.hipAll.push(hipRatio)
+  if (hip) p.hipAll.push(hip)
   p.yaw.push(yaw)
   p.chin.push(chin)
   addSteps(p.landAll, steps)
   const ins = form.holdInside(t)
   if (ins) {
     for (const g of FORM_ORDER) if (ins[g] && !form.waiting(g)) p.in[g].push(v)
-    if (ins.body && ins.trunk) p.hipIn.push(hipRatio)
+    if (ins.body && ins.trunk && hip) p.hipIn.push(hip)
     if (ins.landing && !form.waiting('landing')) addSteps(p.landIn, steps)
   }
 }
@@ -91,13 +112,14 @@ function postureRefOf(p: Pool, form: FormStage) {
   const typical = { ...meanOf(p.all), yaw: mean(p.yaw) }
   const at = (g: FormGroup) => (!form.judged(g) ? typical : p.in[g].length >= FORM.refMin ? meanOf(p.in[g]) : clampInside(g, typical))
   const head = at('head')
-  return { lean: { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body }, hip: p.hipIn.length >= FORM.refMin ? mean(p.hipIn) : mean(p.hipAll) }
+  return { lean: { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body }, hip: p.hipIn.length >= FORM.refMin ? meanHip(p.hipIn) : meanHip(p.hipAll) }
 }
 
 class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   items = CAMERA_ITEMS
 
-  private hipRef: number | null = null
+  // 腰の今日の基準（立脚中期の腰の高さと膝の曲がり）。立脚中期のコマで測れた秒がなければ null（腰は判定しない）
+  private hipRef: Hip | null = null
   // 今日の基準：首の角度・上体・体全体の傾き、頭の位置そのもの、スマホの向き、顎。整えたあとの形（正しいフォームの線の内側にいた秒）の平均
   private pool = emptyPool()
   leanRef: Ref | null = null
@@ -193,7 +215,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const now = Object.fromEntries(REF_KEYS.map((k) => [k, mean(b.map((m) => m[k]))])) as Ref
     const { neck, headLean, trunk, body, yaw } = now
     const v: FormValues = { trunk, body, neck, headLean, yaw }
-    const hipRatio = mean(b.map((m) => m.hipRatio))
+    // 腰：立脚中期のコマだけで測る（測れない秒は null。hipOf）
+    const hip = hipOf(b)
     const rt = this.runFrom === null ? null : t - this.runFrom
 
     // 速さの見張り（landing.ts の SpeedGuard、着地と同じもの）：基準ができたあとは、先に着地を比べて、この秒に速さが外れているかを決める。
@@ -231,7 +254,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
       } else if (c === 'same') {
         // 仮の基準から崩れている間（直近 CUE.window 秒の平均が線を越えた）は、ためない
         if (this.earlyRef) this.noteRecent(t, relValues(v, this.earlyRef, true))
-        if (!this.earlyRef || !this.recentOver(REL_KEYS)) addSecond(this.pool, this.form, t, v, hipRatio, yaw, now.chin, steps)
+        if (!this.earlyRef || !this.recentOver(REL_KEYS)) addSecond(this.pool, this.form, t, v, hip, yaw, now.chin, steps)
         if (!this.earlyRef && this.pool.all.length >= FORM.early) this.earlyRef = postureRefOf(this.pool, this.form).lean
       }
     }
@@ -256,7 +279,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     }
     // 速さが変わったあとの姿勢の基準：新しい速さで、速さが外れていない、歩数で走っていた秒をためる（スマホの向きと顎の基準はそのまま）
     if (this.repool && stepping && !away) {
-      addSecond(this.repool, this.form, t, v, hipRatio, yaw, now.chin, steps)
+      addSecond(this.repool, this.form, t, v, hip, yaw, now.chin, steps)
       if (this.repool.all.length >= LANDING.rebuild) {
         const r = postureRefOf(this.repool, this.form)
         this.leanRef = { ...this.leanRef!, ...r.lean }
@@ -268,7 +291,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const paused = hadRef && (away || this.repool !== null)
     // 今日の基準ができるまでは、仮の基準と比べる（速さが外れていない、ためている秒だけ）
     const ref = this.leanRef ?? (poolSame ? this.earlyRef : null)
-    const hipDrop = this.hipRef ? Math.max(0, ((this.hipRef - hipRatio) / this.hipRef) * 100) : 0
+    const hipDrop = this.hipRef && hip ? hipDropOf(this.hipRef, hip) : 0
     // 頭は、今日の基準との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
     const head = ref ? headForward(neck - ref.neck, headLean - ref.headLean) : 0
     // 着地：窓（細かく見ていれば16秒、間引いて見ている間は30秒）の、基準と同じ脚の山の中央値と基準の差。歩数で走っていた秒だけ。
@@ -294,7 +317,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
       const rv = relValues(v, ref, stepping)
       hunch = rv.hunch
       Object.assign(values, rv)
-      if (this.hipRef) values.hip = hipDrop
+      // 腰は、立脚中期のコマで測れた、歩数で走っていた秒だけ（立脚中期の見分けは走りのもの。歩くと両足が着いている間が長く、膝の使い方も違う）
+      if (this.hipRef && hip && stepping) values.hip = hipDrop
     }
     // 点数は、猫背が線を越えている間も、上体と頭を数える。声は、猫背が線を越えている間（直近 CUE.window 秒の平均）は猫背だけにする
     // （背中が丸まると上体も頭も前に出るので、「前かがみ」「頭が前」を重ねて言わない。胸を開けば両方戻る）
@@ -328,6 +352,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const chin = this.leanRef ? now.chin - this.leanRef.chin + (trunk - this.leanRef.trunk) : undefined
     const sample: Sample = { t, head, trunk, body, hipDrop, score: score ?? 100, quiet: ctx.quiet, judge, back, headLean, neck, yaw, form, chin }
     if (hunch !== undefined) sample.hunch = hunch
+    if (hip) sample.hipMid = { hip: Math.round(hip.hip * 1000) / 1000, knee: Math.round(hip.knee * 10) / 10, n: hip.n }
     if (paused) sample.paused = true
     if (noRoll) sample.noRoll = true
     if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }
@@ -559,7 +584,7 @@ export function judged(s: Sample, k: ItemKey): number {
   const f = s.form?.[k] ?? -Infinity
   if (k === 'landing') return Math.max(f, s.land?.drift ?? -Infinity)
   if (s.paused) return f
-  if (k === 'hip') return s.hipDrop
+  if (k === 'hip') return s.hipMid ? s.hipDrop : -Infinity
   if (k === 'hunch') return s.hunch ?? -Infinity
   if (k === 'head') return Math.max(f, s.judge ? s.head : -Infinity)
   if (k === 'trunkBack') return Math.max(f, s.back?.trunk ?? -Infinity)

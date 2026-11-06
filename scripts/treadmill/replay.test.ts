@@ -70,7 +70,8 @@ describe('トレッドミルの採点：走り始めの基準と「走ってい�
     const avg = (n: string) => inRef.reduce((a, row) => a + row[cols.indexOf(n)], 0) / inRef.length
     expect(Math.abs(ref.trunk - avg('trunk'))).toBeLessThan(0.2)
     expect(Math.abs(ref.body - avg('body'))).toBeLessThan(0.2)
-    expect(Math.abs(ref.hipRatio! - avg('hipRatio'))).toBeLessThan(0.005)
+    // 腰は、骨格の点（小数1桁に丸めて記録）から測り直した立脚中期の値なので、記録の hipRatio の列（浮いたコマも含めた前の測り方）とは少しずれる
+    expect(Math.abs(ref.hipRatio! - avg('hipRatio'))).toBeLessThan(0.01)
   })
 
   it('running: steps は、歩数で走っているコマだけを走っているとする（その場で走るフリの見分けを切ったとき）', () => {

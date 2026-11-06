@@ -68,11 +68,14 @@ export interface LeanParams {
   camMin: number
   // 2つの立ち方（いつもの楽な立ち方 a と、胸を開いた立ち方 b）で見る（lean.ts の setPoses。下の POSE の説明）。すべて仮の値（確かめ走で決める）
   poseMin: number // a と b の向きの差（度）がこれより小さければ、姿勢を変えられていないとみて測り直す（使い切ったら今までの見方）
-  poseFrac: number // 猫背の割合（b ＝ 0、a ＝ 1）がこれを越えたら崩れ。線は b からの「走りの前傾の分 + poseFrac × a と b の差」。ただし margin より狭くはしない
+  poseLine: number // 線の幅（度、決まった値）。b から b→a の向きに沿って「差し引いた走る前傾 + poseLine」を越えたら崩れ。0 なら下の poseFrac で決める（頭）
+  poseFrac: number // poseLine が 0 のとき：猫背の割合（b ＝ 0、a ＝ 1）がこれを越えたら崩れ。線は b からの「走りの前傾の分 + poseFrac × a と b の差」。ただし margin（poseMargin）より狭くはしない
   poseCap: number // 走り出しの前傾として差し引くのは、b からこれ（度）まで（猫背のまま走り出しても、猫背を基準にしないため）
   poseCamSlack: number // カメラ版：差し引く前傾は、カメラの上体の前傾の増え（b の立ち姿勢から）+ これ（度）まで
   // ずれと猫背の見分け（2つの立ち方で見るときだけ）：線を越えている向きが猫背としてありうる間は、ずれの見張り（slipSec）に数えない。
-  //   ありうる：猫背の割合（差し引いた走る前傾を除く。b ＝ 0、a ＝ 1）が poseIdxMin〜poseSlipIdx で、b→a と直角な横の傾きが max(poseSlipSide, poseSlipSideFrac × 差) 以下
+  //   ありうる：b→a の向きに沿った傾き（差し引いた走る前傾を除く）が min(poseIdxMin × 差, 線の幅)〜poseSlipIdx × 差 で、b→a と直角な横の傾きが max(poseSlipSide, poseSlipSideFrac × 差) 以下。
+  //   下の端を線の幅までにするのは、線を決まった度数（poseLine）にしたので、差が大きい人（差 25° で 0.4 × 25 = 10°）は、線（5°）を越えても割合が poseIdxMin に届かず、
+  //   猫背なのにずれの見張りに数えてしまうため
   poseIdxMin: number
   poseSlipIdx: number
   poseSlipSide: number
@@ -120,6 +123,7 @@ const LEAN = {
   camRef: 60,
   camMin: 20,
   poseMin: 5,
+  poseLine: 0,
   poseFrac: 0.5,
   poseCap: 10,
   poseCamSlack: 5,
@@ -149,9 +153,13 @@ const LEAN = {
 //   走ると体ごと足首から前に傾き、それも同じ向きに出る。そこで、走り出しの前傾（b から猫背の向きに沿って）を基準として差し引くが、
 //     poseCap 度までにする（猫背のまま走り出したら、差し引けない分が線を越えて知らせる）。カメラ版は、カメラの上体の前傾の増え + poseCamSlack 度までにも抑える
 //     （カメラの上体は猫背をほとんど映さないので、カメラの増えはおもに体ごとの前傾）。
-//   知らせる線 ＝ 基準 + max(margin, poseFrac × a と b の差)。margin（今までの線）より狭くしない（外れた声を増やさない）。
-//   猫背のまま走り出したときに知らせる条件：a と b の差 + 体ごとの前傾 > poseCap + max(margin, poseFrac × 差)。
-//     例：差 15°・体ごと 8° → 23 > 10 + 7.5。差 8°・体ごと 5° → 13 < 10 + 5.5 で知らせない（差が小さい人には効きにくい）
+//   知らせる線（胸）＝ 基準 + poseLine（5°、どのレベルも。2026-11-06 本人の決め「比率じゃなくて絶対値で…5度」。仮の値）。
+//     a と b の差は、猫背の向き（b→a）と、基準（b）を決めるのに使い、線の幅には使わない。
+//     前は 基準 + max(margin, poseFrac × 差)（poseFrac 初心者 0.6・中級 0.5・上級 0.4）で、胸をよく開ける人ほど線が遠くなった（差 25° の上級で 10°）が、
+//     短いわざとの猫背で胸が動くのは +4〜6°（記録の確かめ走）で、それでは届かなかった。
+//     ふつうの走りの揺れ：11-05 の胸は1秒ごとに基準から ±3〜4° 動く（線 5° をふつうの走りでどれだけ越えるかは docs/sensor-mode.md の「2つの立ち方」）
+//   猫背のまま走り出したときに知らせる条件：a と b の差 + 体ごとの前傾 > poseCap + poseLine。
+//     例：差 15°・体ごと 8° → 23 > 10 + 5。差 8°・体ごと 5° → 13 < 10 + 5 で知らせない（差が小さい人には効きにくい。差し引く上限 poseCap は変えていない）
 //   a と b の差が poseMin 度より小さいとき：もう一度、案内して測る（POSE.retries 回まで）。それでも小さければ、b を立った姿勢として今までの見方
 //     （走り出しの前傾 + margin）にもどし、記録に fallback と残す。頭は、頭の差が小さければ、頭だけ今までの見方（頭の margin のまま）
 //   ずれと猫背の見分け：線を越えた向きが b→a に沿っていて、猫背の割合が 0.4〜1.8・横の傾きが max(8°, 0.6 × 差) 以下なら猫背としてありうるので、
@@ -162,7 +170,7 @@ const LEAN = {
 //   これらはすべて仮の値（猫背の割合 1.8 は、走って猫背が立ったときの猫背より少し深くなっても数えないように、横 8° は記録の立った3秒の揺れ 3° の倍より上）
 //   poseMin 5（胸）：姿勢を本当に変えたかを見るだけの値。記録5本の立った3秒の中で、1秒ずつの胸の向きは3秒の平均から 0.8〜3.1° 動いた。
 //     頭は 0.9〜10.5°（11-03 は頭を動かしていた）と揺れが大きいので、頭は 8（HEAD）。どちらも仮の値
-//   poseFrac：中級 0.5（a と b のまん中）、初心者 0.6・上級 0.4（カメラの猫背の線と同じく、レベルで厳しさを変える）。頭は 0.5
+//   poseFrac：頭だけ 0.5（a と b のまん中。頭は poseLine 0）。胸は poseLine を使うので使わない（前は 初心者 0.6・中級 0.5・上級 0.4）
 //   poseCap 10：記録5本で、カメラの上体の前傾は 立つ → 走る（真ん中）で +8.1〜+10.9° 増えた（体ごと前に傾く分の目安）。
 //     胸の走る前傾（立った姿勢から、走り出し30秒）は 6.3〜22.6° と幅があり、付け方のずれや猫背も入るので、カメラの増えに近い 10 にした
 //   poseCamSlack 5：胸の走る前傾 − カメラの上体の増え は、記録4本で −2〜+12°（ずれのあった 11-02 20:23 が +12）。その真ん中あたり
@@ -178,7 +186,7 @@ export const POSE = {
 // slipDrift 8：20:23 の走りで 500秒、2026-11-03 15:08 の走り（胸のセンサーがずれて、715秒から傾きが +12° 前後のまま。上体は 3〜6°）で 851秒に、
 // ずれとみなす（線を下げたいまは、15:08 は約795秒で、線を越えていた時間 slipSec で）。ふつうに走っている間の基準の動きは、15:08 の前半で +4° まで、
 // 2026-11-04 の走り（32分）で 12.9° → 19.5°（約 +6.5°。npm run replay:sensor）。それより小さくすると、ふつうの走りの基準の動きでずれとみなしてしまうので、線を下げても 8° のまま
-// margin（線）はレベルごと（下の HUNCH_BY_LEVEL。カメラの猫背の線 camera/params.ts の STRICT と同じく、初心者 やさしめ・上級 きびしめ）。
+// margin（線。2つの立ち方で見られなかったときの今までの見方の線。2つの立ち方で見るときは poseLine）はレベルごと（下の HUNCH_BY_LEVEL。カメラの猫背の線 camera/params.ts の STRICT と同じく、初心者 やさしめ・上級 きびしめ）。
 //   カメラが「背中が丸まっています」と言ったときに胸も震えるように、カメラ寄りに決めた（2026-11-04、本人「カメラはもともと甘いので、センサーはカメラ側に寄せたい」）。
 //   記録した3本をコーチと胸の見分けに通し直した（sim/chest-camera.sim.ts、結果は sim/result-chest-camera.md）：
 //   ・カメラの猫背（6秒平均）と胸の増えは、わざとの猫背のある 11-03 で 相関 0.61・胸 ≈ 1.9 + 1.36 × カメラ。カメラの線 4°・3.5°・3° は胸の +7.3°・+6.7°・+6.0° にあたり、
@@ -194,9 +202,9 @@ export const POSE = {
 //   +20° より大きく傾いて知らせるときだけ1秒待つ（ふつうの猫背の知らせ 24°・+10° 前後は待たない）
 // HUNCH は、レベルが分からないときの線（中級＝カメラの既定 DEFAULT_STRICT と同じ）
 export const HUNCH_BY_LEVEL: Record<Level, LeanParams> = {
-  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseFrac: 0.6 },
-  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseFrac: 0.5 },
-  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseFrac: 0.4 },
+  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5 },
+  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5 },
+  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5 },
 }
 export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 
