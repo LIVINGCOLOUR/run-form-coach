@@ -78,7 +78,7 @@ describe('つなぐ（SensorHub）', () => {
   })
 
   it('ほかの枠のセンサーを選んだら、そちらへつなぎ、押した枠には知らせる', async () => {
-    const head = at('RFC-IMU-1')
+    const head = at(SLOTS.find((s) => s.place === '頭')!.name!)
     const chest = at('RFC-IMU-2')
     vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => fakeDevice('AdaDFU', 'RFC-IMU-2') } })
     await sensors.connect(head)
