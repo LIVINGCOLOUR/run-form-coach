@@ -33,8 +33,14 @@ export function toMeasure(e: MotionLike, t: number): PhoneMeasure | null {
 
 export type MotionPermission = 'granted' | 'denied' | 'unsupported'
 
-// iPhone では、押したとき（タップの流れの中）に許可を求める。許可の仕組みがない端末はそのまま使える
+// iPhone では、押したとき（タップの流れの中）に許可を求める。許可の仕組みがない端末はそのまま使える。
+// 最後に求めた結果は motionPermission に残す（センサーランの腰のスマホが、記録に残す。waist.ts）
+export let motionPermission: MotionPermission | null = null
 export async function requestMotionPermission(): Promise<MotionPermission> {
+  motionPermission = await askMotion()
+  return motionPermission
+}
+async function askMotion(): Promise<MotionPermission> {
   if (typeof window === 'undefined' || !('DeviceMotionEvent' in window)) return 'unsupported'
   const DME = (window as unknown as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } }).DeviceMotionEvent
   try {

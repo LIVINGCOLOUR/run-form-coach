@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { MotionGate, windowStats } from './gate'
-import { HEAD, HUNCH, POSE, RUN_GATE, SLOTS, STILL } from './params'
+import { HEAD, POSE, RUN_GATE, SLOTS, STILL } from './params'
 import type { Packet, Vec3 } from './parse'
 import { sensors } from './ble'
 import { SensorRunner } from './runner'
+import { expectedChest } from './expect'
+import { WaistPhone } from './waist'
+import type { MotionLike } from '../phone/sensor'
 import { sensorRunCounts } from './runLog'
 import { PHRASES } from '../../core/phrases'
 import type { RunLog } from '../../core/types'
@@ -203,7 +206,7 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     const log = r.finish()!
     expect(log.stand).toBeDefined()
     expect(log.runLean).toBeDefined()
-    // 2つの立ち方の記録：向き・角度・見方。走る前傾のうち差し引いた分（走る 12° は poseCap より大きいので poseCap）
+    // 2つの立ち方の記録：向き・角度・見方。差し引いた分（その速さで正しい胸の前傾）
     expect(log.pose).toMatchObject({ mode: 'pose', tries: 1 })
     expect(Math.abs(log.pose!.deg! - SLOUCH)).toBeLessThan(1.5)
     expect(log.pose!.a).toHaveLength(3)
@@ -341,13 +344,52 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     send('胸', 'hunch', t, 70, r)
     const log = r.finish()!
     expect(log.runLean!.deg).toBeGreaterThan(25)
-    expect(log.runLean!.offset).toBe(HUNCH.poseCap)
+    // 差し引くのは、その速さで正しい胸の前傾（ベルトの速さも足首もないので、講師の速さのよい例）。走り出しの 30° にはよらない
+    expect(log.runLean).toMatchObject({ offset: expectedChest().deg, by: 'speed', kmh: null, speedBy: 'none' })
     return new Promise<void>((done) =>
       setTimeout(() => {
         expect(log.cues.length).toBeGreaterThan(3)
         done()
       }, 0),
     )
+  })
+
+  it('トレッドミルでベルトの速さを入れたら、胸の正しい前傾はその速さのよい例から決める。腰のスマホの向きも、2つの立ち方とあわせて記録する', () => {
+    connect(['胸'])
+    const events: string[] = []
+    // 腰のスマホ：胸と同じく、a で前へ 6°・b でまっすぐ、走ると前へ 4°（スマホの軸の重力の向き。m/s² の大きさは向きに効かない）
+    let emit: (e: MotionLike) => void = () => {}
+    let waistDeg = 0
+    let now = performance.now() / 1000
+    const waist = new WaistPhone((_t, text) => events.push(text), (cb) => ((emit = cb), () => {}), () => now)
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text), say: () => {}, belt: () => 9, waist })
+    const g = (deg: number) => ({ accelerationIncludingGravity: { x: 9.8 * Math.sin((deg * Math.PI) / 180), y: 0, z: 9.8 * Math.cos((deg * Math.PI) / 180) }, rotationRate: null })
+    // 胸の値が届くたび（0.1秒ごと）に、腰のスマホの値を6件（60回/秒）
+    const offPkt = sensors.onPacket((_n, t) => {
+      for (let i = 1; i <= 6; i++) {
+        now = t - 0.1 + i / 60
+        emit(g(waistDeg))
+      }
+    })
+    let t = performance.now() / 1000
+    waistDeg = 6
+    t = sendUntil('胸', 'slouch', t, r, () => r.stage === 'b')
+    waistDeg = 0
+    t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null)
+    waistDeg = 4
+    send('胸', 'hunch', t, 70, r)
+    offPkt()
+    const log = r.finish()!
+    expect(log.runLean).toMatchObject({ offset: expectedChest(9).deg, by: 'speed', kmh: 9, speedBy: 'belt' })
+    expect(events.some((e) => /^sensor:runLean .* speed 9 belt/.test(e))).toBe(true)
+    expect(log.waist).toMatchObject({ mode: 'pose' })
+    expect(log.waist!.deg!).toBeCloseTo(6, 0)
+    expect(events).toContain('waist: on')
+    const iw = log.secCols!.indexOf('waist')
+    const ih = log.secCols!.indexOf('wHz')
+    const last = log.sec!.filter((row) => row[iw] !== null).pop()!
+    expect(last[iw]!).toBeCloseTo(4, 0)
+    expect(last[ih]!).toBeGreaterThan(0)
   })
 
   it('頭だけ：いつもの頭（前へ15°）と顎を引いた頭で測り、前に出たまま走り出すと走る前傾を覚える前から震わせ、直すとほめる（声は出さない）', () => {

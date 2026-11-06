@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { parseBattery, parsePacket, type Vec3 } from './parse'
 import { HeadYield, LeanDetector, type LeanStep } from './lean'
+import { expectedChest } from './expect'
+import { goodAt } from '../camera/params'
 import { batteryPercent } from './battery'
 import { decodeBlock, nodeHz, SensorRecorder } from './log'
-import { HEAD, HEAD_YIELD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG } from './params'
+import { CHEST_EXPECT, HEAD, HEAD_YIELD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG } from './params'
 import { slipNotes } from './slipText'
 import type { RunLog } from '../../core/types'
 import { CUE as CUE_P } from '../../core/params'
@@ -715,13 +717,15 @@ describe('結果の画面の「センサーがずれたようです」', () => {
 })
 
 // 2つの立ち方（lean.ts の setPoses、params.ts の POSE）。a：いつもの楽な立ち方（猫背）、b：胸を開いた立ち方。
-// ここでは b を 0°、a を前へ 15° とし、走ると体ごと 8° 前に傾く（猫背のままなら 15 + 8 = 23°）
+// ここでは b を 0°、a を前へ 15° とし、走ると体ごと 8° 前に傾く（猫背のままなら 15 + 8 = 23°）。
+// 胸の、その速さで正しい前傾（expect。session.ts が速さから決める）も 8°（体ごとの前傾）とする
 describe('2つの立ち方で猫背を見る', () => {
   const A = 15
   const BODY = 8
   // 0〜3秒 a、3〜6秒 b で立ち、6秒で決める。cam があれば、b のときのカメラの上体を渡す
   const setup = (p = HUNCH, camB: number | null = null, a = A) => {
     const d = new LeanDetector(p)
+    if (p.poseSpeed) d.expect = () => ({ deg: BODY, trunk: 6, kmh: 9, by: 'belt' })
     play(d, 0, 3, () => a, () => false)
     const da = d.dirOver(3, 3)!
     play(d, 3, 6, () => 0, () => false)
@@ -758,13 +762,13 @@ describe('2つの立ち方で猫背を見る', () => {
     expect(d.base).toBeNull()
   })
 
-  it('猫背のまま走り出しても知らせる（走る前傾は poseCap までしか差し引かない）。今までの見方では知らせなかった', () => {
+  it('猫背のまま走り出しても知らせる（胸の基準は、その速さで正しい前傾。走り出しの前傾にはよらない）。今までの見方では知らせなかった', () => {
     const { d } = setup()
     const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => A + BODY)
     const learned = out.find((o) => o.learned !== undefined)!
     expect(learned.learned!).toBeCloseTo(A + BODY, 0)
-    expect(learned.offset!).toBeCloseTo(HUNCH.poseCap, 5)
-    expect(d.offset!.by).toBe('cap')
+    expect(learned.offset!).toBe(BODY)
+    expect(d.offset).toMatchObject({ by: 'speed', kmh: 9, speedBy: 'belt' })
     expect(out.filter((o) => o.cue && o.t > learned.t).length).toBeGreaterThan(3)
     // 今までの見方（b を立った姿勢、走り出しの前傾 + margin）：猫背を基準にして知らせない
     const old = new LeanDetector(HUNCH)
@@ -776,34 +780,39 @@ describe('2つの立ち方で猫背を見る', () => {
   it('胸を開いたまま走れば（体ごとの前傾だけ）知らせない。そこから猫背になれば知らせる', () => {
     const { d } = setup()
     const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => BODY)
-    expect(out.find((o) => o.learned !== undefined)!.offset!).toBeCloseTo(BODY, 0) // poseCap より小さいので、そのまま差し引く
-    expect(d.offset!.by).toBe('sensor')
+    expect(out.find((o) => o.learned !== undefined)!.offset!).toBe(BODY)
+    expect(d.offset!.by).toBe('speed')
     expect(out.some((o) => o.cue)).toBe(false)
     const t0 = 6 + HUNCH.skip + HUNCH.learn + 30
     expect(run(d, t0, t0 + 10, () => A + BODY).some((o) => o.cue)).toBe(true)
   })
 
-  it('体ごとの前傾が大きくても、poseCap + 線の幅の内なら知らせない。越えると知らせる（体ごとの前傾と猫背は分けられない）', () => {
-    const line = HUNCH.poseCap + HUNCH.poseLine
+  it('正しい前傾 + 線の幅の内なら知らせない。越えると知らせる（体ごとの前傾と猫背は分けられない）', () => {
+    const line = BODY + HUNCH.poseLine
     for (const [lean, cue] of [[line - 1, false], [line + 2, true]] as const) {
       const { d } = setup()
       expect(run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => lean).some((o) => o.cue)).toBe(cue)
     }
   })
 
-  it('カメラ版：カメラの上体の増えが小さければ、差し引く分をそれ + poseCamSlack までに抑える', () => {
+  it('カメラ版でも、胸の基準はその速さで正しい前傾（カメラの上体の増えは記録に残すだけ）', () => {
     // b のときのカメラの上体 −4°。走り出しでカメラの上体は +2°（増え 6°）だが、胸は猫背のまま 23°
     const { d } = setup(HUNCH, -4)
     const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => A + BODY, () => ({ trunk: 2, head: 40 }))
-    const want = Math.min(HUNCH.poseCap, 6 + HUNCH.poseCamSlack)
-    expect(out.find((o) => o.learned !== undefined)!.offset!).toBeCloseTo(want, 3)
-    expect(d.offset!.by).toBe(want < HUNCH.poseCap ? 'camera' : 'cap')
+    expect(out.find((o) => o.learned !== undefined)!.offset!).toBe(BODY)
+    expect(d.offset!.by).toBe('speed')
     expect(d.offset!.cam!).toBeCloseTo(6, 3)
     expect(out.some((o) => o.cue)).toBe(true)
-    // カメラの値がなければ、センサーランと同じ（poseCap まで）
-    const s = setup(HUNCH, -4).d
-    run(s, 6, 6 + HUNCH.skip + HUNCH.learn + 1, () => A + BODY)
-    expect(s.offset!.by).toBe('cap')
+  })
+
+  it('速さを渡す口がなければ、講師の速さのよい例で決める（expectedChest()）', () => {
+    const d = new LeanDetector(HUNCH)
+    play(d, 0, 3, () => A, () => false)
+    const da = d.dirOver(3, 3)!
+    play(d, 3, 6, () => 0, () => false)
+    d.setPoses(da, d.dirOver(6, 3)!)
+    run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 1, () => A + BODY)
+    expect(d.offset).toMatchObject({ deg: expectedChest().deg, by: 'speed', kmh: null, speedBy: 'none' })
   })
 
   const L0 = 6 + HUNCH.skip + HUNCH.learn // 走る前傾を覚え終わる t
@@ -945,11 +954,11 @@ describe('頭：最初から頭が前に出たまま走り出したのを、す�
     const out = run(T0, T0 + HEAD.skip + HEAD.learn + 60, BODY)
     expect(out.some((o) => o.cue || o.praise)).toBe(false)
     expect(d.offset!.deg).toBeCloseTo(BODY, 0)
-    // いつもの頭のまま走り出したときは、poseCap（3°）しか差し引かない（胸は10°）
+    // いつもの頭のまま走り出したときは、poseCap（3°）しか差し引かない（胸は、その速さで正しい前傾）
     const h = setup()
     h.run(T0, T0 + HEAD.skip + HEAD.learn + 1, HABIT + BODY)
     expect(h.d.offset!.deg).toBe(HEAD.poseCap)
-    expect(HEAD.poseCap).toBeLessThan(HUNCH.poseCap)
+    expect(HEAD.poseSpeed).toBe(false)
   })
 
   it('直したあと、いつもの頭に戻っていくと、また知らせる（直した頭を基準にし、いつもの頭へは寄せない）', () => {
@@ -1009,5 +1018,20 @@ describe('頭：最初から頭が前に出たまま走り出したのを、す�
     const later = play(d, 3 + HEAD.skip + HEAD.learn - 1, 3 + HEAD.skip + HEAD.learn + 20, (t) => (t < 3 + HEAD.skip + HEAD.learn + 5 ? 30 : 60), () => true)
     expect(later.some((o) => o.cue)).toBe(true)
     expect(play(d, 63, 80, () => 30, () => true).some((o) => o.praise)).toBe(false)
+  })
+})
+
+// 胸の、その速さで正しい前傾（expect.ts。数字は params.ts の CHEST_EXPECT）
+describe('胸の、その速さで正しい前傾', () => {
+  it('よい例の上体（goodAt の trunk.mid）× gain + k。速さが分からなければ講師の速さの範囲', () => {
+    expect(expectedChest(7.6).deg).toBeCloseTo(CHEST_EXPECT.gain * goodAt(7.6).trunk.mid + CHEST_EXPECT.k, 1)
+    expect(expectedChest(7.6)).toMatchObject({ kmh: 7.6, by: 'sensor', trunk: goodAt(7.6).trunk.mid })
+    expect(expectedChest(9, 'belt').by).toBe('belt')
+    expect(expectedChest()).toMatchObject({ kmh: null, by: 'none', trunk: goodAt().trunk.mid })
+    expect(expectedChest(Number.NaN).by).toBe('none')
+    // 速いほど前に傾くのが正しい（時速7〜12km の間）
+    expect(expectedChest(10).deg).toBeGreaterThan(expectedChest(8).deg)
+    // 11-06 12:27（足首の見積もり 時速7.5km）の本人：正しい胸 19.0°・線 24.0°（params.ts の CHEST_EXPECT の説明）
+    expect(expectedChest(7.5).deg).toBe(19)
   })
 })

@@ -1,4 +1,5 @@
 import { LIMIT } from '../../core/params'
+import { expectedChest, type ExpectLean, type SpeedBy } from './expect'
 import { HEAD_YIELD, type LeanParams } from './params'
 import type { Vec3 } from './parse'
 
@@ -24,7 +25,8 @@ import type { Vec3 } from './parse'
 //     線の下にいた直近 camRef 秒より増えていない：カメラは崩れていないと見ているので、センサーがずれたとみなす（カメラの値がない間は数えず、上の slipSec を待つ）
 // 2つの立ち方（setPoses。params.ts の POSE の説明）：stand の代わりに、a「いつもの楽な立ち方」と b「胸を開いた立ち方」の向きを渡す。
 //   b を立った姿勢、b から a へ傾く向きを「前（猫背の向き）」、a と b の角度を猫背の大きさにする（走り出しの前傾から前の向きを決めない）。
-//   走る前傾（その向きに沿った、走り出し30秒の真ん中）は、基準として poseCap 度まで（カメラ版は、カメラの上体の増え + poseCamSlack 度まで）しか差し引かない。
+//   基準として差し引く分：胸（poseSpeed）は、その速さで正しい胸の前傾（expect。params.ts の CHEST_EXPECT。走り出しの前傾にはよらない）。
+//   頭は、走る前傾（その向きに沿った、走り出し30秒の真ん中）を poseCap 度までしか差し引かない。
 //   線は「基準 + poseLine」（決まった度数。胸）。poseLine が 0 なら「基準 + max(margin（poseMargin）, poseFrac × a と b の角度)」（頭）。ほかのしくみ（寄せる・ずれの見張り・曲げた）は stand と同じ。
 //   a と b の角度が poseMin より小さければ覚えずに false（呼ぶ側が測り直すか、b を stand として今までの見方にする）
 //   2つの立ち方で見るときだけの、場所ごとの決まり（0 なら今までと同じ。params.ts の HEAD の説明）：
@@ -47,8 +49,9 @@ export type LeanStep = { tilt: number | null; cue: boolean; capped?: boolean; pr
 
 // 2つの立ち方で決めた物差し。deg：a と b の角度（猫背の大きさ）、margin：使う線の幅（度）、camB：カメラ版で b のときのカメラの上体の前傾（度）
 export type PoseScale = { deg: number; margin: number; camB: number | null }
-// 走る前傾のうち、基準として差し引いた分。by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・camera（カメラの上体の増えで抑えた）。cam：カメラの上体の増え（度）
-export type PoseOffset = { deg: number; by: 'sensor' | 'cap' | 'camera'; cam: number | null }
+// 基準として差し引いた分。by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・speed（その速さで正しい胸の前傾。胸）。
+// cam：カメラ版で、カメラの上体の増え（b の立ち姿勢から、度。記録に残すだけ）。kmh・speedBy・trunk：speed のとき、使った速さとその出どころ、よい例の上体（度）
+export type PoseOffset = { deg: number; by: 'sensor' | 'cap' | 'speed'; cam: number | null; kmh?: number | null; speedBy?: SpeedBy; trunk?: number }
 
 const DEG = 180 / Math.PI
 const RECENT_SEC = 10 // rising のために残す傾きの長さ（秒）。HEAD_YIELD.riseSec より長く
@@ -93,6 +96,8 @@ export class LeanDetector {
   private camLearn: number[] = [] // 2つの立ち方で見るカメラ版：走る前傾を覚える間の、カメラの上体の前傾
   private sides: { t: number; v: number }[] = [] // 直近 slipRef 秒の横の傾き（2つの立ち方で見るとき）
   private streak = 0 // 続けて知らせた回数（2つの立ち方で見るときの、知らせ直す間隔をのばすため）
+  // 胸（poseSpeed）：覚えるときに呼び、その速さで正しい前傾を返す（session.ts が速さを渡す）。なければ速さの分からない値（講師の速さ）
+  expect: (() => ExpectLean) | null = null
   private hourCues = { hour: -1, n: 0 } // いまの1時間の枠（走った時間 ÷ 3600）で知らせた回数（LIMIT.perHour の上限）
   private underSince: number | null = null // 線の下に入った t
   private owed = false // 知らせたあと、まだほめていない（2つの立ち方で見るとき、posePraise）
@@ -213,7 +218,8 @@ export class LeanDetector {
     return Math.atan2(dot(d, fwd), c) * DEG
   }
 
-  private dir(): Vec3 | null {
+  // いまのならした重力の向き（長さ1）。値が来ていなければ null
+  dir(): Vec3 | null {
     return this.lp ? norm(this.lp) : null
   }
 
@@ -240,22 +246,16 @@ export class LeanDetector {
     return median(this.learnUs.map((u) => this.angle(u, this.fwd)))
   }
 
-  // 2つの立ち方で見るとき、走る前傾のうち基準として差し引く分：poseCap 度まで。カメラ版でカメラの上体の値が camMin 件あれば、
-  // カメラの上体の増え（b の立ち姿勢から）+ poseCamSlack 度までにも抑える（カメラの上体は猫背をほとんど映さず、おもに体ごとの前傾を映すため）
+  // 2つの立ち方で見るとき、基準として差し引く分：胸（poseSpeed）は、その速さで正しい胸の前傾（走り出しの前傾にはよらない）。
+  // 頭は、走る前傾を poseCap 度まで。カメラ版でカメラの上体の値が camMin 件あれば、カメラの上体の増え（b の立ち姿勢から）も記録に残す
   private poseOffset(runLean: number): PoseOffset {
     const p = this.p
-    let lim = p.poseCap
-    let by: PoseOffset['by'] = 'cap'
-    let cam: number | null = null
-    if (this.pose?.camB !== null && this.pose?.camB !== undefined && this.camLearn.length >= p.camMin) {
-      cam = median(this.camLearn) - this.pose.camB
-      const c = Math.max(0, cam + p.poseCamSlack)
-      if (c < lim) {
-        lim = c
-        by = 'camera'
-      }
+    const cam = this.pose?.camB !== null && this.pose?.camB !== undefined && this.camLearn.length >= p.camMin ? median(this.camLearn) - this.pose.camB : null
+    if (p.poseSpeed) {
+      const e = this.expect?.() ?? expectedChest()
+      return { deg: e.deg, by: 'speed', cam, kmh: e.kmh, speedBy: e.by, trunk: e.trunk }
     }
-    return runLean <= lim ? { deg: runLean, by: 'sensor', cam } : { deg: lim, by, cam }
+    return runLean <= p.poseCap ? { deg: runLean, by: 'sensor', cam } : { deg: p.poseCap, by: 'cap', cam }
   }
 
   // t の時点で、曲げている（その直後）とみているか
@@ -349,7 +349,7 @@ export class LeanDetector {
       if (this.runSec >= p.skip + p.learn) {
         if (this.learnUs.length >= p.learnMin) {
           this.runLean = this.learnNow()
-          // 2つの立ち方で見るときは、走る前傾を上限までしか差し引かない（猫背のまま走り出しても、猫背を基準にしない）
+          // 2つの立ち方で見るときは、走る前傾をそのまま基準にしない（胸はその速さで正しい前傾、頭は上限まで。猫背のまま走り出しても、猫背を基準にしない）
           this.offset = this.pose ? this.poseOffset(this.runLean) : null
           const start = this.offset ? this.offset.deg : this.runLean
           this.ref = start

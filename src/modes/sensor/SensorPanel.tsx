@@ -59,7 +59,11 @@ export function SensorPanel({ defaultOpen = false }: { defaultOpen?: boolean }) 
               <button disabled={bulk.busy} onClick={() => void sensors.connectAll()} style={{ height: 40, borderRadius: 20, border: '1px solid var(--text)', background: 'transparent', color: 'var(--text)', fontSize: 14, fontWeight: 700 }}>
                 {bulk.busy ? 'つないでいます…' : bulk.needTap ? '次のセンサーを選ぶ' : 'まとめてつなぐ'}
               </button>
-              {bulk.needTap && !bulk.busy && <div style={{ fontSize: 12, lineHeight: 1.6 }}>もう1回押すと、次のセンサーを選べます（あと {bulk.left} 個）</div>}
+              {bulk.needTap && !bulk.busy && (
+                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  このブラウザは、1回押すごとに1個しか選べないようです。もう1回押すと、次のセンサーを選べます（あと {bulk.left} 個）
+                </div>
+              )}
             </div>
           )}
           {nodes.map((n, i) => (
@@ -85,12 +89,14 @@ function Row({ n, onConnect, onTest }: { n: NodeView; onConnect: () => void; onT
   const low = ok && (n.rate < 80 || n.lost > 0)
   const pct = n.battery !== null ? batteryPercent(n.battery) : null
   const empty = ok && pct !== null && pct <= BATTERY_LOW
+  const button = { flexShrink: 0, whiteSpace: 'nowrap', height: 32, padding: '0 12px', borderRadius: 16, background: 'transparent', color: 'var(--text)', fontSize: 12 } as const
+  // 知らせの文は省かずに折り返す（スマホの幅で、長いエラーが切れて「つなぎ直す」が文の続きに見えたため）。ボタンは文の下の別の行に置く
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, opacity: n.name ? 1 : 0.5 }}>
-      <div style={{ width: 52, fontSize: 13, fontWeight: 700 }}>{n.place}</div>
-      <div style={{ flexGrow: 1, minWidth: 0, fontSize: 11, lineHeight: 1.5 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, opacity: n.name ? 1 : 0.5, minWidth: 0 }}>
+      <div style={{ width: 52, flexShrink: 0, fontSize: 13, fontWeight: 700 }}>{n.place}</div>
+      <div style={{ flex: '1 1 0', minWidth: 0, fontSize: 11, lineHeight: 1.5, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div className="muted">{n.name ?? '使わない'}{n.fw ? `（${n.fw}）` : ''}</div>
-        <div style={{ color: ok ? 'var(--accent)' : n.status === 'error' || n.status === 'lost' ? 'var(--warn)' : 'var(--muted)' }}>{n.message}</div>
+        <div style={{ color: ok ? 'var(--accent)' : n.status === 'error' || n.status === 'lost' ? 'var(--warn)' : 'var(--muted)', whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{n.message}</div>
         {ok && (
           <div className="muted" style={{ color: low ? 'var(--warn)' : undefined }}>
             {n.rate} 件/秒・抜け {n.lost}
@@ -98,17 +104,21 @@ function Row({ n, onConnect, onTest }: { n: NodeView; onConnect: () => void; onT
             {!n.canBuzz ? '・振動なし' : ''}
           </div>
         )}
+        {((ok && onTest && n.canBuzz) || (n.name && !ok)) && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            {ok && onTest && n.canBuzz && (
+              <button onClick={onTest} style={{ ...button, border: '1px solid var(--line)' }}>
+                震わす
+              </button>
+            )}
+            {n.name && !ok && (
+              <button disabled={busy} onClick={onConnect} style={{ ...button, border: '1px solid var(--text)', fontWeight: 700 }}>
+                {n.status === 'idle' ? 'つなぐ' : 'つなぎ直す'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      {ok && onTest && n.canBuzz && (
-        <button onClick={onTest} style={{ height: 32, padding: '0 10px', borderRadius: 16, border: '1px solid var(--line)', background: 'transparent', color: 'var(--text)', fontSize: 12 }}>
-          震わす
-        </button>
-      )}
-      {n.name && !ok && (
-        <button disabled={busy} onClick={onConnect} style={{ height: 32, padding: '0 12px', borderRadius: 16, border: '1px solid var(--text)', background: 'transparent', color: 'var(--text)', fontSize: 12, fontWeight: 700 }}>
-          {n.status === 'idle' ? 'つなぐ' : 'つなぎ直す'}
-        </button>
-      )}
     </div>
   )
 }

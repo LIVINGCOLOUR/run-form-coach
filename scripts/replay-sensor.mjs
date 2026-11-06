@@ -11,6 +11,9 @@
 //   2つの立ち方（lean.ts の setPoses）：記録に pose（a・b の向き、mode pose）があれば、それで見る（カメラ版は b のカメラの上体も渡す）。
 //   --pose fallback：2つの立ち方の差が小さかったときの道（b を立った姿勢にして今までの見方）を、立った姿勢の3秒を a・b の両方にして通す。
 //     2つの立ち方の前の記録で、今までの見方と同じ結果になるかを確かめるため。--pose off：記録に pose があっても stand で見る
+//   胸の、その速さで正しい前傾（params.ts の CHEST_EXPECT、expect.ts）：速さはアプリと同じく、記録のベルトの速さ（events の belt:kmh）→
+//     覚える前 learn 秒の足首のセンサーの見積もり（1秒ごとのまとめ sec の v の真ん中）→ なければ講師の速さ。--speed 時速km で決め打ちできる。
+//     走り出しの前傾を poseCap まで差し引く前の見方は --chest '{"poseSpeed":false}'
 // 記録の中身は画面に出すだけで、どこにも書かない
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -33,6 +36,7 @@ const level = opt('--level')
 // 立ち止まって物を拾った数秒も走っているままだった（2026-11-04）。その数秒を流し直して確かめるとき
 const gate = opt('--gate')
 const poseOpt = opt('--pose')
+const speedOpt = opt('--speed')
 const STOP = 8
 const WIN = 5
 const HOLD = 20 // 行のない間を、前の行のまま「走っている」とみる長さの上限（秒）
@@ -50,13 +54,14 @@ writeFileSync(
   [
     `export { decodeBlock, nodeHz } from '${join(root, 'src/modes/sensor/log.ts')}'`,
     `export { LeanDetector } from '${join(root, 'src/modes/sensor/lean.ts')}'`,
+    `export { expectedChest } from '${join(root, 'src/modes/sensor/expect.ts')}'`,
     `export { HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS } from '${join(root, 'src/modes/sensor/params.ts')}'`,
     `export { FORM, BASELINE } from '${join(root, 'src/modes/camera/params.ts')}'`,
   ].join('\n'),
 )
 const bundle = join(tmp, 'replay-sensor.mjs')
 await build({ input: entry, platform: 'node', logLevel: 'warn', output: { file: bundle, format: 'esm' } })
-const { decodeBlock, nodeHz, LeanDetector, HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS, FORM, BASELINE } = await import(pathToFileURL(bundle).href)
+const { decodeBlock, nodeHz, LeanDetector, expectedChest, HUNCH, HUNCH_BY_LEVEL, HEAD, SLOTS, FORM, BASELINE } = await import(pathToFileURL(bundle).href)
 if (level && !HUNCH_BY_LEVEL[level]) {
   console.error(`--level は beginner / intermediate / advanced のどれか（${level}）`)
   process.exit(1)
@@ -76,13 +81,17 @@ say(`頭：${JSON.stringify(KINDS[1].p)}`)
 // 1つの場所の値を流す。samples：[{ tt, a }]（時刻順）、running(t)、standT：立った姿勢を覚える t。100Hz でない記録は ema を件数に合わせる。
 // bentBy：ほかの場所（胸）の tick ごとの「体を曲げている」（頭はアプリと同じく、胸で曲げたと分かれば止める）
 // pose：{ a, b, camB }（記録の2つの立ち方）・'fallback'（差が小さかった道を通す）・null（stand）
-function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt, pose = null) {
+// expectAt(t)：胸（poseSpeed）の、その速さで正しい前傾（覚えるときに呼ぶ。アプリの session.ts と同じ順で速さを決めたもの）
+function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt, pose = null, expectAt = null) {
   const k = 1 - Math.pow(1 - p.ema, 100 / hz)
   const d = new LeanDetector({ ...p, ema: k, standMin: Math.round((p.standMin * hz) / 100) }, 5)
   const ticks = []
   let i = 0
   let stood = false
+  let now = t0
+  if (expectAt) d.expect = () => expectAt(now)
   for (let t = t0, k = 0; t < t1; t += p.tick, k++) {
+    now = t
     while (i < samples.length && samples[i].tt <= t) d.sample(samples[i].tt, samples[i++].a)
     if (!stood && t >= standT) {
       if (pose && pose !== 'fallback') stood = d.setPoses(pose.a, pose.b, pose.camB ?? null) || d.stand(t, BASELINE.collect)
@@ -163,6 +172,17 @@ function cameraLog(path) {
   }
   const t0 = rows[0].t
   const t1 = rows[rows.length - 1].t
+  // 胸の、その速さで正しい前傾：--speed → ベルトの速さ（belt:kmh）→ 覚える前 learn 秒の足首の見積もり（sec の v）→ 講師の速さ
+  const beltEv = log.events.find((e) => /^belt:kmh /.test(e[1]))
+  const belt = speedOpt !== undefined ? Number(speedOpt) : beltEv ? Number(beltEv[1].split(' ')[1]) : undefined
+  const sc = log.sensors.secCols ?? []
+  const iv = sc.indexOf('v')
+  const irun = sc.indexOf('run')
+  const expectAt = (t) => {
+    if (belt !== undefined && Number.isFinite(belt)) return expectedChest(belt, 'belt')
+    const vs = iv < 0 ? [] : (log.sensors.sec ?? []).filter((x) => x[0] > t - KINDS[0].p.learn && x[0] <= t && x[irun] === 1 && Number.isFinite(x[iv])).map((x) => x[iv])
+    return vs.length ? expectedChest(S.median(vs), 'sensor') : expectedChest()
+  }
   let chestBent = null
   for (const K of KINDS) {
     const ni = nodes.findIndex((x) => x.place === K.p.place && x.name && x.samples.length)
@@ -176,13 +196,14 @@ function cameraLog(path) {
     const pl = K.key === 'chest' ? log.sensors.pose : log.sensors.head?.pose
     const pose = poseOpt === 'fallback' ? 'fallback' : poseOpt !== 'off' && pl?.mode === 'pose' && pl.a && pl.b ? { a: pl.a, b: pl.b, camB: K.key === 'chest' ? (pl.cam?.b?.trunk ?? null) : null } : null
     if (pl) say(`2つの立ち方：${pl.mode}・差 ${f1(pl.deg)}°・測った回数 ${pl.tries}${pose && pose !== 'fallback' ? '（この2つで見る）' : ''}`)
-    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null, K.key === 'chest' ? camAt : null, pose)
+    const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null, K.key === 'chest' ? camAt : null, pose, K.p.poseSpeed ? expectAt : null)
     if (K.key === 'chest') chestBent = r.ticks.map((x) => x.bentNow)
     say(`値の速さ ${f1(hz)}Hz・体を曲げたとみなした ${r.bends.length} 回：${r.bends.map((x) => `${f1(x.t)}（${f1(x.bend)}°）`).join(' ') || 'なし'}`)
     const mins = runMin(r.ticks, K.p)
     const last = n.samples[n.samples.length - 1].tt
     say(`値 ${f1(n.samples[0].tt)}〜${f1(last)} 秒・走った ${f1(mins)} 分（この間に値があった分）・走る前傾 ${f1(r.d.runLean)}°（${f1(r.learnedAt?.t)} 秒）・前の向き ${r.d.fwd ? 'あり' : 'なし（向きによらない角度）'}`)
-    if (r.d.pose) say(`2つの立ち方で見た：差 ${f1(r.d.pose.deg)}°・線の幅 ${f1(r.d.pose.margin)}°・差し引いた走る前傾 ${f1(r.d.offset?.deg)}°（${r.d.offset?.by ?? '-'}${r.d.offset?.cam !== null && r.d.offset?.cam !== undefined ? `、カメラの上体の増え ${f1(r.d.offset.cam)}°` : ''}）`)
+    const sp = r.d.offset?.by === 'speed' ? `、速さ ${f1(r.d.offset.kmh)} km/h（${r.d.offset.speedBy}）・よい例の上体 ${f1(r.d.offset.trunk)}°` : ''
+    if (r.d.pose) say(`2つの立ち方で見た：差 ${f1(r.d.pose.deg)}°・線の幅 ${f1(r.d.pose.margin)}°・差し引いた分 ${f1(r.d.offset?.deg)}°（${r.d.offset?.by ?? '-'}${sp}${r.d.offset?.cam !== null && r.d.offset?.cam !== undefined ? `、カメラの上体の増え ${f1(r.d.offset.cam)}°` : ''}）`)
     // 2つの立ち方で見たときだけ：走る前傾を覚え終わる前（poseStart から）に知らせた回数と、直ってほめた回数（params.ts の poseStart・posePraise）
     if (r.d.pose) say(`  覚え終わる前に知らせた ${r.cues.filter((t) => !r.learnedAt || t < r.learnedAt.t).length} 回・ほめた ${r.praises.length} 回：${r.praises.map(f1).join(' ') || 'なし'}`)
     // 知らせたとき、その前の5秒のカメラの答え

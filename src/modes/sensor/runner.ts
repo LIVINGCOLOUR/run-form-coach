@@ -7,6 +7,7 @@ import { GpsLatest, watchGps, type GpsFix, type GpsStatus } from './gps'
 import { HUNCH, POSE, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
 import { SensorSession, type PoseName, type PoseResult } from './session'
 import type { CamValues } from './lean'
+import { WaistPhone } from './waist'
 
 // 1回の走りの間、センサーを動かす役（トレッドミルのカメラ版・センサーラン・腰スマホで共通）。
 // SensorSession（崩れの見分け・知らせ・記録）を HUNCH.tick 秒ごとに動かし、「立った姿勢」と「走っている」を渡す。
@@ -20,6 +21,8 @@ import type { CamValues } from './lean'
 //     走っている：揺れが RUN_GATE の線を3秒越えたら走り出し、4秒下回ったら止まった。止まっている間は知らせない
 //   say を渡すと、立つ案内と待つ案内を声で言う（センサーラン。腰スマホはスマホ版の声があるので渡さない）
 //   gps を渡すと（センサーラン）、位置情報の速さと高さを1秒ごとのまとめに残す（gps.ts。知らせには使わない。使えないブラウザでは events に gps: none）
+//   waist を渡すと（センサーラン）、腰のポーチに入れたこのスマホの向きを、2つの立ち方とあわせて記録する（waist.ts。知らせには使わない）
+//   belt を渡すと、ベルトの速さ（トレッドミル）を胸の正しい前傾の速さに使う（session.ts。なければ足首のセンサーの見積もり）
 
 export type SensorRunPhase = 'stand' | 'ready' | 'run' | 'stop'
 
@@ -35,6 +38,8 @@ export interface SensorRunnerOptions {
   // 位置情報を受け取る（カメラなしのときだけ。腰スマホはスマホ版が自分で受け取るので渡さない）。watch：テストで差し替える受け口（なければブラウザの位置情報）
   gps?: boolean | typeof watchGps
   onGps?: (f: GpsFix) => void // 位置が届くたび（センサーの速さの見積もりを GPS に合わせるときの口。いまは記録に残すだけ）
+  belt?: () => number | undefined // ベルトの速さ（時速 km。入れていなければ undefined）
+  waist?: boolean | WaistPhone // 腰のスマホの向きを記録する（センサーラン。テストでは受け口を差し替えたものを渡す）
 }
 
 const now = () => performance.now() / 1000
@@ -67,7 +72,7 @@ export class SensorRunner {
 
   constructor(o: SensorRunnerOptions) {
     this.o = o
-    this.session = new SensorSession(o.onEvent, o.level)
+    this.session = new SensorSession(o.onEvent, o.level, { belt: o.belt, waist: o.waist instanceof WaistPhone ? o.waist : o.waist ? new WaistPhone(o.onEvent) : null })
     this.session.voice = !!o.voice
     this.gate = o.running ? null : new MotionGate()
     const t0 = now()

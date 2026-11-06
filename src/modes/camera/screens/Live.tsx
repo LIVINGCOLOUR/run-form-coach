@@ -150,6 +150,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           },
           // カメラの上体と頭の位置（直近1秒のコマがあるときだけ）。胸のセンサーがずれたのか、本当に崩れたのかを分けるのに使う（sensor/lean.ts）
           camera: () => (camNow && performance.now() / 1000 - camNow.t < 1 ? { trunk: camNow.trunk, head: camNow.head } : null),
+          // ベルトの速さ（入れたとき）：胸の、その速さで正しい前傾に使う（sensor/expect.ts）
+          belt: () => beltRef.current,
         })
       : null
     const logTimer = setInterval(() => {

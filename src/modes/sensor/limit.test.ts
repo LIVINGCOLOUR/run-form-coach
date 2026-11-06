@@ -26,9 +26,11 @@ function play(d: LeanDetector, from: number, to: number, tiltAt: (t: number) => 
 describe('胸・頭の知らせの1時間の上限（LIMIT.perHour）', () => {
   const A = 15 // いつもの楽な立ち方（a）の猫背
   const BODY = 8 // 走る体ごとの前傾
-  // 2つの立ち方（0〜3秒 a、3〜6秒 b）で覚える。猫背のまま走り続けても、ずれとはみなさない形
+  // 2つの立ち方（0〜3秒 a、3〜6秒 b）で覚える。猫背のまま走り続けても、ずれとはみなさない形。
+  // 胸の、その速さで正しい前傾（expect）は体ごとの前傾 BODY とする
   const setup = () => {
     const d = new LeanDetector(HUNCH)
+    d.expect = () => ({ deg: BODY, trunk: 6, kmh: 9, by: 'belt' })
     play(d, 0, 3, () => A, false)
     const da = d.dirOver(3, 3)!
     play(d, 3, 6, () => 0, false)

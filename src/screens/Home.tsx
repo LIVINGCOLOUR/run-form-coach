@@ -357,6 +357,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
             unlockVoice()
             if (mode === 'waist') return void startPhone(where)
             if (mode === 'sensor') {
+              // 腰のポーチに入れたこのスマホの向きも記録する（sensor/waist.ts）。iPhone は押した流れの中でしか、動きのセンサーの許可が出ない
+              void requestMotionPermission()
               void keepScreenOn()
               return go({ name: 'sensorRun' })
             }

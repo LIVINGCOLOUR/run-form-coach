@@ -10,7 +10,7 @@
 | 方針 | 誰に何を売るか、モデル（判定）の方針、動画と研究データの扱い、これからの工夫 | `docs/product.md` |
 | 仕組み | 声かけのしくみ（共通）と、入り口の足し方 | `docs/modes.md` |
 | | カメラ版（トレッドミル）の流れと項目 | `docs/camera-mode.md` |
-| | センサー版（カメラ版といっしょ・センサーラン） | `docs/sensor-mode.md` |
+| | センサー版（カメラ版といっしょ・センサーラン。腰のスマホの向きの記録も） | `docs/sensor-mode.md` |
 | | センサーの機器（ファームウェア・作り方）と、振動の知らせ方・部品 | `hardware/sensor/CLAUDE.md`、`hardware/sensor/docs/haptic.md` |
 | | スマホ版（腰）の仕様と、いまの作り | `docs/phone-spec.md`、`src/modes/phone/CLAUDE.md` |
 | | 判定のロジックの全体（人向け） | `src/theory/`（公開先の /theory/。値は `params.ts` から出す） |
@@ -41,7 +41,7 @@
 | `src/core/` | 入り口に共通：声かけのしくみ（`engine.ts`）、しくみの数字（`params.ts`）、言葉と声、記録、レベル |
 | `src/modes/camera/` | カメラ版（トレッドミル）：骨格の推定、測り方、カメラの数字（`params.ts`）、撮る画面、スロー分析 |
 | `src/modes/phone/` | スマホ版（腰・外）：見る役、付け方の確認。決まりは `src/modes/phone/CLAUDE.md` |
-| `src/modes/sensor/` | 自作のセンサーのアプリ側：Web Bluetooth でつなぐ（`ble.ts`）、通知のパーサ、胸の猫背と頭が前に出たのの見分け（`lean.ts`）、足首の接地時間と左右差（`contact.ts`・`contactCoach.ts`）、速さの式の人ごとの合わせ（`speedFit.ts`）、記録、ホームの「センサーをつなぐ」の枠、動かす役（`runner.ts`。カメラ版・腰スマホ・センサーランで共通）、カメラなしの「立っている・走っている」（`gate.ts`）、センサーランの画面と記録。付ける場所とセンサーの対応・数字は `params.ts`。iPhone では Bluefy で開く |
+| `src/modes/sensor/` | 自作のセンサーのアプリ側：Web Bluetooth でつなぐ（`ble.ts`）、通知のパーサ、胸の猫背と頭が前に出たのの見分け（`lean.ts`）、足首の接地時間と左右差（`contact.ts`・`contactCoach.ts`）、速さの式の人ごとの合わせ（`speedFit.ts`）、記録、ホームの「センサーをつなぐ」の枠、動かす役（`runner.ts`。カメラ版・腰スマホ・センサーランで共通）、カメラなしの「立っている・走っている」（`gate.ts`）、胸の、その速さで正しい前傾（`expect.ts`）、センサーランの腰のスマホの向きの記録（`waist.ts`）、センサーランの画面と記録。付ける場所とセンサーの対応・数字は `params.ts`。iPhone では Bluefy で開く |
 | `hardware/sensor/` | センサーの機器（ファームウェア・書き込みの道具・作り方）。決まりは `hardware/sensor/CLAUDE.md` |
 | `src/screens/`・`src/ui/`・`src/theory/` | アプリ全体の画面（ホーム・結果）と、フォームの見方のページ |
 | `docs/`・`sim/`・`video/`・`scripts/` | 文書、仮想実験、紹介動画、音声などを作るスクリプト |
@@ -65,7 +65,7 @@
   - カメラ版・スマホ版・センサーの記録は、走っている間60秒ごとに端末へ書き出す（`src/core/logChunks.ts`。上限なし、7時間まで確かめた）。端末に残すのは新しい20本（`uploads.ts` の `KEEP_RUNS`。テスト期間の決まり）で、それより古いものは Mac へ送れたものだけ消す。
   - 2時間より長い記録は2時間ごとのファイル（`…-p1of4.json.gz`）に分けて送り、`npm run logs` が全部そろってから1つにつなぐ。
   - Mac では `npm run logs` で一覧を出し、まだのものを `RFC_RUNS_DIR`（既定 ~/Developer/research-data/runs/）に取ってくる（`npm run compare` にそのまま渡せる形）。
-- 答えつきの記録・確かめ走・採点（`npm run drill`・`npm run drill:pose`・`npm run grade`）は `docs/validation-plan.md`。センサーとカメラの突き合わせ（`npm run compare:sensor`・`npm run replay:sensor`）は `docs/sensor-mode.md`。
+- 答えつきの記録・確かめ走・採点（`npm run drill`・`npm run drill:pose`・`npm run grade`）と、カメラ（横の Android）とセンサーラン（腰の iPhone）を別々のスマホで記録して時計で合わせる突き合わせ（`npm run drill:merge`・`npm run merge`）は `docs/validation-plan.md`。センサーとカメラの突き合わせ（`npm run compare:sensor`・`npm run replay:sensor`）は `docs/sensor-mode.md`。
 
 ## 守ること
 

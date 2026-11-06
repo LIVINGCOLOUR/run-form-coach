@@ -5,8 +5,13 @@ import { SLOTS } from './params'
 // iPhone の Safari は Web Bluetooth がないので、つなげるのは Bluefy などの対応ブラウザと、Mac・Android の Chrome だけ。
 // 選ぶ画面（requestDevice）は、押したときにしか出せない。Chrome は1回押すごとに1個とされる（続けて出すと SecurityError のはず。ここでは試していない）。
 // 一度選んだセンサーは、getDevices があれば選ぶ画面なしでつなぎ直す（restore・connectAll）。
-// Bluefy が getDevices を持つか、選ぶ画面を続けて出せるかは、まだ確かめていない（調べても書いたものが見つからなかった）。
-//   「まとめてつなぐ」で起きたことを diag に残し、パネルに出し、次の走りの記録の events にも「sensor:ble …」で入れる（runner.ts）
+// Bluefy は getDevices で覚えていた機器を返すが、その機器の gatt.connect() は数字の 2 だけで断られた（2026-11-06 の走りの記録。
+//   選ぶ画面で選んだ機器はつながる）。なので、覚えていた機器につなげなければ、その枠を空けて選ぶ画面に回し、
+//   このブラウザでは覚えていた機器につなげないと覚えて（MEMORY_FAILS_KEY）、次の「まとめてつなぐ」はすぐ選ぶ画面を出す。
+//   パネルを開いたとき（自動）だけ、つなぐ前に watchAdvertisements で広告を聞いてみる（Bluefy で効くかは未確認）。
+//   選ぶ画面を続けて出せるかは、まだ確かめていない（続けて出せなければ、押し直しで次へ）。
+//   つないだときに起きたこと（エラーになった枠は全部、エラーの中身と型つき）を diag に残し、パネルに出し、
+//   次の走りの記録の events にも「sensor:ble …」で入れる（runner.ts）
 // つないだものは画面をまたいで残す（ホームでつないで、カメラで走るため）ので、このファイルの sensors を1つだけ使う
 //   サービス 0xFFE0：値の通知 0xFFE1、電池 0xFFE2（uint16 mV）、振動 0xFFE3（回数 uint8、長さ uint8 × 10ms）
 //   機器の情報 0x180A：ファームの版 0x2A26、どのセンサーか 0x2A24（2026-11-05.2 から「RFC-IMU-4」の形。前は「RFC-IMU」だけ）
@@ -26,8 +31,11 @@ const MODEL = uuid(0x2a24)
 const IDS_KEY = 'rfc.sensorIds' // 選んだ機器（device.id）がどのセンサーだったか。名前が古いままでも、次から選ばずにつなげるように
 const RETRIES = 3 // 「つなぐ」を押してつなげなかったとき、押さずにやり直す回数（2秒おき）
 const REJOIN_SEC = 3 // 使っている途中で切れたときは、つながるまでこの間隔で押さずにつなぎ直す（走っている途中は押せないため）
+const MEMORY_FAILS_KEY = 'rfc.rememberedFails' // '1'：このブラウザでは、getDevices で覚えていた機器に選ばずにはつなげなかった
+const LISTEN_MS = 3000 // 自動：覚えていた機器の広告（watchAdvertisements）を待つ長さ
+const RESTORE_CAP = 15 // 自動：これより長くかかっても、「まとめてつなぐ」を押せるようにする（秒）
 const RESTORE_WAIT = 4 // まとめてつなぐ：覚えているセンサーがつながるのを待つ長さ（秒）。待ちすぎると、押した扱いが切れて選ぶ画面を出せなくなる（Chrome は約5秒）
-const DIAG_MAX = 20 // diag に残す行数
+const DIAG_MAX = 40 // diag に残す行数
 
 // TypeScript の DOM には Web Bluetooth の型がないので、使う分だけ書く
 interface BtChar extends EventTarget {
@@ -50,6 +58,7 @@ interface BtDevice extends EventTarget {
   id?: string
   name?: string
   gatt?: BtServer
+  watchAdvertisements?(o?: { signal?: AbortSignal }): Promise<void>
 }
 type RequestOptions = { filters: ({ name: string } | { namePrefix: string } | { services: string[] })[]; optionalServices: string[] }
 interface Bluetooth {
@@ -65,15 +74,21 @@ const PICK_FORMS: RequestOptions[] = [
   { filters: [{ namePrefix: 'RFC-IMU' }], optionalServices: [SERVICE] },
 ]
 
-// エラーの中身を、何が起きたかわかる形で出す（Bluefy は数字だけのエラーを返すことがある）
-const describe = (e: unknown): string => {
+// エラーの中身を、何が起きたかわかる形で出す。Error でないものは型も付ける（Bluefy は数字の 2 だけで断ることがある →「number 2」）
+export const describeError = (e: unknown): string => {
   if (e instanceof Error) return `${e.name}: ${e.message}`
+  if (e === null) return 'null'
+  let text: string
   try {
-    return typeof e === 'object' ? JSON.stringify(e) : String(e)
+    text = typeof e === 'object' ? JSON.stringify(e) : String(e)
   } catch {
-    return String(e)
+    text = String(e)
   }
+  return `${typeof e} ${text}`
 }
+const describe = describeError
+
+const wait = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms))
 
 // どのセンサーか（「RFC-IMU-4」の形）。0x2A24 を先に見て、なければ名前。どちらも違う形（AdaDFU など）なら null
 const SENSOR_NAME = /^RFC-IMU-\d+$/
@@ -113,6 +128,23 @@ const saveId = (device: BtDevice, name: string) => {
   }
 }
 
+// このブラウザで、覚えていた機器に選ばずにつなげなかったことがあるか（localStorage が使えなければ、ないことにする）
+const memoryFails = () => {
+  try {
+    return localStorage.getItem(MEMORY_FAILS_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const setMemoryFails = (on: boolean) => {
+  try {
+    if (on) localStorage.setItem(MEMORY_FAILS_KEY, '1')
+    else localStorage.removeItem(MEMORY_FAILS_KEY)
+  } catch {
+    /* 覚えられなくても、押せばつなげる */
+  }
+}
+
 // 押した扱いがない（続けて選ぶ画面を出せない）ときのエラーか
 const needsTap = (e: unknown) => e instanceof Error && (e.name === 'SecurityError' || e.name === 'NotAllowedError')
 
@@ -146,7 +178,7 @@ interface Node extends NodeView {
 
 // 「まとめてつなぐ」の様子（画面用）
 export interface BulkView {
-  busy: boolean
+  busy: boolean // 「まとめてつなぐ」か、パネルを開いたときの自動のつなぎ直しの途中（その間は押せない）
   left: number // まだつながっていない枠（つなごうとしているものは数えない）
   needTap: boolean // 続けて選ぶ画面を出せなかった（もう1回押せば次を選べる）
   diag: string[] // 起きたこと（新しいものが後ろ）
@@ -174,6 +206,8 @@ export class SensorHub {
   private identifying = new Set<BtDevice>() // どのセンサーか確かめている途中の機器（同じ機器を2回確かめない）
   private form = 0 // requestDevice で通った頼み方（PICK_FORMS の何番目）。次からそこから頼む
   private bulkBusy = false
+  private restoring = false // 自動のつなぎ直しの途中（まとめてつなぐと同じ機器を取り合わないよう、その間は押せない）
+  private fromMemory = new WeakSet<BtDevice>() // getDevices で戻した機器（選ぶ画面で選んだものでない）。つなげたら外す
   private needTap = false
   private bulk: BulkView = { busy: false, left: 0, needTap: false, diag: [] }
   readonly diag: { t: number; text: string }[] = [] // t は performance.now() の秒
@@ -257,6 +291,7 @@ export class SensorHub {
     for (let k = this.form; k < PICK_FORMS.length; k++) {
       try {
         const device = await bt.requestDevice(PICK_FORMS[k])
+        this.fromMemory.delete(device) // 選んだ機器（同じものが返っても、選んだほうとして扱う）
         this.form = k
         return { kind: 'device', device }
       } catch (e) {
@@ -269,14 +304,44 @@ export class SensorHub {
   }
 
   // 前に選んだことのあるセンサーに、選ぶ画面なしでつなぎにいく（getDevices があるブラウザだけ。何度呼んでも1回だけ。パネルを開いたとき）
+  // その間は「まとめてつなぐ」を押せない（同じ機器を2回つなぎにいかないため）。RESTORE_CAP 秒たったら、終わっていなくても押せるようにする
   async restore() {
     if (this.restored) return
     this.restored = true
-    await this.remembered('自動')
+    this.restoring = true
+    this.refresh()
+    try {
+      await Promise.race([this.remembered('自動', true), wait(RESTORE_CAP * 1000)])
+    } finally {
+      this.restoring = false
+      this.refresh()
+    }
+  }
+
+  // 覚えていた機器の広告を少し聞く（watchAdvertisements があるブラウザだけ）。Bluefy で、聞いてからならつなげるかを確かめるため。
+  // 押した扱いは使わない（パネルを開いたときの自動だけで呼ぶ）
+  private async listen(device: BtDevice): Promise<string> {
+    if (typeof device.watchAdvertisements !== 'function') return 'watchAdvertisements なし'
+    const ac = typeof AbortController === 'undefined' ? undefined : new AbortController()
+    let onAd: (() => void) | undefined
+    const heard = new Promise<string>((ok) => {
+      onAd = () => ok('広告あり')
+      device.addEventListener('advertisementreceived', onAd)
+    })
+    try {
+      const watch = device.watchAdvertisements(ac ? { signal: ac.signal } : undefined).then(() => heard)
+      return await Promise.race([watch, wait(LISTEN_MS).then(() => `${LISTEN_MS / 1000}秒 広告なし`)])
+    } catch (e) {
+      return `watchAdvertisements エラー ${describe(e)}`
+    } finally {
+      if (onAd) device.removeEventListener('advertisementreceived', onAd)
+      ac?.abort()
+    }
   }
 
   // getDevices で覚えている機器を、つながっていないものだけ、全部いっしょにつなぎにいく。つなぎ終わる（か失敗する）まで待つ
-  private async remembered(why: string): Promise<void> {
+  // listen：つなぐ前に広告を聞く（自動のときだけ）
+  private async remembered(why: string, listen = false): Promise<void> {
     const bt = bluetooth()
     if (!bt?.getDevices) {
       this.note(`${why}: getDevices なし`)
@@ -290,8 +355,21 @@ export class SensorHub {
       return
     }
     const todo = devices.filter((d) => !this.inUse(d))
-    this.note(`${why}: getDevices ${devices.length}個（つなぎにいく ${todo.length}個）`)
-    const got = await Promise.all(todo.map((d) => this.adopt(d)))
+    this.note(`${why}: getDevices ${devices.length}個（つなぎにいく ${todo.length}個）${memoryFails() ? '・前に選ばずにはつなげなかったブラウザ' : ''}`)
+    for (const d of todo) this.fromMemory.add(d)
+    const got = await Promise.all(
+      todo.map(async (d) => {
+        if (!listen) return this.adopt(d)
+        this.identifying.add(d) // 聞いている間に、ほかから同じ機器をつなぎにいかない
+        let heard: string
+        try {
+          heard = await this.listen(d)
+        } finally {
+          this.identifying.delete(d)
+        }
+        return `${await this.adopt(d)}（${heard}）`
+      }),
+    )
     if (todo.length) this.note(`${why}: 覚えていた機器 ${got.join('・')}`)
   }
 
@@ -324,7 +402,9 @@ export class SensorHub {
           return `${id ?? device.name ?? '?'}は${node ? 'ほかの機器が使用中' : 'どの場所にもない'}`
         }
       } catch (e) {
-        return `確かめられない（${describe(e)}）`
+        if (!this.fromMemory.has(device)) return `確かめられない（${describe(e)}）`
+        setMemoryFails(true)
+        return `確かめられない（${describe(e)}）→選ぶ画面に回す`
       } finally {
         this.identifying.delete(device)
       }
@@ -333,19 +413,24 @@ export class SensorHub {
     await this.open(node)
     // open で別の枠へ移すことがあるので、つないだ先を探す
     const at = this.nodes.find((n) => n.device === device)
-    return at ? `${at.name}→${at.place}` : '使えない（パネルの知らせを見る）'
+    if (!at) return `${guess ?? device.name ?? '?'} 使えない（パネルの知らせを見る）`
+    return at.status === 'connected' ? `${at.name}→${at.place}` : `${at.name}→${at.place}（${MESSAGE[at.status]}）`
   }
 
   // 「まとめてつなぐ」：覚えている機器を選ばずにつなぎ、足りない分だけ選ぶ画面を続けて出す（選んだ順は問わない。型番で枠を決める）。
   // 続けて出せなければ（押した扱いが要るブラウザ）、もう1回押すと次を選べるようにする
+  // 自動のつなぎ直しの途中は始めない（同じ機器を取り合わないため。ボタンも押せない）
   async connectAll() {
     const bt = bluetooth()
-    if (!bt || this.bulkBusy) return
+    if (!bt || this.bulkBusy || this.restoring) return
     this.bulkBusy = true
     this.refresh()
     try {
-      // 前の押しで続けて出せなかったときは、覚えている機器は見たばかりなので、すぐ選ぶ画面を出す（待つと押した扱いが切れる）
-      if (!this.needTap) {
+      // 前の押しで続けて出せなかったときは、覚えている機器は見たばかりなので、すぐ選ぶ画面を出す（待つと押した扱いが切れる）。
+      // 覚えていた機器に選ばずにはつなげないブラウザ（Bluefy）も、覚えている機器は見ずに、押したその場で選ぶ画面を出す
+      const skip = memoryFails()
+      if (skip && !this.needTap) this.note('まとめて: 覚えていた機器につなげないブラウザなので、すぐ選ぶ画面を出す')
+      if (!this.needTap && !skip) {
         let timer: ReturnType<typeof setTimeout> | undefined
         const late = new Promise<void>((ok) => (timer = setTimeout(ok, RESTORE_WAIT * 1000)))
         await Promise.race([this.remembered('まとめて'), late])
@@ -482,6 +567,11 @@ export class SensorHub {
         node.buzzChar = null // 振動のない古いファーム
       }
       node.canBuzz = !!node.buzzChar
+      if (this.fromMemory.has(device)) {
+        // 覚えていた機器に選ばずにつなげた。このブラウザはつなげるので、次の「まとめてつなぐ」も覚えている機器から
+        this.fromMemory.delete(device)
+        setMemoryFails(false)
+      }
       this.set(node, 'connected')
       this.tick()
     } catch (e) {
@@ -490,12 +580,32 @@ export class SensorHub {
         setTimeout(() => void this.open(node, tries + 1, true), REJOIN_SEC * 1000)
         return
       }
+      // 覚えていた機器（getDevices）につなげなかった：やり直さずに枠を空け、選ぶ画面に回す（Bluefy は選んだ機器ならつながる）
+      if (this.fromMemory.has(device)) {
+        this.release(node, device, e)
+        return
+      }
+      // やり直しは待ってから返す（自動・まとめてつなぐが、つながったかを見てから次へ進めるように）
       if (tries + 1 < RETRIES && node.wanted) {
-        setTimeout(() => void this.open(node, tries + 1), 2000)
+        await wait(2000)
+        if (node.device === device && node.wanted) await this.open(node, tries + 1)
         return
       }
       this.set(node, 'error', `エラー（つなぐところ）：${describe(e)}`)
     }
+  }
+
+  // 覚えていた機器につなげなかった枠を空けて、「つなぐ」「まとめてつなぐ」で選べるようにする（エラーのまま残さない）
+  private release(node: Node, device: BtDevice, e: unknown) {
+    node.device = null
+    node.wanted = false
+    this.fromMemory.delete(device)
+    if (!this.nodes.some((n) => n.device === device)) device.gatt?.disconnect()
+    setMemoryFails(true)
+    // 「まとめてつなぐ」の途中なら、押した扱いはもう切れているはずなので、もう1回押して選ぶように出す
+    if (this.bulkBusy) this.needTap = true
+    this.note(`${node.place}（${node.name}）: 覚えていた機器に選ばずにはつなげない ${describe(e)}→選ぶ画面に回す`)
+    this.set(node, 'idle', `前の機器には選ばずにはつなげませんでした（${describe(e)}）。「まとめてつなぐ」か「つなぐ」で選んでください`)
   }
 
   private dropped(node: Node) {
@@ -546,13 +656,15 @@ export class SensorHub {
     node.status = status
     node.message = message ?? MESSAGE[status]
     if (status !== 'connected') node.rate = 0
+    // エラーになった枠は全部、知らせの文のまま diag に残す（走りの記録の sensor:ble で、画面を撮らなくても読めるように）
+    if (status === 'error') this.note(`${node.place}（${node.name}）エラー: ${node.message}`)
     this.refresh()
   }
 
   private refresh() {
     const left = this.left()
     if (!left) this.needTap = false
-    this.bulk = { busy: this.bulkBusy, left, needTap: this.needTap, diag: this.diag.map((d) => d.text) }
+    this.bulk = { busy: this.bulkBusy || this.restoring, left, needTap: this.needTap, diag: this.diag.map((d) => d.text) }
     this.views = this.nodes.map(({ place, name, status, message, battery, rate, lost, fw, canBuzz }) => ({ place, name, status, message, battery, rate, lost, fw, canBuzz }))
     for (const fn of this.watchers) fn()
   }

@@ -171,7 +171,19 @@ export interface RunLog {
   storage?: { usage?: number; quota?: number; persisted?: boolean }
 }
 
-export type SensorRunLean = { t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'camera'; cam?: number | null }
+// by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・speed（その速さで正しい胸の前傾。sensor/expect.ts）・camera（前の記録だけ：カメラの上体の増え + 5° で抑えた）。
+// speed のときは、使った速さ kmh（時速 km、分からなければ null）とその出どころ speedBy（belt・sensor・none）、よい例の上体 trunk（度）
+export type SensorRunLean = { t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'speed' | 'camera'; cam?: number | null; kmh?: number | null; speedBy?: 'belt' | 'sensor' | 'none'; trunk?: number }
+
+// 腰のスマホ（センサーランだけ。sensor/waist.ts）の2つの立ち方：t：決めた t、a・b：スマホの軸での重力の向き、deg：a と b の角度（度）、
+// mode：pose（b→a の向きに沿って見た）・fallback（差が小さい・片方だけ。b からの向きによらない角度）・none（測れなかった）
+export interface SensorWaistLog {
+  t: number
+  a?: [number, number, number]
+  b?: [number, number, number]
+  deg: number | null
+  mode: 'pose' | 'fallback' | 'none'
+}
 
 // センサーで知らせた項目ごとの回数（chest：猫背、head：頭が前、sit：接地が長い、longL・longR：左右差、stride：足が体より前に着く）
 export type SensorCounts = { chest: number; head: number; sit: number; longL: number; longR: number; stride: number }
@@ -217,6 +229,7 @@ export interface SensorLog {
   // 抑えたもの（by：sensor＝そのまま・cap＝上限・camera＝カメラの上体の増え）、カメラの上体の増え（cam、度）も
   runLean?: SensorRunLean
   pose?: SensorPoseLog // 2つの立ち方（胸）。前の記録にはない
+  waist?: SensorWaistLog // 腰のスマホの2つの立ち方（センサーランだけ。1秒ごとの値は sec の waist・wgx・wgy・wgz・wHz）。前の記録にはない
   cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]
   slips?: [number, number, number][] // 胸のセンサーがずれたとみなした [t, ずれを測るもとの基準（度）, 置き直した基準（度）]。見張る前の記録にはない
   // 頭が前に出たのを頭のセンサーで見た記録（胸と同じ形）。頭を見る前の記録にはない

@@ -2,7 +2,8 @@ import type { ReactNode } from 'react'
 import { LEVEL_LABEL, STEPS } from '../core/level'
 import { ABSENCE, BREAKDOWN, CUE, HIP_REF, LEVEL, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../core/params'
 import { BASELINE, CAM_YAW, CORRECT, FORM, FORM_SPEED, GAIT, GOOD, GOOD_SPEED, goodAt, HEAD_OPEN, HIP_MID, HUNCH, LANDING, LIMITS, REL_LIMITS, SETUP, STRICT, STRIDE } from '../modes/camera/params'
-import { SPEED_FIT } from '../modes/sensor/params'
+import { CHEST_EXPECT, SPEED_FIT } from '../modes/sensor/params'
+import { expectedChest } from '../modes/sensor/expect'
 import { ITEM_KEYS } from '../core/types'
 import { FORM_ORDER } from '../modes/camera/form'
 import { measure } from '../modes/camera/geometry'
@@ -13,13 +14,17 @@ import { HEAD as S_HEAD, HUNCH as S_HUNCH, POSE } from '../modes/sensor/params'
 // 2つの立ち方で、走っている間に猫背を見る仕組み（sensor/lean.ts の setPoses。数字は sensor/params.ts。どれも確かめ走の前の仮の値）
 const POSE_NOTE =
   `走っている間は、胸を開いた形（2つ目）を 0、いつもの形（1つ目）を 1 とした「猫背の割合」を見る。` +
-  `走ると体ごと足首から前に傾き、それも同じ向きに出るので、走り出し${S_HUNCH.learn}秒の前傾を差し引くが、${S_HUNCH.poseCap}°までにする` +
-  `（カメラ版は、カメラの上体の前傾の増え + ${S_HUNCH.poseCamSlack}°までにも抑える。カメラの上体には猫背がほとんど映らないため）。` +
-  `猫背のまま走り出しても、差し引けない分が線を越えて知らせる。胸の線は差し引いた分 + ${S_HUNCH.poseLine}°（どのレベルも同じ決まった度数。2つの差は向きと基準を決めるのに使い、線の幅には使わない。2つの差の割合で決めると、胸をよく開ける人ほど線が遠くなり、短い猫背（胸 +4〜6°）に届かなかった）、` +
+  `走ると体ごと足首から前に傾き、それも同じ向きに出る。胸は、走り出しの前傾ではなく、その速さで正しい前傾を差し引く：` +
+  `速さごとのよい例の上体（カメラの腰→肩の線の度）に、本人の胸とカメラの上体の違い ${CHEST_EXPECT.k}°（胸を開いて走った区間で、胸 − カメラの上体。仮。1本だけ）を足したもの` +
+  `（時速8kmで ${expectedChest(8).deg}°、時速10kmで ${expectedChest(10).deg}°）。速さはベルトの速さ、なければ足首のセンサーの見積もり、どちらもなければ講師の速さ（${expectedChest().deg}°）。` +
+  `走り出しの姿勢は基準にしない（猫背のまま走り出しても、正しい前傾より ${S_HUNCH.poseLine}° 以上前なら知らせる）。` +
+  `頭は、走り出し${S_HUNCH.learn}秒の前傾を ${S_HEAD.poseCap}°まで差し引く（走っても頭はあまり回らないため）。` +
+  `胸の線は差し引いた分 + ${S_HUNCH.poseLine}°（どのレベルも同じ決まった度数。2つの差は向きと基準を決めるのに使い、線の幅には使わない。2つの差の割合で決めると、胸をよく開ける人ほど線が遠くなり、短い猫背（胸 +4〜6°）に届かなかった）、` +
   `頭は max(${S_HEAD.poseMargin}°, ${S_HEAD.poseFrac} × 頭の差)。` +
   `${S_HUNCH.hold}秒続いたら震わせ、続けて${S_HUNCH.poseBackoffAfter}回のあとは${S_HUNCH.poseBackoffEvery}秒ごとに知らせ直す。` +
   `線を越えた向きが猫背としてありうる（猫背の向きに沿った傾きが「2つの差 × ${S_HUNCH.poseIdxMin} と線の幅の小さいほう」〜「2つの差 × ${S_HUNCH.poseSlipIdx}」、横の傾きが小さい）間は、センサーのずれとはみなさず黙らない（横に回った・大きすぎるときは今までどおりずれとみなす）。` +
-  `2つの差が小さい人（例：差 8°・体ごとの前傾 5°）は、猫背のまま走り出すと知らせられない。`
+  `本人の胸とカメラの上体の違いは、カメラと胸を同時に記録したトレッドミルの走りから決める（ほかの人の値はまだない）。` +
+  `その違いは胸を開いた走りで測るので、カメラのよい例より上体を起こして走る人は、そのぶん胸が丸まっていても線の内に入る（胸のセンサーは、上体の前傾と背中の丸まりを分けられない）。`
 
 // 判定のロジック：アプリが実際に使っている数字（params.ts）を、そのまま埋め込んで説明する
 // 数字を直したら、このページの説明も自動で変わる
@@ -112,6 +117,9 @@ export function Logic() {
           頭のセンサー（おでこにヘッドバンドで付ける）：走り出して{S_HEAD.poseStart}秒から、顎を引いた頭（2つ目）より線（違いの{S_HEAD.poseFrac}倍、少なくとも{S_HEAD.poseMargin}°）を越えたまま{S_HEAD.poseHold}秒続くと、頭を震わせて知らせる。いつもの頭のまま走り出しても、それを「ふつう」にしない。
           最初の{S_HEAD.poseBackoffAfter}回は{S_HEAD.cooldown}秒ごと、そのあとは{S_HEAD.poseBackoffEvery}秒ごと。直して{S_HEAD.posePraise}秒たつと、短く2回震わせてほめる。声は出さない（カメラ版はカメラが頭の声を言う）。
           走ると体は前に傾くが、頭はあまり回らないので、走る前傾として差し引くのは{S_HEAD.poseCap}°まで。センサーに見えるのは頭の回り方だけで、頭が前へずれる（顎を突き出す）のは回り方が変わらないと見えず、下を向いたのとも分けられない。
+        </Row>
+        <Row>
+          <Mark>仮</Mark>腰のスマホ（センサーランで、腰のポーチに入れて持つスマホ）：スマホの動きのセンサーで骨盤の向きを、胸と同じ2つの立ち方を基準に1秒ごとに記録する。まだ知らせには使わない（記録で、カメラの骨格とどれだけ合うかを確かめてから決める）。画面が消えている間は値が来ないので、記録は途切れる。
         </Row>
       </Step>
 

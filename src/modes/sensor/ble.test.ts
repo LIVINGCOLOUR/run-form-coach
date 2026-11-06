@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { placeFor, SensorHub, sensors, whose } from './ble'
+import { describeError, placeFor, SensorHub, sensors, whose } from './ble'
 import { SLOTS } from './params'
 
 // どのセンサーかの見分け（名前でなく、つないでから読む型番 0x2A24 で。iPhone が「AdaDFU」の名前を覚えたままになるため）
@@ -41,12 +41,15 @@ describe('押した枠とつないだセンサー（placeFor）', () => {
 })
 
 // 名前が AdaDFU のままの機器を、つないでから型番で見分けて、正しい枠につなぐ
-function fakeDevice(name: string, model: string) {
+function fakeDevice(name: string, model: string, refuse?: unknown) {
   const text = (s: string) => ({ readValue: async () => new DataView(new TextEncoder().encode(s).buffer) })
   const ch = Object.assign(new EventTarget(), { startNotifications: async () => ch, readValue: async () => new DataView(new ArrayBuffer(2)) })
   const server = {
     connected: true,
-    connect: async () => server,
+    connect: vi.fn(async () => {
+      if (refuse !== undefined) throw refuse
+      return server
+    }),
     disconnect: vi.fn(),
     getPrimaryService: async (u: string) => ({
       getCharacteristic: async (c: string) => {
@@ -97,7 +100,7 @@ describe('まとめてつなぐ（connectAll）', () => {
   const placeOf = (hub: SensorHub, name: string) => hub.snapshot().find((n) => n.name === name)!
   const tapError = () => Object.assign(new Error('Must be handling a user gesture to show a permission request.'), { name: 'SecurityError' })
   const setup = (bluetooth: object) => {
-    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} })
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
     vi.stubGlobal('navigator', { bluetooth })
     return new SensorHub()
   }
@@ -171,5 +174,115 @@ describe('まとめてつなぐ（connectAll）', () => {
     await hub.connectAll()
     expect(requestDevice).toHaveBeenCalledTimes(1)
     expect(hub.bulkSnapshot()).toMatchObject({ needTap: false, left: named.length })
+  })
+})
+
+describe('エラーの中身（describeError）', () => {
+  it('Error でないものは型を付ける（Bluefy の数字だけのエラー）', () => {
+    expect(describeError(2)).toBe('number 2')
+    expect(describeError('x')).toBe('string x')
+    expect(describeError({ code: 2 })).toBe('object {"code":2}')
+    expect(describeError(null)).toBe('null')
+    expect(describeError(Object.assign(new Error('m'), { name: 'NetworkError' }))).toBe('NetworkError: m')
+  })
+})
+
+// Bluefy（2026-11-06）：getDevices で覚えていた機器は gatt.connect() を数字の 2 で断り、選ぶ画面で選んだ機器はつながる
+describe('覚えていた機器につなげないブラウザ（Bluefy）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+  const named = SLOTS.filter((s) => s.name).map((s) => s.name!)
+  const placeOf = (hub: SensorHub, name: string) => hub.snapshot().find((n) => n.name === name)!
+  const setup = (store: Map<string, string>) => {
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+    })
+    // 名前がセンサーの形のもの（open でつなぎにいく）と AdaDFU のもの（型番を読みにいく）の両方
+    const memory = named.map((m, k) => fakeDevice(k % 2 ? 'AdaDFU' : m, m, 2))
+    let next = 0
+    const order = [...named].reverse() // 選ぶ順は問わない
+    const requestDevice = vi.fn(async () => fakeDevice('AdaDFU', order[next++]))
+    vi.stubGlobal('navigator', { bluetooth: { requestDevice, getDevices: async () => memory } })
+    return { hub: new SensorHub(), requestDevice, memory }
+  }
+
+  it('自動でつなげなければ枠を空け（エラーにしない）、まとめてつなぐは覚えている機器を見ずに選ぶ画面で全部つなぐ', async () => {
+    const store = new Map<string, string>()
+    const { hub, requestDevice, memory } = setup(store)
+    await hub.restore()
+    for (const m of named) {
+      expect(placeOf(hub, m).status).toBe('idle')
+      expect(placeOf(hub, m).message).not.toContain('エラー（つなぐところ）')
+    }
+    expect(store.get('rfc.rememberedFails')).toBe('1')
+    const before = memory.map((d) => d.gatt.connect.mock.calls.length)
+    expect(hub.bulkSnapshot()).toMatchObject({ busy: false, needTap: false, left: named.length })
+    const diag = hub.bulkSnapshot().diag.join('\n')
+    expect(diag).toContain('number 2')
+    expect(diag).toContain('→選ぶ画面に回す')
+    expect(diag).toContain('watchAdvertisements なし')
+
+    await hub.connectAll()
+    expect(requestDevice).toHaveBeenCalledTimes(named.length)
+    for (const m of named) expect(placeOf(hub, m).status).toBe('connected')
+    // まとめてつなぐは、覚えていた機器にもう一度つなぎにいかない
+    expect(memory.map((d) => d.gatt.connect.mock.calls.length)).toEqual(before)
+    expect(hub.bulkSnapshot()).toMatchObject({ needTap: false, left: 0 })
+    expect(hub.bulkSnapshot().diag.join('\n')).toContain('すぐ選ぶ画面を出す')
+  })
+
+  it('はじめてでも（覚えがなくても）、覚えていた機器につなげなかった枠は選ぶ画面に回り、全部つながる', async () => {
+    const store = new Map<string, string>()
+    const { hub, requestDevice } = setup(store)
+    await hub.connectAll()
+    expect(requestDevice).toHaveBeenCalledTimes(named.length)
+    for (const m of named) expect(placeOf(hub, m).status).toBe('connected')
+    expect(store.get('rfc.rememberedFails')).toBe('1')
+  })
+
+  it('自動のつなぎ直しの途中は、まとめてつなぐを始めない（同じ機器を2回つなぎにいかない）', async () => {
+    const { hub, requestDevice, memory } = setup(new Map())
+    const auto = hub.restore()
+    expect(hub.bulkSnapshot().busy).toBe(true)
+    await hub.connectAll()
+    expect(requestDevice).not.toHaveBeenCalled()
+    await auto
+    expect(hub.bulkSnapshot().busy).toBe(false)
+    // 覚えていた機器それぞれに、つなぎにいったのは1回だけ
+    for (const d of memory) expect(d.gatt.connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('自動では、つなぐ前に広告を聞く（watchAdvertisements があれば）', async () => {
+    const { hub, memory } = setup(new Map())
+    for (const d of memory) {
+      Object.assign(d, {
+        watchAdvertisements: vi.fn(async () => {
+          queueMicrotask(() => d.dispatchEvent(new Event('advertisementreceived')))
+        }),
+      })
+    }
+    await hub.restore()
+    expect(hub.bulkSnapshot().diag.join('\n')).toContain('広告あり')
+  })
+
+  it('選んだ機器でもつなげずエラーになったら、エラーの中身を型つきで diag に残す', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
+      vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => fakeDevice('RFC-IMU-2', 'RFC-IMU-2', 2) } })
+      const hub = new SensorHub()
+      const chest = SLOTS.findIndex((s) => s.name === 'RFC-IMU-2')
+      const done = hub.connect(chest)
+      await vi.runAllTimersAsync()
+      await done
+      expect(hub.snapshot()[chest].status).toBe('error')
+      expect(hub.snapshot()[chest].message).toBe('エラー（つなぐところ）：number 2')
+      expect(hub.bulkSnapshot().diag.join('\n')).toContain('（RFC-IMU-2）エラー: エラー（つなぐところ）：number 2')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

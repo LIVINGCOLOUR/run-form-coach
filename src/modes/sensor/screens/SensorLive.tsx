@@ -9,10 +9,15 @@ import type { GpsStatus } from '../gps'
 import { SensorRunner, type SensorRunPhase } from '../runner'
 import { SensorRunLog } from '../runLog'
 import { SENSOR_RUN_NAME } from '../name'
+import { parseKmh } from '../../camera/belt'
+import { SPEED_FIT } from '../params'
+import { fitSpeedA, saveSpeedFit } from '../speedFit'
 
 // センサーラン：カメラなし・腰にスマホなしで、体に付けたセンサーだけで外を走る（スマホはポケットかアームバンド。画面は見ない）。
 // 知らせは振動だけ（胸の猫背・頭が前に出る・接地が長い・左右差。ずれは短く3回、頭と接地は直ったら短く2回）。声は、立つ・待つの案内と、終わりの言葉だけ。
 // 立った姿勢と走っているかは、センサーで決める（runner.ts）。記録は 60秒ごとに端末へ書き出す（runLog.ts。7時間まで）
+// 腰のポーチに入れたこのスマホの向きも記録する（waist.ts。知らせには使わない）。トレッドミルで走るときは、走り出す前にベルトの速さを入れられる
+// （胸の、その速さで正しい前傾と、足首の速さの式の人ごとの合わせに使う。外で走ることが多いので、カメラ版と違い前回の値は入れておかない）
 
 const PHASE_TEXT: Record<SensorRunPhase, { label: string; text: string }> = {
   stand: { label: 'STAND 1/2', text: 'いつもの楽な立ち方で、3秒止まってください' },
@@ -37,6 +42,10 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
   const [wake, setWake] = useState(false)
   const [holding, setHolding] = useState(false)
   const finishRef = useRef<() => void>(() => {})
+  const [beltText, setBeltText] = useState('')
+  const beltRef = useRef<number | undefined>(undefined)
+  beltRef.current = parseKmh(beltText)
+  const beltInvalid = beltText.trim() !== '' && beltRef.current === undefined
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
 
@@ -50,6 +59,8 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       say: (text) => speak(text),
       speaking: voicePending,
       gps: true,
+      waist: true,
+      belt: () => beltRef.current,
       onChange: () => {
         setPhase(runner.phase)
         setStage(runner.stage)
@@ -68,6 +79,16 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       finished = true
       clearInterval(ui)
       speak(PHRASES.end)
+      const t = performance.now() / 1000
+      const belt = beltRef.current
+      rec.event(t, belt === undefined ? 'belt:none' : `belt:kmh ${belt}`)
+      // ベルトの速さが分かっていて、足首の1歩が足りれば、速さの式をこの人に合わせて端末に残す（speedFit.ts。カメラ版と同じ）
+      const steps = runner.session.contactSteps.map((x) => x.s)
+      if (belt !== undefined && steps.length >= SPEED_FIT.minSteps) {
+        const fit = fitSpeedA(steps, belt)
+        const a = saveSpeedFit(fit)
+        if (fit) rec.event(t, `speedFit:A ${fit.speedA} n ${fit.n} spread ${fit.spread} use ${a}`)
+      }
       await rec.finish()
       queueUpload('sensor', rec.log.id, rec.log.startedAt)
       onDone(rec.log.id)
@@ -118,6 +139,29 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
         </div>
       )}
 
+      {(phase === 'stand' || phase === 'ready') && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+            <span style={{ flexGrow: 1 }}>トレッドミルなら、ベルトの速さ（時速 km）</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step={0.1}
+              min={SPEED_FIT.kmhMin}
+              max={SPEED_FIT.kmhMax}
+              placeholder="外なら空欄"
+              aria-label="ベルトの速さ（時速 km）"
+              value={beltText}
+              onChange={(e) => setBeltText(e.target.value)}
+              style={{ width: 120, padding: '8px 10px', borderRadius: 10, border: `1px solid ${beltInvalid ? 'var(--warn)' : 'var(--line)'}`, background: 'rgba(255,255,255,0.06)', color: 'var(--text)', fontSize: 16, fontFamily: 'var(--num)' }}
+            />
+          </label>
+          <div style={{ fontSize: 11, lineHeight: 1.5 }} className="muted">
+            {beltInvalid ? `時速${SPEED_FIT.kmhMin}〜${SPEED_FIT.kmhMax}kmの数字を入れてください（このままだと使いません）` : '入れると、胸の「この速さで正しい前傾」と、足首のセンサーの速さの合わせに使います。走り出す前に入れてください'}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Chip ok={on.length > 0} label={`センサー ${on.length}個`} />
         {lost.length > 0 && <Chip ok={false} label={`切れた：${lost.map((n) => n.place).join('・')}（つなぎ直しています）`} />}
@@ -127,7 +171,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       <div className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>
         画面を消さないでください（消えると、センサーの値の受け取りや振動が止まるおそれがあります）。
         {wake ? '画面の明るさを下げておくと、電池が長くもちます。' : '設定の「画面表示と明るさ」→「自動ロック」を「なし」にし、明るさを下げてください。'}
-        ポケットに入れるときは、画面を体の側に向けてください。
+        ポケットに入れるときは、画面を体の側に向けてください。腰のポーチに入れると、このスマホの向きも記録します（画面が消えている間は記録が途切れます）。
       </div>
 
       <div style={{ flexGrow: 1 }} />

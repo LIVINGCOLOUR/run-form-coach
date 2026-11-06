@@ -4,10 +4,12 @@ import { speak, voiceBusy } from '../../core/voice'
 import { sensors } from './ble'
 import { ContactCoach, type ContactKey } from './contactCoach'
 import type { GpsSec } from './gps'
+import { expectedChest, type ExpectLean } from './expect'
 import { angleDeg, HeadYield, LeanDetector, type CamValues } from './lean'
 import type { Vec3 } from './parse'
 import { SensorRecorder } from './log'
 import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
+import type { WaistPhone } from './waist'
 
 // 1回の走りの間、つないだセンサーの値を記録し、胸で猫背を、頭で頭が前に出たのを見て、その場所を震わせる（runner.ts の SensorRunner から使う）。
 // 区切りは外から渡す：立った姿勢を取った時刻（stand）と、走っているか（tick）。カメラ版はカメラの直立の基準と歩数で決めた「走っている」、
@@ -38,8 +40,9 @@ const r3n = (x: number | null | undefined) => (x === null || x === undefined || 
 
 // 1秒ごとのまとめ（SensorLog の sec）の欄：t・走っているか（1/0）・胸の傾きと基準（度）・頭の傾きと基準・体を曲げている（1/0）・
 // 接地の割合・左右の接地時間（ms）・見積もった速さ（km/h）・ピッチ（歩/分）・胸と頭の猫背の割合（2つの立ち方で見たとき。b ＝ 0、a ＝ 1）・
-// GPS（センサーランだけ。gps.ts）の速さ（km/h）と横の誤差（m）・高さ（m）と高さの誤差（m）。値がなければ null
-export const SEC_COLS = ['t', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx', 'gpsV', 'gpsAcc', 'alt', 'altAcc']
+// GPS（センサーランだけ。gps.ts）の速さ（km/h）と横の誤差（m）・高さ（m）と高さの誤差（m）・
+// 腰のスマホ（センサーランだけ。waist.ts）の傾き（度。b から。2つの立ち方の差が小さければ向きによらない角度）と、ならした重力の向き（スマホの軸、長さ1）・その1秒に届いた値の数。値がなければ null
+export const SEC_COLS = ['t', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx', 'gpsV', 'gpsAcc', 'alt', 'altAcc', 'waist', 'wgx', 'wgy', 'wgz', 'wHz']
 
 const zeroCounts = (): SensorCounts => ({ chest: 0, head: 0, sit: 0, longL: 0, longR: 0, stride: 0 })
 
@@ -74,10 +77,20 @@ export class SensorSession {
   // 胸の猫背を先に：胸が線を越えている・上がってきている間は、頭の知らせを待たせる（lean.ts の HeadYield）
   private headYield = new HeadYield()
 
-  // onEvent：区切り（覚えた・知らせた）を、カメラの記録の events にも残す。level：ランナーのレベル（胸の線を選ぶ）
-  constructor(onEvent: (t: number, text: string) => void, level?: Level) {
+  // 胸の、その速さで正しい前傾（expect.ts）を決めるための速さ：ベルトの速さ（入れたとき）、足首のセンサーの見積もり（走っている間の tick ごと、直近 learn 秒）
+  private belt: () => number | undefined
+  private speeds: { t: number; v: number }[] = []
+  // 腰のスマホの向き（センサーランだけ。記録するだけ）
+  private waist: WaistPhone | null
+
+  // onEvent：区切り（覚えた・知らせた）を、カメラの記録の events にも残す。level：ランナーのレベル（胸の線を選ぶ）。
+  // belt：ベルトの速さ（時速 km。入れていなければ undefined）。waist：腰のスマホの向き（センサーランだけ）
+  constructor(onEvent: (t: number, text: string) => void, level?: Level, o: { belt?: () => number | undefined; waist?: WaistPhone | null } = {}) {
     this.parts = partsFor(level).map((x) => ({ ...x, d: new LeanDetector(x.p), node: SLOTS.findIndex((s) => s.place === x.p.place) }))
     this.onEvent = onEvent
+    this.belt = o.belt ?? (() => undefined)
+    this.waist = o.waist ?? null
+    for (const x of this.parts) if (x.p.poseSpeed) x.d.expect = () => this.expectLean()
     this.off = sensors.onPacket((node, t, p) => {
       this.rec ??= new SensorRecorder(SLOTS.map((s) => ({ place: s.place, name: s.name ?? '' })))
       this.rec.add(node, t, p.range, p.samples)
@@ -95,6 +108,14 @@ export class SensorSession {
         this.connected[i] = now
       })
     })
+  }
+
+  // その速さで正しい胸の前傾：ベルトの速さ → 足首のセンサーの見積もり（直近 HUNCH.learn 秒の真ん中）→ どちらもなければ速さの分からない値
+  private expectLean(): ExpectLean {
+    const belt = this.belt()
+    if (belt !== undefined && Number.isFinite(belt)) return expectedChest(belt, 'belt')
+    const vs = this.speeds.map((x) => x.v).sort((a, b) => a - b)
+    return vs.length ? expectedChest(vs[vs.length >> 1], 'sensor') : expectedChest()
   }
 
   // 胸の記録はいちばん上の stand / runLean / cues、頭は head の中（core/types.ts の SensorLog）
@@ -128,6 +149,8 @@ export class SensorSession {
     }
     if (cam) this.poseCam[which] = cam
     if (got.length) this.onEvent(t, `sensor:pose ${which} ${got.join('・')}${cam ? ` cam ${cam.trunk.toFixed(1)}/${cam.head.toFixed(1)}` : ''}`)
+    // 腰のスマホも同じ3秒で測る（測れなくても、胸と頭の結果は変えない）
+    if (got.length) this.waist?.pose(which, t, sec)
     return got.length > 0
   }
 
@@ -153,6 +176,8 @@ export class SensorSession {
     }
     const camB = this.poseCam.b?.trunk ?? null
     const out: PoseResult = { retry: false, parts: [] }
+    const w = this.waist?.calibrate(t)
+    if (w && this.rec) this.rec.log.waist = w
     for (const { x, deg } of parts) {
       const da = a[x.key]
       const db = b[x.key] ?? da
@@ -188,6 +213,10 @@ export class SensorSession {
   // gps：センサーランで、いまの GPS の速さと高さ（1秒ごとのまとめに残すだけ。知らせには使わない）
   tick(t: number, running: boolean, cam: CamValues | null = null, gps: GpsSec | null = null) {
     let chestCued = false
+    // 足首のセンサーの速さ（胸の正しい前傾を決めるため。走っている間だけ、直近 HUNCH.learn 秒）
+    const v = this.contact.last?.v
+    if (running && v !== undefined && Number.isFinite(v)) this.speeds.push({ t, v })
+    while (this.speeds.length && t - this.speeds[0].t > HUNCH.learn) this.speeds.shift()
     for (const x of this.parts) {
       // 頭は、胸で体を曲げたと分かっていれば止める（胸を先に見る）。胸の猫背が線を越えている・上がってきている間は、頭の知らせを待たせる（HeadYield）
       const chest = this.parts.find((y) => y.key === 'chest')
@@ -201,9 +230,11 @@ export class SensorSession {
       }
       if (r.learned !== undefined && this.rec) {
         const off = x.d.offset
-        this.slot(x.key).runLean = { t: r2(t), deg: Math.round(r.learned * 10) / 10, ...(off && { offset: Math.round(off.deg * 10) / 10, by: off.by, cam: r1n(off.cam) }) }
-        // 2つの立ち方で見るときは、差し引いた分とその決め方も：sensor:runLean 18.2 offset 10.0 cap
-        this.onEvent(t, `${x.ev.lean} ${r.learned.toFixed(1)}${off ? ` offset ${off.deg.toFixed(1)} ${off.by}${off.cam !== null ? ` cam ${off.cam.toFixed(1)}` : ''}` : ''}`)
+        const sp = off?.by === 'speed' ? { kmh: off.kmh ?? null, speedBy: off.speedBy, trunk: off.trunk } : {}
+        this.slot(x.key).runLean = { t: r2(t), deg: Math.round(r.learned * 10) / 10, ...(off && { offset: Math.round(off.deg * 10) / 10, by: off.by, cam: r1n(off.cam), ...sp }) }
+        // 2つの立ち方で見るときは、差し引いた分とその決め方も：sensor:runLean 18.2 offset 19.2 speed 7.6 sensor（胸）・sensor:headLean 7.8 offset 3.0 cap（頭）
+        const spText = off?.by === 'speed' ? ` ${off.kmh ?? '-'} ${off.speedBy}` : ''
+        this.onEvent(t, `${x.ev.lean} ${r.learned.toFixed(1)}${off ? ` offset ${off.deg.toFixed(1)} ${off.by}${spText}${off.cam !== null ? ` cam ${off.cam.toFixed(1)}` : ''}` : ''}`)
       }
       // ずれとみなした：短く3回震わせる（崩れの1秒1回と分ける）。声は出さない。走ったあとの結果の画面で「付け直して」と知らせる（SlipNote.tsx）
       if (r.slip) {
@@ -227,6 +258,7 @@ export class SensorSession {
     }
     this.resolveHead(t, running, chestCued)
     this.tickContact(t, running)
+    this.waist?.tick(t)
     this.tickLog(t, running, gps)
   }
 
@@ -270,10 +302,12 @@ export class SensorSession {
       const h = this.lastLean.head
       const m = this.contact.last
       const idx = (key: Key) => r3n(this.parts.find((y) => y.key === key)?.d.index(this.lastLean[key].tilt))
+      const w = this.waist?.second(t) ?? null
       this.rec.second(SEC_COLS, [
         r2(t), running ? 1 : 0, r1n(c.tilt), r1n(c.ref), r1n(h.tilt), r1n(h.ref), c.bent || h.bent ? 1 : 0,
         r3n(m?.df), r1n(m ? m.ctL * 1000 : null), r1n(m ? m.ctR * 1000 : null), r1n(m?.v), r1n(m?.cad), idx('chest'), idx('head'),
         r1n(gps?.v), r1n(gps?.acc), r1n(gps?.alt), r1n(gps?.altAcc),
+        r1n(w?.tilt), r3n(w?.g?.[0]), r3n(w?.g?.[1]), r3n(w?.g?.[2]), w ? w.n : null,
       ])
     }
     if (t >= this.nextBat) {
@@ -332,6 +366,7 @@ export class SensorSession {
   finish(): SensorLog | undefined {
     this.off()
     this.offStatus()
+    this.waist?.stop()
     if (!this.rec) return undefined
     this.rec.finish()
     this.fillNodes(this.rec.log)
