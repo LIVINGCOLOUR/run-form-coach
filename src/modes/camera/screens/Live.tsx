@@ -544,7 +544,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         }
       }
 
-      // 基準がなかなか取れないときは、立ち方をもう一度言う
+      // 基準がなかなか取れないときは、立ち方をもう一度言う。間隔は言い終えてから数える
+      // （2026-11-06：言った時から数えていたので、胸を開く案内 7.5秒→10.4秒 では言い終えてから測る4秒が取れる前に言い直し、何度も繰り返した）
+      if (phase === 'baseline' && voicePending()) lastNextSay = t
       if (phase === 'baseline' && t - lastNextSay > BASELINE.repeat) {
         lastNextSay = t
         say(poseStage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen, t)

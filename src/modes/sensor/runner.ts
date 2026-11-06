@@ -155,7 +155,11 @@ export class SensorRunner {
     }
     // 立った姿勢：まだ覚えていなくて、止まっている間に胸と頭が3秒じっとしたら測る
     // 案内を聞いている間に姿勢を直すので、言い終える前の3秒は使わない
-    if (this.o.speaking?.()) this.quietSince = null
+    // 話している間は言い直しの間隔も数えない（言い終えてから数える。長い案内で、測る前に言い直さないため）
+    if (this.o.speaking?.()) {
+      this.quietSince = null
+      if (this.lastSay > -Infinity) this.lastSay = t
+    }
     else this.quietSince ??= t
     const quiet = this.quietSince !== null && t - this.quietSince >= STILL.sec
     const two = !!this.o.say // センサーラン：2つの立ち方。腰スマホ：今までどおり1つ
