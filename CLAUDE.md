@@ -65,7 +65,7 @@
   - カメラ版・スマホ版・センサーの記録は、走っている間60秒ごとに端末へ書き出す（`src/core/logChunks.ts`。上限なし、7時間まで確かめた）。端末に残すのは新しい20本（`uploads.ts` の `KEEP_RUNS`。テスト期間の決まり）で、それより古いものは Mac へ送れたものだけ消す。
   - 2時間より長い記録は2時間ごとのファイル（`…-p1of4.json.gz`）に分けて送り、`npm run logs` が全部そろってから1つにつなぐ。
   - Mac では `npm run logs` で一覧を出し、まだのものを `RFC_RUNS_DIR`（既定 ~/Developer/research-data/runs/）に取ってくる（`npm run compare` にそのまま渡せる形）。
-- 答えつきの記録・確かめ走・採点（`npm run drill`・`npm run drill:pose`・`npm run grade`）と、カメラ（横の Android）とセンサーラン（腰の iPhone）を別々のスマホで記録して時計で合わせる突き合わせ（`npm run drill:merge`・`npm run merge`）は `docs/validation-plan.md`。センサーとカメラの突き合わせ（`npm run compare:sensor`・`npm run replay:sensor`）は `docs/sensor-mode.md`。
+- 答えつきの記録・確かめ走・採点（`npm run drill`・`npm run drill:pose`・`npm run grade`）と、カメラ（横の iPhone）とセンサーラン（腰の iPhone）を別々のスマホで記録して時計で合わせる突き合わせ（`npm run drill:merge`・`npm run merge`）は `docs/validation-plan.md`。センサーとカメラの突き合わせ（`npm run compare:sensor`・`npm run replay:sensor`）は `docs/sensor-mode.md`。
 
 ## 守ること
 

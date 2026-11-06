@@ -141,4 +141,4 @@
 
 ## Android で使うとき
 
-テスト用の Android（Huawei P20 lite、Chrome 132）では、まだ実機で動かしていない。コードを読んで確かめたこと（傾きセンサーの許可・`noRoll`・カメラの選び方）と、コマ数が足りないおそれ（未確認）は `docs/validation-plan.md` の「Android でのカメラ版」。
+使わない（2026-11-06 の本人の決め）。テスト用の Android（Huawei P20 lite）では骨格が毎秒2.4〜2.6コマしか取れず、走り出しの判定が約67秒遅れた。遅い機種には合わせない。くわしくは `docs/validation-plan.md` の「Android は使わない」。
