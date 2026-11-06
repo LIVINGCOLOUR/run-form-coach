@@ -165,8 +165,15 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     const r = new SensorRunner({ onEvent: (t, text) => events.push([t, text]), say: (x) => said.push(x) })
     let t = performance.now() / 1000
     expect(r.phase).toBe('stand')
-    // ポケットに入れる間（揺れる）
+    // ポーチに入れる間（揺れる）。SENSOR_RUN_SAY.pouch 秒は何も言わない
     t = send('胸', 'walk', t, 3, r)
+    expect(said).toEqual([])
+    // ポーチに入れ終えてじっとしていても、pouch 秒までは測らない（ここで a を測ってしまっていた。2026-11-06）
+    t = send('胸', 'slouch', t, 1.5, r)
+    expect(said).toEqual([])
+    expect(r.stage).toBe('a')
+    // pouch 秒を過ぎたら、最初に「いつもの楽な立ち方」を言う
+    t = send('胸', 'slouch', t, 1, r)
     expect(said[0]).toBe(PHRASES.poseHabit)
     expect(r.stoodAt).toBe(null)
     // a：いつもの楽な立ち方（猫背）。3秒じっとしたら、b の案内に進む

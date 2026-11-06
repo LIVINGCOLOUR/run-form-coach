@@ -64,6 +64,7 @@ export class SensorRunner {
   private offPacket: () => void = () => {}
   private onVisible: () => void
   private lastTick: number
+  private readonly t0: number // 始めた t（センサーランは、ここから SENSOR_RUN_SAY.pouch 秒はポーチに入れる間）
   private lastSay: number
   private started = false // 一度でも走り出した
   private quietSince: number | null = null // 案内の声が終わった t
@@ -78,6 +79,7 @@ export class SensorRunner {
     this.session.voice = !!o.voice
     this.gate = o.running ? null : new MotionGate()
     const t0 = now()
+    this.t0 = t0
     this.lastTick = t0
     // 走る前に「まとめてつなぐ」で起きたこと（Bluefy でどう動いたかを、送った記録で確かめるため。ble.ts の diag）
     for (const d of sensors.diag) o.onEvent(t0, `sensor:ble ${d.text}（${Math.round(t0 - d.t)}秒前）`)
@@ -170,13 +172,16 @@ export class SensorRunner {
     // 立った姿勢：まだ覚えていなくて、止まっている間に胸と頭が3秒じっとしたら測る
     // 案内を聞いている間に姿勢を直すので、言い終える前の3秒は使わない
     // 話している間は言い直しの間隔も数えない（言い終えてから数える。長い案内で、測る前に言い直さないため）
-    if (this.o.speaking?.()) {
+    const two = !!this.o.say // センサーラン：2つの立ち方。腰スマホ：今までどおり1つ
+    // センサーラン：始めてから pouch 秒は、スマホをポーチに入れる間。何も言わず、測らず、じっとした時間も数えない
+    //   （押してすぐ案内すると、ポーチに入れている間に「いつもの立ち方」を測ってしまう）
+    const pouching = two && t - this.t0 < SENSOR_RUN_SAY.pouch
+    if (this.o.speaking?.() || pouching) {
       this.quietSince = null
       if (this.lastSay > -Infinity) this.lastSay = t
     }
     else this.quietSince ??= t
     const quiet = this.quietSince !== null && t - this.quietSince >= STILL.sec
-    const two = !!this.o.say // センサーラン：2つの立ち方。腰スマホ：今までどおり1つ
     if (this.stoodAt === null && !running && quiet && gate.still(t)) {
       if (!two) {
         if (this.session.stand(t, STILL.sec)) {
@@ -204,7 +209,7 @@ export class SensorRunner {
       }
     }
     // 案内（声）：立つ前は、いま測る立ち方（言い直しも）、覚えてから走り出すまでは「走り出すと始まります」。走り出したあとは言わない
-    if (!running && !this.started) {
+    if (!running && !this.started && !pouching) {
       if (this.stoodAt === null && this.needsStand()) {
         if (t - this.lastSay >= SENSOR_RUN_SAY.standRepeat) this.speak(t, !two ? PHRASES.baseStand : this.stage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen)
       } else if (t - this.lastSay >= SENSOR_RUN_SAY.waitRepeat) this.speak(t, PHRASES.waitRun)

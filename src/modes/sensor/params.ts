@@ -487,7 +487,9 @@ export const RUN_GATE = {
 export const STILL = { sec: 3, accStd: 0.03, gyroMed: 15, gyroP90: 30, minN: 50, places: ['胸', '頭'] }
 // センサーランの案内（声）。立った姿勢が取れるまで、この間隔（秒）で、いま測る立ち方の案内を言い直す。
 // 立った姿勢を覚えてから走り出すまでは「走り出すと始まります」を言い直す（走り出したあとの信号待ちでは言わない）
-export const SENSOR_RUN_SAY = { standRepeat: 20, waitRepeat: 30 }
+// pouch：「はじめる」を押してから、スマホを腰のポーチに入れるまで待つ（秒）。その間は何も言わず、立ち方も測らない。
+//   2026-11-06 の試走：押してすぐ「いつもの楽な立ち方で」と言い、ポーチに入れている間（7秒後）に a を測ってしまった。本人は、いつもの立ち方を聞かれなかったと感じた。本人「5秒ぐらい」
+export const SENSOR_RUN_SAY = { standRepeat: 20, waitRepeat: 30, pouch: 5 }
 
 // 腰のスマホ（センサーランで腰のポーチに入れて持つスマホ。waist.ts）の向き。記録するだけで、知らせには使わない（2026-11-06 本人の決め。まず記録で確かめる）。
 //   スマホの動きのセンサー（DeviceMotion の accelerationIncludingGravity）を ema でならした向きを重力の向きにする（胸のセンサーと同じ見方。lean.ts）。
