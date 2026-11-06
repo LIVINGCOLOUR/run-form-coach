@@ -23,6 +23,9 @@ export function SensorResult({ logId, onHome }: { logId: string; onHome: () => v
   const s = log?.sensors
   const sum = log ? sensorRunCounts(log) : null
   const d = log ? new Date(log.startedAt) : null
+  // ベルトの速さを入れて、足首の速さの式をこの人に合わせたか（SensorLive.tsx の events：belt:kmh と speedFit:A）。入れたのが効いたと分かるように出す
+  const belt = log?.events.find((e) => /^belt:kmh /.test(e[1]))?.[1].split(' ')[1]
+  const fitted = log?.events.some((e) => /^speedFit:A /.test(e[1]))
   return (
     <main className="page" style={{ gap: 16 }}>
       <div className="row">
@@ -53,6 +56,13 @@ export function SensorResult({ logId, onHome }: { logId: string; onHome: () => v
             {sum.bends > 0 && <div className="muted" style={{ fontSize: 12 }}>体を大きく曲げた {sum.bends} 回は、走る姿勢ではないので知らせていません。</div>}
             {sum.capped > 0 && <div className="muted" style={{ fontSize: 12 }}>同じ知らせが1時間に {LIMIT.perHour} 回に達したので、その項目はその1時間の残りは知らせていません（{sum.capped} 回）。</div>}
           </div>
+          {belt && (
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
+              {fitted
+                ? `ベルトの速さ（時速${belt}km）に、足首で見積もる速さを合わせました。次の走りから使います。`
+                : `ベルトの速さ（時速${belt}km）を使いました。走った歩数が足りず、足首で見積もる速さはまだ合わせていません。`}
+            </div>
+          )}
           {slipNotes(s).map((n) => (
             <div key={n} style={{ color: 'var(--warn)', fontSize: 14, fontWeight: 700, lineHeight: 1.6 }}>{n}</div>
           ))}

@@ -3,13 +3,13 @@ import type { Step } from './contact'
 
 // 足首のセンサーの速さの式（contact.ts：速さ = speedA + speedB × すねの振れ幅 ÷ 1歩き）を、人ごとに合わせる（2026-11-06 本人の決め「固定の線より、人ごとの較正を基準にする」）。
 //   RBDS（22人）の当てはめの speedA（−0.183）は、人によって ±0.30 m/s（±1.1 km/h）ずれる。自分の 2026-11-05（ベルト時速9.0km）は 8.1 km/h と低く出た。
-//   そこで、ベルトの速さ（真）が分かっている走り（トレッドミルのカメラ版で、走る前に入れたもの）が終わるごとに、その走りの1歩ごとの
+//   そこで、ベルトの速さ（真）が分かっている走り（トレッドミルのカメラ版かセンサーランで、ベルトの速さを入れたもの）が終わるごとに、その走りの1歩ごとの
 //   「ベルトの速さ − speedB × 振れ幅 ÷ 1歩き」の中央値をその人の speedA にする（fitSpeedA）。中央値なので、走り出し・歩き・ベルトの加減速の1歩に引きずられない。
 //   端末（localStorage）に直近 SPEED_FIT.keep 回の走りの値を残し、その中央値を使う（1回のベルトの速さの入れ間違いにも引きずられにくい）。
-//   RBDS の値から SPEED_FIT.maxOffset より離れた値は使わない（入れ間違い）。新しい端末・まだベルトの速さを入れていない人は RBDS の値のまま。
+//   使う値は RBDS の値から SPEED_FIT.maxOffset の内に収める（入れ間違い）。新しい端末・まだベルトの速さを入れていない人は RBDS の値のまま。
 //   外の走り（センサーラン）には真の速さがないので、合わせた式でそのまま見積もる。GPS の速さ（runner.ts の onGps、gps.ts）が来たら、
 //   ベルトの速さと同じく fitSpeedA に渡せば合わせられる（まだつないでいない：GPS の速さの精度を記録で確かめてから）
-//   使い方：走り終わり（Live.tsx）に saveSpeedFit(fitSpeedA(steps, beltKmh))。式に入れるのは applySpeedFit()（StepDetector を作るたびと、残したあと）
+//   使い方：走り終わり（カメラ版の Live.tsx、センサーランの SensorLive.tsx）に saveSpeedFit(fitSpeedA(steps, beltKmh))。式に入れるのは applySpeedFit()（StepDetector を作るたびと、残したあと）
 
 export interface SpeedFit {
   speedA: number // その走りで合わせた speedA（m/s）
