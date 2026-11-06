@@ -41,6 +41,8 @@ describe('送る鍵の確かめ', () => {
   it('名前は決まった形だけ', () => {
     expect(checkPathname(PATH)).toBe(true)
     expect(checkPathname('runs/camera/rfc-20261013-0712_log-1760307120000.json')).toBe(true)
+    expect(checkPathname('runs/sensor/rfc-sensor-20261106-1912_sensor-log-1793960000000.json.gz')).toBe(true)
+    expect(checkPathname('runs/other/rfc-20261106-1912_x.json')).toBe(false)
     // 長い記録を分けて送る名前（src/core/upload/queue.ts の uploadPathname）も、いまの決まりのまま通る
     expect(checkPathname('runs/camera/rfc-20261104-2005_log-1793790318421-p2of4.json.gz')).toBe(true)
     expect(checkPathname('runs/phone/../secret.json')).toBe(false)

@@ -1,7 +1,7 @@
 // Vercel の関数：スマホから記録を送るための、短い期限の書き込み用 URL（presigned URL）を出す。記録そのものはここを通らない
 // （ブラウザが Blob に直接送る。関数の受け取りは 4.5MB までなので）。
 // - 送る鍵（環境変数 UPLOAD_KEY）が x-upload-key に入っていなければ 401。UPLOAD_KEY がなければ、だれにも出さない
-// - 出す URL は、決まった形の名前（runs/phone|camera/rfc-….json(.gz)）1件に、新しく書き込むこと（put）だけができる。
+// - 出す URL は、決まった形の名前（runs/phone|camera|sensor/rfc-….json(.gz)）1件に、新しく書き込むこと（put）だけができる。
 //   読む・一覧・消す・上書きはできない。大きさは 64MB まで、期限は15分
 // - Blob への認証は、Vercel の関数の OIDC（VERCEL_OIDC_TOKEN と BLOB_STORE_ID。Blob を「つなぐ」と入る）。
 //   BLOB_READ_WRITE_TOKEN は使わない（あれば @vercel/blob が使うが、なくても動く）。BLOB_WEBHOOK_PUBLIC_KEY も、つなぐと入る
@@ -11,7 +11,8 @@ import { issueSignedToken } from '@vercel/blob'
 import { handleUploadPresigned, type HandleUploadPresignedBody } from '@vercel/blob/client'
 
 export const UPLOAD_KEY_HEADER = 'x-upload-key'
-export const PATHNAME = /^runs\/(phone|camera)\/rfc-[a-z0-9-]{1,40}_[A-Za-z0-9-]{1,64}\.json(\.gz)?$/
+// sensor（センサーラン）は 2026-11-05 に足したのに、ここに入れ忘れて 400 で断っていた（11-06 に記録が届かず気づいた）
+export const PATHNAME = /^runs\/(phone|camera|sensor)\/rfc-[a-z0-9-]{1,40}_[A-Za-z0-9-]{1,64}\.json(\.gz)?$/
 export const MAX_BYTES = 64 * 1024 * 1024
 export const CONTENT_TYPES = ['application/gzip', 'application/json']
 const TOKEN_MINUTES = 15
