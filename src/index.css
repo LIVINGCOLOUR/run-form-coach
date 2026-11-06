@@ -179,11 +179,34 @@ a {
 }
 .live-top {
   position: absolute;
+  z-index: 10; /* 映像・骨格・数字・暗い画面より上に置き、終えるボタンをどの段階でも押せるようにする */
   left: 16px;
   top: max(16px, env(safe-area-inset-top));
   display: flex;
   align-items: center;
   gap: 10px;
+}
+/* カメラ版の終えるボタン：字の入った大きめのボタン（×だけだと見つけにくかった） */
+.end-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  max-width: 180px;
+  padding: 6px 16px;
+  border-radius: 22px;
+  border: 1.5px solid var(--text);
+  background: rgba(10, 12, 14, 0.78);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: left;
+}
+.end-btn.confirm {
+  border-color: var(--warn);
+  background: var(--warn);
+  color: #0a0c0e;
 }
 .live.preview {
   display: flex;

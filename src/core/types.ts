@@ -112,7 +112,7 @@ export interface Session {
   share: Record<Category, number> // 0〜1
   breakdownMin?: number // 崩れ始め（分）
   quietHeldSec: number // 声なしで保てた秒数
-  taps?: number[] // そばの人が「今悪い」を押した時刻（秒）
+  taps?: number[] // そばの人が「今悪い」を押した時刻（秒）。2026-11-06 にボタンを外した（古い記録にだけある）
   provisionalBaseline?: boolean // 動画で試したときの仮の基準
   logId?: string // 調整用の記録
   // 走る前の立ち姿勢（猫背のチェック）。hip は立った姿勢の腰の高さ（低いほうの足首から腰までの高さ ÷ 脚の長さ。走りの数字の腰の高さを割る）

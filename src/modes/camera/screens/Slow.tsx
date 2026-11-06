@@ -70,10 +70,6 @@ export function Slow({ video: file, go }: { video: File; go: (x: Screen) => void
             <path d="M15 6l-6 6 6 6" />
           </svg>
         </button>
-        <div style={{ fontFamily: 'var(--num)', letterSpacing: 3, fontSize: 15 }} className="muted">
-          SLOW MOTION
-        </div>
-        <div style={{ width: 44 }} />
       </div>
       <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>スロー動画の分析</h1>
 

@@ -292,9 +292,11 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const label = hud.state === 'paused' ? 'PAUSED' : hud.state === 'waiting' ? 'READY' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
   const note =
     hud.state === 'waiting' ? '腰のベルトにスマホを付けて、走り出すと始まります' : hud.state === 'paused' ? '一時停止中。走り出すと再開します' : hud.quiet ? '声なしで確認中' : hud.refCadence === null ? '走り始めの基準を作っています（3分）' : ''
+  const showNote = !!note && kind?.kind !== 'drill' && !(kind?.kind === 'test' && hud.state === 'running') && !(kind?.kind === 'practice' && hud.practiceBase !== null)
+  // 時間の横の短い印：下の文（note）を出さない走り（崩しの撮影・テスト・練習）でも、待っている・止まっているが分かるように
+  const label = showNote ? '' : hud.state === 'paused' ? '一時停止中' : hud.state === 'waiting' ? '走り出し待ち' : hud.quiet ? '声なしで確認中' : ''
 
   return (
     <main className="page" style={{ gap: 14 }}>
@@ -304,9 +306,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
           <div style={{ width: 10, height: 10, borderRadius: 5, background: hud.state === 'running' ? 'var(--accent)' : 'var(--faint)' }} />
-          <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 3 }} className="muted">
-            {label}
-          </div>
+          {label && <div style={{ fontSize: 15, fontWeight: 700 }} className="muted">{label}</div>}
         </div>
         <div className="num" style={{ fontSize: 44 }}>{mmss(hud.elapsed)}</div>
       </div>
@@ -337,7 +337,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
           </div>
         </div>
       )}
-      {note && kind?.kind !== 'drill' && !(kind?.kind === 'test' && hud.state === 'running') && !(kind?.kind === 'practice' && hud.practiceBase !== null) && <div style={{ fontSize: 14 }} className="muted">{note}</div>}
+      {showNote && <div style={{ fontSize: 14 }} className="muted">{note}</div>}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div className="row">

@@ -92,14 +92,20 @@ const FRAME_PHRASE: Record<Framing, string> = {
 }
 // 置く間に、全身が入ったかを確かめている（FRAME_SAY.okHold 秒）あいだの画面の1行。声にはしない
 const CHECKING = '全身が入ったか確かめています'
+// 走っている間に「終える」を1回押してから、もう一度押せば終わる間（ミリ秒）
+const END_CONFIRM_MS = 4000
 
 // sessions：これまでの走り（新しい順）。走り出す前に言う「今日意識するのは…」を、ホームの「今日の意識」と同じ1つにするため
 export function Live({ video: file, sessions = [], onDone }: { video?: File; sessions?: Session[]; onDone: (id?: string) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const tapsRef = useRef<number[]>([])
   const coachRef = useRef<Coach | null>(null)
   const finishRef = useRef<() => void>(() => {})
+  const [confirmEnd, setConfirmEnd] = useState(false) // 走っている間に終えるを1回押した（もう一度押すと終わる）
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+  }, [])
   const screenMode = loadSettings().screen
   // 前面カメラは鏡のように左右反転して見せる（骨格の計算は反転しない元の映像で行う）
   const mirror = !file && loadSettings().camera === 'front'
@@ -254,7 +260,6 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           const a = saveSpeedFit(fit)
           if (fit) rec.event(nowT, `speedFit:A ${fit.speedA} n ${fit.n} spread ${fit.spread} use ${a}`)
         }
-        s.taps = tapsRef.current
         s.provisionalBaseline = !!file
         s.standing = standing
         s.logId = rec.log.id
@@ -763,12 +768,22 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
   // 走り出したあとは、背面カメラで画面は見えないので真っ暗にする（案内は声で行う）
   const preview = hud.phase === 'setup' || hud.phase === 'baseline' || (hud.phase === 'run' && hud.state === 'waiting')
   const dark = screenMode === 'dark' && !preview && (hud.phase === 'baseline' || hud.phase === 'run')
-  const darkLabel = hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
-  const darkText = hud.state === 'paused' ? '一時停止中' : '画面を消しても、声でお知らせします'
+  const darkText = hud.state === 'paused' ? '一時停止中' : hud.quiet ? '声なしで確認中' : '画面を消しても、声でお知らせします'
+  // 終える：置く・立ち方・走り出しを待つ間は1回のタップで終える。走っている間（止まっている間も）は、ベルトの操作などで
+  // 画面に触れて終わらないよう、1回目で「もう一度押すと終わります」にし、END_CONFIRM_MS の間にもう一度押したら終える。
+  // センサーラン・腰スマホ（ポーチの中）の長押しとは違い、トレッドミルではスマホは台の上で、手を伸ばして1回で押せるほうがよい
+  const running = hud.phase === 'run' && hud.state !== 'waiting'
+  const onEnd = () => {
+    if (!running || confirmEnd) {
+      finishRef.current()
+      return
+    }
+    setConfirmEnd(true)
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    confirmTimer.current = setTimeout(() => setConfirmEnd(false), END_CONFIRM_MS)
+  }
   const mmss = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
   const last = hud.last
-  const label =
-    hud.phase === 'loading' || hud.phase === 'error' ? '' : hud.phase === 'setup' ? 'SETUP' : hud.phase === 'baseline' ? 'BASELINE' : hud.state === 'waiting' ? 'READY' : hud.state === 'paused' ? 'PAUSED' : hud.quiet ? 'QUIET CHECK' : 'COACHING'
   // 大事な1行：体が収まっていなければまずそれ（どこが切れているか）。そろっていれば、いますること
   const status: { text: string; ok: boolean } =
     hud.framing !== 'ok'
@@ -785,15 +800,13 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
 
   return (
     <div className={preview ? 'live preview' : 'live'}>
-      <div className="live-top" style={dark ? { display: 'none' } : undefined}>
-        <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      {/* 終えるボタンは、どの段階でもいちばん上に重ねる（z-index。.live-top）。走っている間は映像や数字の下に隠れて押せなかった */}
+      <div className="live-top">
+        <button className={confirmEnd ? 'end-btn confirm' : 'end-btn'} onClick={onEnd}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          {confirmEnd ? 'もう一度押すと終わります' : '終える'}
         </button>
-        <div style={{ width: 10, height: 10, borderRadius: 5, background: 'var(--accent)' }} />
-        <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 3 }} className="muted">
-          {label}
-        </div>
-        {full && <FullBadge />}
+        {full && !dark && <FullBadge />}
       </div>
 
       <div className="live-stage">
@@ -865,13 +878,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       {dark && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
           <div style={{ width: 14, height: 14, borderRadius: 7, background: 'var(--accent)' }} />
-          <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 4, color: 'var(--faint)' }}>{darkLabel}</div>
           <div style={{ fontSize: 13, color: 'var(--faint)' }}>{darkText}</div>
           {full && <FullBadge />}
           {hud.phase === 'run' && <div className="num" style={{ position: 'absolute', right: 24, top: 20, fontSize: 28, color: '#4A525B' }}>{mmss(hud.elapsed)}</div>}
-          <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()} style={{ position: 'absolute', left: 16, top: 'max(16px, env(safe-area-inset-top))', opacity: 0.4 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
         </div>
       )}
 
@@ -925,12 +934,6 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
                 <Spark values={hud.scores} />
                 <div style={{ fontSize: 11 }} className="muted">直近10分</div>
               </div>
-              <button
-                onClick={() => tapsRef.current.push(Math.round(coachRef.current?.active ?? 0))}
-                style={{ height: 48, padding: '0 20px', borderRadius: 24, border: '1.5px solid var(--text)', background: 'transparent', fontSize: 15, fontWeight: 700 }}
-              >
-                今悪い
-              </button>
             </div>
           )}
 

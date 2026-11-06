@@ -7,6 +7,7 @@ import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
 import { formRows, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, speedNote, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
 import { GOOD, kmh1 } from '../modes/camera/params'
+import { runSummary } from '../modes/camera/summary'
 import { SlipNote } from '../modes/sensor/SlipNote'
 import type { GaitResult } from '../core/types'
 
@@ -26,19 +27,10 @@ export function Result({ session: s, sessions, go }: { session: Session; session
   const heldAny = held.min > 0 || held.sec > 0
   const heldDelta = quietDelta(s.quietHeldSec, prev?.quietHeldSec)
   const cues = s.cues.filter((c) => ITEMS.includes(c.item as ItemKey))
-  const recovers = s.cues.filter((c) => c.item === 'recover').length
   const half = s.durationSec / 2
   const firstHalf = cues.filter((c) => c.t < half).length
-  const summary =
-    s.breakdownMin !== undefined
-      ? `${s.breakdownMin}分から崩れ始めました。${recovers ? '声をかけるたびに戻せています。' : '後半こそ、今日の意識を思い出しましょう。'}`
-      : cues.length
-        ? '大きく崩れずに走れました。声をかけた所は、すぐに戻せています。'
-        : '最後まで、大きく崩れずに走れました。'
-
-  // 「今悪い」の一致：押した前後5秒にアプリも崩れと判定していたか
-  const taps = s.taps ?? []
-  const matched = taps.filter((t) => s.samples.some((x) => Math.abs(x.t - t) <= 5 && x.score < 80)).length
+  // 走りのひとこと：崩れ始めだけでなく、良い・悪いの割合と声の回数も見て選ぶ（camera/summary.ts）
+  const summary = runSummary(s)
 
   return (
     <main className="page">
@@ -144,8 +136,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
 
       <div style={{ borderTop: '1px solid var(--line)' }}>
         <Stat label="崩れ始め" value={s.breakdownMin !== undefined ? `${s.breakdownMin}分` : 'なし'} note={prev?.breakdownMin !== undefined && s.breakdownMin !== undefined ? `前回 ${prev.breakdownMin}分` : undefined} />
-        <Stat label="声をかけた回数" value={`${cues.length}`} note={`前半 ${firstHalf} · 後半 ${cues.length - firstHalf}${cues.some((c) => c.lead) ? ` · うち正しいフォームの線 ${cues.filter((c) => c.lead).length}` : ''}`} />
-        {taps.length > 0 && <Stat label="「今悪い」との一致" value={`${Math.round((matched / taps.length) * 100)}%`} note={`${taps.length}回のうち ${matched}回`} />}
+        <Stat label="声をかけた回数" value={`${cues.length}`} note={`前半 ${firstHalf} · 後半 ${cues.length - firstHalf}`} />
       </div>
 
       {s.cues.length > 0 && (

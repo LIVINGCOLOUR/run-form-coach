@@ -22,11 +22,12 @@ import { fitSpeedA, saveSpeedFit } from '../speedFit'
 //   ベルト時速9kmで、足首の見積もりは 7.7 のまま）。胸に使うのは走る前傾を覚える時刻（走って40秒）までに入れた値、速さの合わせは終えるときの値。
 //   外で走ることが多いので、カメラ版と違い前回の値は入れておかない（外の走りに前のベルトの速さを使わないため）
 
+// label：時間の横の短い印（立ち方の何番目か）。ほかの段階は、下の文で分かるので出さない
 const PHASE_TEXT: Record<SensorRunPhase, { label: string; text: string }> = {
-  stand: { label: 'STAND 1/2', text: 'いつもの楽な立ち方で、3秒止まってください' },
-  ready: { label: 'READY', text: '走り出すと始まります' },
-  run: { label: 'RUNNING', text: '見ています。崩れたら、その場所が震えます' },
-  stop: { label: 'STOPPED', text: '止まっています。走り出すと続きます' },
+  stand: { label: '立ち方 1/2', text: 'いつもの楽な立ち方で、3秒止まってください' },
+  ready: { label: '', text: '走り出すと始まります' },
+  run: { label: '', text: '見ています。崩れたら、その場所が震えます' },
+  stop: { label: '', text: '止まっています。走り出すと続きます' },
 }
 const HOLD_MS = 1500 // 終えるボタンは長押し（ポケットの中で触れて終わらないように）
 
@@ -110,7 +111,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
 
   const on = nodes.filter((n) => n.status === 'connected')
   const lost = nodes.filter((n) => n.name && n.status === 'lost')
-  const p = phase === 'stand' && stage === 'b' ? { label: 'STAND 2/2', text: '胸を開いて、肩を後ろに引いて、顎を軽く引いて、3秒止まってください' } : PHASE_TEXT[phase]
+  const p = phase === 'stand' && stage === 'b' ? { label: '立ち方 2/2', text: '胸を開いて、肩を後ろに引いて、顎を軽く引いて、3秒止まってください' } : PHASE_TEXT[phase]
   const startHold = () => {
     setHolding(true)
     holdTimer.current = setTimeout(() => finishRef.current(), HOLD_MS)
@@ -125,9 +126,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       <div className="row">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ width: 10, height: 10, borderRadius: 5, background: phase === 'run' ? 'var(--accent)' : 'var(--faint)' }} />
-          <div style={{ fontFamily: 'var(--num)', fontSize: 15, letterSpacing: 3 }} className="muted">
-            {p.label}
-          </div>
+          {p.label && <div style={{ fontSize: 15, fontWeight: 700 }} className="muted">{p.label}</div>}
         </div>
         <div className="num" style={{ fontSize: 44 }}>{mmss(runSec)}</div>
       </div>
