@@ -284,6 +284,94 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     cam.finish()
   })
 
+  // トレッドミル：位置情報は動かない（速さ 0）か、取れない。走り出しはセンサーの揺れだけで決まり、最初の1回だけ「始めます」と言う
+  it('トレッドミル（GPS が動かない・取れない）でも、センサーの揺れだけで走り出しが分かり、最初の1回だけ声で知らせる', () => {
+    // 2026-11-06 の付け方（頭・胸・左右の足首）。値はすべて同じ時刻に流す
+    const places = ['頭', '胸', '左足首', '右足首']
+    const sendAll = (kind: Kind, from: number, sec: number, r: SensorRunner) => {
+      let t = from
+      while (t < from + sec - 1e-9) {
+        for (const p of places) {
+          const samples = Array.from({ length: 10 }, (_, j) => {
+            const v = imu(kind, t + j / HZ, Math.round((t - from) * HZ) + j)
+            return { seq: seq++ & 0xffff, t: Math.round((t + j / HZ) * 1000), g: v.g, a: v.a, raw: new Uint8Array(12) }
+          })
+          for (const fn of hub.listeners) fn(node(p), t + 0.09, { seq: samples[0].seq, range: 16, n: 10, samples })
+        }
+        r.tick(t + 0.09)
+        t += 0.1
+      }
+      return from + sec
+    }
+    for (const gps of ['still', 'none'] as const) {
+      connect(places)
+      const events: string[] = []
+      const said: string[] = []
+      let fix: ((f: { t: number; speed: number | null; accuracy: number; altitude: number | null; altitudeAccuracy: number | null }) => void) | undefined
+      const r = new SensorRunner({
+        onEvent: (_t, text) => events.push(text),
+        say: (x) => said.push(x),
+        // still：位置は届くが、トレッドミルの上なので速さは 0。none：位置情報が使えない
+        gps: (f, st) => {
+          if (gps === 'none') st('none')
+          else {
+            fix = f
+            st('on')
+          }
+          return () => {}
+        },
+      })
+      let t = performance.now() / 1000
+      // 立つ・ベルトの上で歩く間は、まだ始まらない
+      t = sendAll('stand', t, 5, r)
+      t = sendAll('walk', t, 10, r)
+      expect(said).not.toContain(PHRASES.start)
+      expect(r.phase).not.toBe('run')
+      // 走る（GPS の速さは 0 のまま）
+      fix?.({ t, speed: 0, accuracy: 10, altitude: 30, altitudeAccuracy: 5 })
+      expect(r.gpsStatus).toBe(gps === 'none' ? 'none' : 'on')
+      t = sendAll('run', t, 10, r)
+      expect(r.phase).toBe('run')
+      expect(said.filter((x) => x === PHRASES.start)).toHaveLength(1)
+      // 走り出しは胸の揺れで決めた（RUN_GATE.order の最初）。3秒の窓 + 3秒続けて、のあいだに分かる
+      const on = events.find((e) => e.startsWith('sensor:run on'))!
+      expect(on).toMatch(/^sensor:run on 胸 /)
+      expect(events).toContain(PHRASES.start)
+      expect(r.runSec).toBeGreaterThan(10 - RUN_GATE.startSec - RUN_GATE.win - 1)
+      expect(r.runSec).toBeLessThanOrEqual(10)
+      // 止まって（信号・給水）、また走る：「始めます」は言い直さない
+      t = sendAll('stand', t, 10, r)
+      expect(r.phase).toBe('stop')
+      t = sendAll('run', t, 10, r)
+      expect(r.phase).toBe('run')
+      expect(said.filter((x) => x === PHRASES.start)).toHaveLength(1)
+      expect(events.filter((e) => e.startsWith('sensor:run on'))).toHaveLength(2)
+      r.finish()
+      for (const n of hub.nodes) if (n.status === 'connected') n.status = 'idle'
+      hub.refresh()
+    }
+  })
+
+  it('胸も頭もなく足首だけでも、揺れで走り出しが分かり、声で知らせる。腰スマホ（声の案内なし）では言わない', () => {
+    connect(['左足首'])
+    const said: string[] = []
+    const events: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text), say: (x) => said.push(x) })
+    let t = performance.now() / 1000
+    t = send('左足首', 'walk', t, 10, r)
+    expect(said).not.toContain(PHRASES.start)
+    send('左足首', 'run', t, 10, r)
+    expect(r.phase).toBe('run')
+    expect(events.some((e) => e.startsWith('sensor:run on 左足首'))).toBe(true)
+    expect(said.filter((x) => x === PHRASES.start)).toHaveLength(1)
+    r.finish()
+    // 腰スマホ：スマホ版の声があるので、センサーの側からは言わない（say を渡さない）
+    const w = new SensorRunner({ onEvent: (_t, text) => events.push(text) })
+    send('左足首', 'run', t + 20, 10, w)
+    expect(w.phase).toBe('run')
+    w.finish()
+  })
+
   it('案内の声を話している間にじっとしても、測らない（言い終えてから3秒で測る）', () => {
     connect(['胸'])
     let speaking = true
