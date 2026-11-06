@@ -45,6 +45,8 @@ export function findAccJump(samples, nearMs, beforeMs = 2000, afterMs = 8000) {
 //   cam：[{ T, trunk, neck, headLean, body }]（カメラのコマ。骨格の値があるコマだけ）、sec：[{ T, run, chest, chestRef, head, waist, wHz, v }]（センサーの1秒ごと）、
 //   voices：[{ T, item }]（カメラ版の声）、buzz：[{ T, item }]（センサーの振動）。時刻はすべて Mac の時計にそろえたもの
 //   pair：胸 − カメラの上体（1秒ごとに、その秒の前後 0.5秒のカメラのコマの上体の真ん中と組にする。走っている秒だけ）
+//   cw：胸 − 腰のスマホ（同じ1秒の胸と腰の傾きの差。両方ある秒だけ）。体全体の前傾は胸にも腰にも乗るので、差には背中の丸まりが残るはず
+//     （2026-11-06 の試走で、ふつう 7.1°・猫背 14.5〜18.6°・胸を開く −0.9° と分かれた。1本だけなので、走るたびに出して確かめる）
 export function sectionRows(sections, { cam = [], sec = [], voices = [], buzz = [] }) {
   return sections.map((s) => {
     const inS = (x) => x.T >= s.start && x.T < s.end
@@ -57,6 +59,7 @@ export function sectionRows(sections, { cam = [], sec = [], voices = [], buzz = 
       if (near.length < 2) continue
       pairs.push(q.chest - median(near.map((c) => c.trunk)))
     }
+    const cws = ss.filter((q) => finite(q.chest) && finite(q.waist)).map((q) => q.chest - q.waist)
     const lenSec = (s.end - s.start) / 1000
     const waistN = ss.filter((q) => finite(q.waist)).length
     return {
@@ -72,6 +75,9 @@ export function sectionRows(sections, { cam = [], sec = [], voices = [], buzz = 
       waist: median(ss.map((q) => q.waist)),
       waistShare: ss.length ? waistN / Math.max(1, Math.round(lenSec)) : 0,
       wHz: median(ss.map((q) => q.wHz)),
+      cw: median(cws),
+      cwN: cws.length,
+      cws,
       v: median(ss.map((q) => q.v)),
       pair: median(pairs),
       pairN: pairs.length,

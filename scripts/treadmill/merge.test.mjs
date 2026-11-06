@@ -33,6 +33,7 @@ describe('区間ごとの値', () => {
     for (let T = 0; T < 20_000; T += 1000) sec.push({ T, run: T !== 0, chest: T < 10_000 ? 15 : 18, chestRef: 16, head: 2, waist: T < 15_000 ? 4 : null, wHz: 60, v: 7.6 })
     const [a, b] = sectionRows(sections, { cam, sec, voices: [{ T: 12_000, item: 'head' }], buzz: [{ T: 5_000, item: '胸' }] })
     expect(a).toMatchObject({ trunk: 1, chest: 15, pair: 14, pairN: 9, waist: 4, v: 7.6 })
+    expect(a.cw).toBe(11) // 胸 − 腰（同じ1秒の差の真ん中）
     expect(a.buzz).toHaveLength(1)
     expect(b).toMatchObject({ trunk: 3, chest: 18, pair: 15, pairN: 10, waistShare: 0.5 })
     expect(b.voices).toHaveLength(1)

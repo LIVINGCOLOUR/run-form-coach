@@ -190,15 +190,15 @@ const rl = senLog?.sensors?.runLean
 p(`胸・頭のセンサーは b（胸を開いた立ち方）からの前への傾き（度）。胸の2つの立ち方：${pose ? `${pose.mode}・差 ${f1(pose.deg)}°` : 'なし'}。` +
   `アプリが走り出しで決めた胸の基準：${rl ? `${f1(rl.offset ?? rl.deg)}°（${rl.by ?? '走る前傾'}${rl.by === 'speed' ? `・時速 ${rl.kmh ?? '—'}km（${rl.speedBy}）` : ''}）` : 'なし'}。` +
   `「正しい胸の線」は、いまの params.ts の CHEST_EXPECT（k ${R.CHEST_EXPECT.k}°・gain ${R.CHEST_EXPECT.gain}）で、その区間の速さ（ベルト${belt !== undefined ? ` 時速${belt}km` : 'なし'}、なければ足首の見積もり）の正しい胸 + 線の幅 ${line}°`)
-p('腰：腰のスマホの b からの傾き（度。2つの立ち方の差が小さければ向きによらない角度）と、値があった秒の割合・1秒に届いた値の数')
+p('腰：腰のスマホの b からの傾き（度。2つの立ち方の差が小さければ向きによらない角度）と、値があった秒の割合・1秒に届いた値の数。胸 − 腰：同じ1秒の胸と腰の差（体全体の前傾を引いた、背中の丸まりの見当。判定にはまだ使っていない）')
 p()
-p('| 区間 | 種類 | 始まり | 長さ | カメラ コマ | 上体 | 首 | 頭の位置 | 体全体 | 胸 | 胸の基準 | 正しい胸の線 | 胸 − 上体 | 頭のセンサー | 腰 | 腰の値（割合・回/秒） | 速さ | カメラの声 | センサーの振動 |')
-p('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|')
+p('| 区間 | 種類 | 始まり | 長さ | カメラ コマ | 上体 | 首 | 頭の位置 | 体全体 | 胸 | 胸の基準 | 正しい胸の線 | 胸 − 上体 | 頭のセンサー | 腰 | 胸 − 腰 | 腰の値（割合・回/秒） | 速さ | カメラの声 | センサーの振動 |')
+p('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|')
 for (const r of rows) {
   const s = r.s
   const kmh = belt ?? (M.finite(r.v) ? r.v : undefined)
   const exp = senLog ? R.expectedChest(kmh).deg + line : NaN
-  p(`| ${nameOf(s)} | ${KIND[s.kind] ?? s.kind} | ${clock(s.start)} | ${f1((s.end - s.start) / 1000, 0)}秒 | ${r.camN} | ${f1(r.trunk)} | ${f1(r.neck)} | ${f1(r.headLean)} | ${f1(r.body)} | ${f1(r.chest)} | ${f1(r.chestRef)} | ${f1(exp)} | ${r.pairN ? `${f1(r.pair)}（${r.pairN}秒）` : '—'} | ${f1(r.head)} | ${f1(r.waist)} | ${r.waistShare ? `${pc(r.waistShare)}・${f1(r.wHz, 0)}` : '—'} | ${f1(r.v)} | ${list(r.voices)} | ${list(r.buzz)} |`)
+  p(`| ${nameOf(s)} | ${KIND[s.kind] ?? s.kind} | ${clock(s.start)} | ${f1((s.end - s.start) / 1000, 0)}秒 | ${r.camN} | ${f1(r.trunk)} | ${f1(r.neck)} | ${f1(r.headLean)} | ${f1(r.body)} | ${f1(r.chest)} | ${f1(r.chestRef)} | ${f1(exp)} | ${r.pairN ? `${f1(r.pair)}（${r.pairN}秒）` : '—'} | ${f1(r.head)} | ${f1(r.waist)} | ${r.cwN ? `${f1(r.cw)}（${r.cwN}秒）` : '—'} | ${r.waistShare ? `${pc(r.waistShare)}・${f1(r.wHz, 0)}` : '—'} | ${f1(r.v)} | ${list(r.voices)} | ${list(r.buzz)} |`)
 }
 p()
 
@@ -225,6 +225,11 @@ if (senFile) {
   p(`- 2つの立ち方：${w ? `${w.mode}・差 ${f1(w.deg)}°` : '記録なし'}`)
   p(`- 値の様子（events）：${waistEv.length ? waistEv.join('／') : 'なし'}`)
   const runSecs = sec.filter((q) => q.run)
+  // 胸 − 腰で猫背を見分けられるか（判定に使うかは、何本か集めて決める。速さを変えても、ふつうと猫背が分かれるか）
+  const cwOf = (rs) => rs.flatMap((r) => r.cws)
+  const hunch = rows.filter((r) => r.s.kind === 'drill' && r.s.key === 'hunch')
+  const fmt = (rs) => { const xs = cwOf(rs); return xs.length ? `${f1(M.median(xs))}°（${xs.length}秒）` : '—' }
+  p(`- 胸 − 腰（区間の種類ごとの真ん中）：ふつう ${fmt(normal)}・猫背 ${fmt(hunch)}・胸を開く ${fmt(open)}。猫背とふつうの差が、速さや付け直しでも保たれるかを走るたびに見る`)
   p(`- 走っていた ${runSecs.length} 秒のうち、腰の値があった秒 ${runSecs.filter((q) => M.finite(q.waist)).length}（画面が消えた・裏に回った間は値が来ない。埋めていない）`)
   p()
 }
