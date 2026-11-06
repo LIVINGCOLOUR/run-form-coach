@@ -81,13 +81,13 @@ describe('つなぐ（SensorHub）', () => {
   })
 
   it('ほかの枠のセンサーを選んだら、そちらへつなぎ、押した枠には知らせる', async () => {
-    const head = at('RFC-IMU-6') // 押した枠（前のテストでつないだ4番の枠は避ける）
-    const chest = at('RFC-IMU-2')
-    vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => fakeDevice('AdaDFU', 'RFC-IMU-2') } })
-    await sensors.connect(head)
-    await vi.waitFor(() => expect(sensors.snapshot()[chest].status).toBe('connected'))
-    expect(sensors.snapshot()[head].status).toBe('error')
-    expect(sensors.snapshot()[head].message).toContain('RFC-IMU-2')
+    const pressed = at('RFC-IMU-6') // 押した枠（前のテストでつないだ4番の枠は避ける）
+    const other = at('RFC-IMU-1') // 選んだセンサーの枠（4番でも6番でもない）
+    vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => fakeDevice('AdaDFU', 'RFC-IMU-1') } })
+    await sensors.connect(pressed)
+    await vi.waitFor(() => expect(sensors.snapshot()[other].status).toBe('connected'))
+    expect(sensors.snapshot()[pressed].status).toBe('error')
+    expect(sensors.snapshot()[pressed].message).toContain('RFC-IMU-1')
   })
 })
 
@@ -272,15 +272,16 @@ describe('覚えていた機器につなげないブラウザ（Bluefy）', () =
     vi.useFakeTimers()
     try {
       vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
-      vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => fakeDevice('RFC-IMU-2', 'RFC-IMU-2', 2) } })
+      const chest = SLOTS.findIndex((s) => s.place === '胸')
+      const name = SLOTS[chest].name!
+      vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => fakeDevice(name, name, 2) } })
       const hub = new SensorHub()
-      const chest = SLOTS.findIndex((s) => s.name === 'RFC-IMU-2')
       const done = hub.connect(chest)
       await vi.runAllTimersAsync()
       await done
       expect(hub.snapshot()[chest].status).toBe('error')
       expect(hub.snapshot()[chest].message).toBe('エラー（つなぐところ）：number 2')
-      expect(hub.bulkSnapshot().diag.join('\n')).toContain('（RFC-IMU-2）エラー: エラー（つなぐところ）：number 2')
+      expect(hub.bulkSnapshot().diag.join('\n')).toContain(`（${name}）エラー: エラー（つなぐところ）：number 2`)
     } finally {
       vi.useRealTimers()
     }
