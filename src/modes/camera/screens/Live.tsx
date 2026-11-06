@@ -98,6 +98,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let baseTries = 0 // 2つの立ち方を測り直してもらった回数（差が小さかった）
     // 2つの立ち方：a「いつもの楽な立ち方」→ b「胸を開いて、肩を後ろに引いて、顎を軽く引いて」を3秒ずつ（params.ts の POSE）
     let poseStage: 'a' | 'b' = 'a'
+    let poseRepeats = 0 // いまの立ち方を言い直した回数（BASELINE.forceAfter 回で、揺れを見ずに測る）
     let poseA: Standing | undefined // a のときのカメラの頭の位置と上体（記録と結果の画面用）
     let standing: { head: number; trunk: number; issue: StandingIssue | null; hip?: number; habit?: Standing } | undefined
     let provisional: number[] = []
@@ -466,7 +467,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         if (moving) baseMovingSince ??= t
         else baseMovingSince = null
         // 案内（2つの立ち方や測り直しの声）を言い終えるまでは測らない。聞きながら姿勢を直すため
-        if (voicePending() || (baseMovingSince !== null && t - baseMovingSince > BASELINE.movingTolerance)) {
+        const force = poseRepeats >= BASELINE.forceAfter
+        if (voicePending() || (!force && baseMovingSince !== null && t - baseMovingSince > BASELINE.movingTolerance)) {
           stillSince = null
           baseNecks = []
           baseLeans = []
@@ -493,6 +495,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             rec.event(t, `pose:${poseStage} head ${st.head.toFixed(1)} trunk ${st.trunk.toFixed(1)} neck ${median(baseNecks).toFixed(1)} headLean ${median(baseLeans).toFixed(1)} yaw ${median(baseYaws).toFixed(3)}`)
             sensorRun?.pose(poseStage, t, BASELINE.collect, cam)
             const restart = () => {
+              poseRepeats = 0
               lastNextSay = t
               stillSince = null
               baseNecks = []
@@ -545,6 +548,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       if (phase === 'baseline' && t - lastNextSay > BASELINE.repeat) {
         lastNextSay = t
         say(poseStage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen, t)
+        poseRepeats++
+        if (poseRepeats === BASELINE.forceAfter) rec.event(t, `pose:force ${poseStage}`)
       }
 
       // 走行中
