@@ -3,8 +3,8 @@ import { APP_LINES as APP1, LINES as LINES1 } from './lines.mjs'
 import { APP_LINES, LINES } from './lines-modes.mjs'
 import { FPS } from './theme'
 
-// 2本目の紹介動画（使い方は3つ）。冒頭（n1〜n4）と締め（n19）、頭の声かけ（aHead）は1本目の音声を使い回す
-export type ModesScene = 'habits' | 'relapse' | 'intro' | 'phone' | 'camera' | 'review' | 'sensor' | 'end'
+// 2本目の紹介動画（使い方は3つ）。冒頭（n1〜n4）と締め（n19）、腰の声かけ（aHip）は1本目の音声を使い回す
+export type ModesScene = 'habits' | 'relapse' | 'intro' | 'phone' | 'camera' | 'nine' | 'hip' | 'review' | 'sensor' | 'end'
 type Id = keyof typeof narration
 
 const ORDER: [Id, ModesScene][] = [
@@ -13,23 +13,25 @@ const ORDER: [Id, ModesScene][] = [
   ['n3', 'relapse'],
   ['n4', 'relapse'],
   ['m5', 'intro'],
-  ['m6', 'phone'],
-  ['m7', 'phone'],
+  ['m14', 'phone'],
+  ['m15', 'phone'],
   ['aCadence', 'phone'],
-  ['m8', 'phone'],
   ['m9', 'camera'],
-  ['m10', 'camera'],
-  ['aHead', 'camera'],
-  ['m11', 'review'],
-  ['m12', 'sensor'],
-  ['m13', 'sensor'],
-  ['aArm', 'sensor'],
+  ['m16', 'nine'],
+  ['m17', 'hip'],
+  ['aHip', 'hip'],
+  ['m20', 'sensor'],
+  ['m21', 'sensor'],
+  ['m19', 'review'],
   ['n19', 'end'],
 ]
 
 // 声のあとに置く間（秒）。メトロノームの場面は、声かけのあとに音を数回鳴らすぶん長くとる
-const AFTER: Partial<Record<Id, number>> = { aCadence: 1.5 }
+// センサーの場面は、言い終わったあとに胸のセンサーが震えて、直るところまで見せる
+const AFTER: Partial<Record<Id, number>> = { aCadence: 1.5, aHip: 0.8, m21: 1.9 }
 export const CLICK_SEC = 60 / 176 // メトロノームの間隔（毎分176歩）
+// 胸のセンサーが震える時刻（センサーの場面の言葉 m21 を言い終えた少しあと）
+export const buzzAt = (m21: { start: number; len: number }) => m21.start + m21.len + 4
 
 export interface MItem {
   id: Id

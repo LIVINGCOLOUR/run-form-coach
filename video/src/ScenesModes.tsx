@@ -6,7 +6,7 @@ type XY = { x: number; y: number }
 import { L } from '../../src/modes/camera/landmarks'
 import { Bg } from './Scenes'
 import { Figure } from './Figure'
-import { CLICK_SEC, type MItem } from './timeline-modes'
+import { buzzAt, CLICK_SEC, type MItem } from './timeline-modes'
 import { C, FPS, num } from './theme'
 
 // 2本目の紹介動画（使い方は3つ）の場面。絵・色・文字の大きさは1本目（Scenes*.tsx）に合わせる
@@ -56,35 +56,31 @@ function Icon({ kind, color = C.text, size = 120 }: { kind: 'phone' | 'camera' |
   )
 }
 
-// 場面の見出し：番号と言葉。tag は小さな札（「無料」など）
-function Head({ n, title, tag, at }: { n: string; title: ReactNode; tag?: string; at: number }) {
+// 場面の見出し：番号と言葉
+function Head({ n, title, at }: { n: string; title: ReactNode; at: number }) {
   const f = useCurrentFrame()
   return (
     <div style={{ position: 'absolute', left: 80, right: 60, top: 190, ...fadeUp(f, at) }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
         <div style={{ fontFamily: num, fontWeight: 700, fontSize: 96, lineHeight: 1, color: C.accent }}>{n}</div>
-        {tag && <div style={{ padding: '8px 22px', borderRadius: 28, border: `3px solid ${C.accent}`, color: C.accent, fontWeight: 900, fontSize: 34 }}>{tag}</div>}
       </div>
       <div style={{ ...H2, fontSize: 70, marginTop: 14 }}>{title}</div>
     </div>
   )
 }
 
-// アプリの声かけの吹き出し（1本目と同じ形）。vibe があれば振動の印も付ける
-function Voice({ text, at, top, warn = true, vibe, out }: { text: string; at: number; top: number; warn?: boolean; vibe?: boolean; out?: number }) {
+// アプリの声かけの吹き出し（1本目と同じ形）
+function Voice({ text, at, top, warn = true, out }: { text: string; at: number; top: number; warn?: boolean; out?: number }) {
   const f = useCurrentFrame()
   const o = interpolate(f, [at, at + 8], [0, 1], clamp) * (out === undefined ? 1 : interpolate(f, [out, out + 8], [1, 0], clamp))
   const col = warn ? C.warn : C.accent
   return (
     <div style={{ position: 'absolute', left: 50, right: 50, top, display: 'flex', justifyContent: 'center', opacity: o }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '24px 32px', borderRadius: 60, background: 'rgba(10,12,14,0.9)', border: `3px solid ${col}` }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
-          <svg width={48} height={48} viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth={2}>
-            <path d="M4 9v6h4l5 4V5L8 9H4z" />
-            <path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />
-          </svg>
-          {vibe && <Vibe color={col} size={48} />}
-        </div>
+        <svg width={48} height={48} viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth={2} style={{ flexShrink: 0 }}>
+          <path d="M4 9v6h4l5 4V5L8 9H4z" />
+          <path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />
+        </svg>
         <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.4 }}>{breakAt(text, 22)}</div>
       </div>
     </div>
@@ -155,10 +151,10 @@ function Road({ f, y, x0 = 0, x1 = 1080 }: { f: number; y: number; x0?: number; 
 // ---- 場面 ----
 
 // 3. ロゴと、使い方は3つ
-const MODES: { kind: 'phone' | 'camera' | 'sensor'; title: string; sub: string; tag?: string }[] = [
-  { kind: 'phone', title: 'スマホ1台', sub: '腰に付けて、外を走る', tag: '無料' },
+const MODES: { kind: 'phone' | 'camera' | 'sensor'; title: string; sub: string }[] = [
+  { kind: 'phone', title: 'スマホ1台', sub: '腰に付けて、外を走る' },
   { kind: 'camera', title: 'トレッドミル', sub: '横にスマホを置いて、骨格で見る' },
-  { kind: 'sensor', title: 'センサー', sub: '体に付けて、声と振動で直す' },
+  { kind: 'sensor', title: 'センサー', sub: '体に付けて、振動で知らせる' },
 ]
 export function SIntro({ items }: { items: MItem[] }) {
   const f = useCurrentFrame()
@@ -205,10 +201,7 @@ export function SIntro({ items }: { items: MItem[] }) {
               <div style={{ fontFamily: num, fontWeight: 700, fontSize: 72, color: C.accent, width: 80 }}>{String(i + 1).padStart(2, '0')}</div>
               <Icon kind={m.kind} size={110} />
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-                  <div style={{ fontSize: 54, fontWeight: 900 }}>{m.title}</div>
-                  {m.tag && <div style={{ padding: '4px 16px', borderRadius: 22, border: `3px solid ${C.accent}`, color: C.accent, fontWeight: 900, fontSize: 28 }}>{m.tag}</div>}
-                </div>
+                <div style={{ fontSize: 54, fontWeight: 900 }}>{m.title}</div>
                 <div style={{ fontSize: 32, color: C.muted, marginTop: 6 }}>{m.sub}</div>
               </div>
             </div>
@@ -219,25 +212,31 @@ export function SIntro({ items }: { items: MItem[] }) {
   )
 }
 
-// 4. スマホ1台を腰に、外を走る。声で直すのはピッチだけ。上下動・接地時間は走ったあとに
+// 4. スマホ1台を腰に、外を走る。走っている間ずっと、ピッチ・上下動・接地時間を見て、崩れたらその場で声
 export function SPhone({ items }: { items: MItem[] }) {
   const f = useCurrentFrame()
-  const [m6, m7, cue, m8] = items
-  const tx = 230
+  const [m14, m15, cue] = items
+  const tx = 200
   const ty = 470
   const sc = 1.5
-  // ピッチ：m7 で落ち、声とメトロノームのあとに戻る
+  // m15 の「足の回転」「上下動」「接地の長さ」「崩れたら」の、文の中のおよその位置
+  const at = (r: number) => m15.start + Math.round(m15.len * r)
+  // ピッチ：「崩れたら」で落ち、声とメトロノームのあとに戻る
   const clickAt = Array.from({ length: 4 }, (_, k) => cue.start + cue.len + 6 + Math.round(k * CLICK_SEC * FPS))
-  const drop = interpolate(f, [m7.start + 10, m7.start + 50], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
+  const drop = interpolate(f, [at(0.6), at(0.6) + 36], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
   const back = interpolate(f, [clickAt[1], clickAt[3] + 6], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
   const bad = drop - back
-  const spm = Math.round(176 - 12 * bad)
-  const pitchCol = interpolateColors(Math.max(0, bad), [0, 1], [C.text, C.warn])
-  const after = interpolate(f, [m8.start - 6, m8.start + 8], [0, 1], clamp)
   const phonePulse = 0.5 + 0.5 * Math.sin(f * 0.25)
+  // 走っている間の値（少しゆらす）
+  const wob = (k: number) => Math.sin(f * 0.21 + k * 2.1) * 0.5 + Math.sin(f * 0.07 + k) * 0.5
+  const stats: { label: string; value: string; unit: string; at: number; big?: boolean; warn?: boolean }[] = [
+    { label: 'ピッチ', value: String(Math.round(176 - 12 * bad)), unit: '歩/分', at: at(0.2), big: true, warn: bad > 0.5 },
+    { label: '上下動', value: (8.3 + 0.1 * wob(1)).toFixed(1), unit: 'cm', at: at(0.33) },
+    { label: '接地時間', value: (0.24 + 0.004 * wob(2)).toFixed(2), unit: '秒', at: at(0.44) },
+  ]
   return (
     <Bg>
-      <Head n="01" tag="無料" at={m6.start - 4} title={<>スマホ1台を腰に、<br /><span style={{ color: C.accent }}>外を走る。</span></>} />
+      <Head n="01" at={m14.start - 4} title={<>スマホ1台を腰に、<br /><span style={{ color: C.accent }}>外を走る。</span></>} />
       <svg width={1080} height={1920} style={{ position: 'absolute', inset: 0 }}>
         <Road f={f} y={ty + 434 * sc} />
         <Figure
@@ -246,33 +245,47 @@ export function SPhone({ items }: { items: MItem[] }) {
           head={1}
           upper={C.limb}
           transform={`translate(${tx},${ty}) scale(${sc})`}
-          overlay={(fr) => <WaistPhone fr={fr} glow={phonePulse} pop={pop(f, m6.start + Math.round(m6.len * 0.4))} />}
+          overlay={(fr) => <WaistPhone fr={fr} glow={phonePulse} pop={pop(f, m14.start + Math.round(m14.len * 0.4))} />}
         />
       </svg>
-      {/* ピッチの表示 */}
-      <div style={{ position: 'absolute', right: 70, top: 620, textAlign: 'right', ...fadeUp(f, m7.start - 6) }}>
-        <div style={{ fontSize: 32, color: C.muted, fontWeight: 700 }}>ピッチ</div>
-        <div style={{ fontFamily: num, fontWeight: 700, fontSize: 130, lineHeight: 1, color: pitchCol }}>{spm}</div>
-        <div style={{ fontSize: 28, color: C.muted }}>歩/分</div>
-        {bad > 0.5 && <div style={{ marginTop: 18, padding: '10px 20px', borderRadius: 28, background: C.warn, color: C.bg, fontWeight: 900, fontSize: 28 }}>足の回転が落ちています</div>}
+      {/* 見続けている3つ */}
+      <div style={{ position: 'absolute', right: 60, top: 560, width: 300, display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {stats.map((s) => {
+          const p = pop(f, s.at)
+          const col = s.warn ? C.warn : C.text
+          return (
+            <div
+              key={s.label}
+              style={{
+                padding: '16px 24px',
+                borderRadius: 26,
+                background: '#14181C',
+                border: `3px solid ${s.warn ? C.warn : C.line}`,
+                opacity: Math.min(1, p * 1.3),
+                transform: `translateX(${(1 - Math.min(1, p)) * 60}px)`,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 14, height: 14, borderRadius: 7, background: s.warn ? C.warn : C.accent, opacity: 0.45 + 0.55 * phonePulse }} />
+                <div style={{ fontSize: 30, color: C.muted, fontWeight: 700 }}>{s.label}</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                <div style={{ fontFamily: num, fontWeight: 700, fontSize: s.big ? 116 : 76, lineHeight: 1.05, color: col }}>{s.value}</div>
+                <div style={{ fontSize: 26, color: C.muted }}>{s.unit}</div>
+              </div>
+            </div>
+          )
+        })}
       </div>
+      <Voice text={cue.text} at={cue.start} top={1220} />
       {/* メトロノーム */}
-      <div style={{ position: 'absolute', right: 70, top: 980, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 12, opacity: interpolate(f, [clickAt[0] - 8, clickAt[0]], [0, 1], clamp) * (1 - after) }}>
-        <div style={{ fontSize: 28, color: C.muted, fontWeight: 700 }}>メトロノーム</div>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 1440, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24, opacity: interpolate(f, [clickAt[0] - 8, clickAt[0]], [0, 1], clamp) }}>
+        <div style={{ fontSize: 32, color: C.muted, fontWeight: 700 }}>メトロノーム</div>
         <div style={{ display: 'flex', gap: 16 }}>
-          {clickAt.map((at, k) => {
-            const hit = interpolate(f, [at, at + 2, at + 9], [0, 1, 0.35], clamp)
+          {clickAt.map((a, k) => {
+            const hit = interpolate(f, [a, a + 2, a + 9], [0, 1, 0.35], clamp)
             return <div key={k} style={{ width: 34, height: 34, borderRadius: 17, background: hit > 0.01 ? C.accent : C.line, opacity: hit > 0.01 ? 0.4 + 0.6 * hit : 1, transform: `scale(${1 + 0.35 * hit})` }} />
           })}
-        </div>
-      </div>
-      <Voice text={cue.text} at={cue.start} top={1190} out={m8.start - 8} />
-      {/* 走ったあと：上下動と接地時間のグラフ */}
-      <div style={{ position: 'absolute', left: 60, right: 60, top: 1180, padding: '26px 34px', borderRadius: 32, background: '#14181C', border: `2px solid ${C.line}`, opacity: after, transform: `translateY(${(1 - after) * 30}px)` }}>
-        <div style={{ fontSize: 30, color: C.accent, fontWeight: 700 }}>走ったあとに</div>
-        <div style={{ display: 'flex', gap: 34, marginTop: 14 }}>
-          <MiniChart f={f - m8.start} label="上下動" unit="cm" from={8.1} to={8.9} />
-          <MiniChart f={f - m8.start} label="接地時間" unit="秒" from={0.24} to={0.27} digits={2} />
         </div>
       </div>
     </Bg>
@@ -294,46 +307,14 @@ function WaistPhone({ fr, glow, pop: p }: { fr: Frame; glow: number; pop: number
   )
 }
 
-// 走り始めからの変化の小さなグラフ（後半で少し上がる）
-function MiniChart({ f, label, unit, from, to, digits = 1 }: { f: number; label: string; unit: string; from: number; to: number; digits?: number }) {
-  const W = 400
-  const Hh = 150
-  const draw = interpolate(f, [6, 50], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
-  const pts = Array.from({ length: 41 }, (_, i) => {
-    const m = i / 40
-    const v = m < 0.6 ? Math.sin(i * 1.3) * 0.05 : ((m - 0.6) / 0.4) ** 1.4
-    return `${(m * W).toFixed(1)},${(Hh - 20 - v * (Hh - 50)).toFixed(1)}`
-  }).join(' ')
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-        <div style={{ fontSize: 32, fontWeight: 900 }}>{label}</div>
-        <div style={{ fontFamily: num, fontSize: 36, color: C.muted }}>
-          {from.toFixed(digits)} → <span style={{ color: C.warn }}>{to.toFixed(digits)}</span>
-          {unit}
-        </div>
-      </div>
-      <svg width={W} height={Hh} style={{ marginTop: 6 }}>
-        <path d={`M0 ${Hh - 2}H${W}`} stroke={C.line} strokeWidth={3} />
-        <path d={`M${W * 0.6} 10V${Hh - 2}`} stroke={C.warn} strokeWidth={2} strokeDasharray="8 8" opacity={draw > 0.7 ? 1 : 0} />
-        <polyline points={pts} fill="none" stroke={C.accent} strokeWidth={5} strokeLinejoin="round" strokeDasharray={900} strokeDashoffset={900 * (1 - draw)} />
-      </svg>
-    </div>
-  )
-}
-
-// 5. トレッドミルの横にスマホ。骨格で9つのポイントを見て、崩れたら声
-const NINE = ['頭の位置', '上体の傾き', '腕振り', '着地の位置', '接地時間', 'ピッチ', '腰の高さ', '上下動', '左右の差']
+// 5. トレッドミルの横にスマホ。骨格でフォームを見る
 export function SCamera({ items }: { items: MItem[] }) {
   const f = useCurrentFrame()
-  const [m9, m10, cue] = items
-  const k = interpolate(f, [cue.start - 26, cue.start - 4], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
-  const fix = interpolate(f, [cue.start + cue.len + 2, cue.start + cue.len + 18], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
-  const bad = k * (1 - fix)
-  const upper = fix > 0 ? interpolateColors(fix, [0, 1], [C.warn, C.accent]) : interpolateColors(k, [0, 1], [C.limb, C.warn])
+  const [m9] = items
   const scan = (f * 9) % 548
   const sec = 21 * 60 + 40 + Math.floor(f / FPS)
   const screen = pop(f, m9.start + Math.round(m9.len * 0.35))
+  const bone = m9.start + Math.round(m9.len * 0.7)
   return (
     <Bg>
       <Head n="02" at={m9.start - 4} title={<>トレッドミルの横に、<br /><span style={{ color: C.accent }}>スマホを置く。</span></>} />
@@ -344,57 +325,23 @@ export function SCamera({ items }: { items: MItem[] }) {
             <path d="M0 137H968M0 274H968M0 411H968M242 0V548M484 0V548M726 0V548" />
           </g>
           <Treadmill f={f} transform="translate(330,40) scale(1.06)" />
-          <Figure
-            frame={f}
-            lean={8 + 4 * bad}
-            head={11 * bad}
-            upper={upper}
-            transform="translate(330,40) scale(1.06)"
-            overlay={(fr) => <Joints fr={fr} />}
-          />
+          <Figure frame={f} lean={8} head={1} upper={C.limb} transform="translate(330,40) scale(1.06)" overlay={(fr) => <g opacity={interpolate(f, [bone, bone + 10], [0, 1], clamp)}><Joints fr={fr} /></g>} />
           <rect x={0} y={scan} width={968} height={6} fill={C.accent} opacity={0.3} />
         </svg>
-        <div style={{ position: 'absolute', left: 34, top: 28, display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ width: 18, height: 18, borderRadius: 9, background: C.accent }} />
-          <div style={{ fontFamily: num, fontSize: 32, letterSpacing: 5, color: C.muted }}>COACHING</div>
-        </div>
         <div style={{ position: 'absolute', right: 34, top: 18, fontFamily: num, fontWeight: 700, fontSize: 84 }}>
           {String(Math.floor(sec / 60)).padStart(2, '0')}:{String(sec % 60).padStart(2, '0')}
         </div>
-        {bad > 0.5 && <div style={{ position: 'absolute', right: 34, top: 120, padding: '12px 22px', borderRadius: 30, background: C.warn, color: C.bg, fontWeight: 900, fontSize: 30 }}>頭が前に出ています</div>}
       </div>
       {/* 置いたスマホの脚 */}
       <svg width={1080} height={120} style={{ position: 'absolute', left: 0, top: 1100, opacity: Math.min(1, screen) }}>
         <path d="M540 4V60M440 60H640" stroke="#3A424B" strokeWidth={10} strokeLinecap="round" />
       </svg>
-      {/* 9つのポイント */}
-      <div style={{ position: 'absolute', left: 50, right: 50, top: 1190, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
-        {NINE.map((label, i) => {
-          const p = pop(f, m10.start + 4 + i * 4)
-          const warn = i === 0 && bad > 0.5
-          return (
-            <div
-              key={label}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '10px 16px',
-                borderRadius: 18,
-                background: warn ? C.warn : 'rgba(20,24,28,0.92)',
-                color: warn ? C.bg : C.text,
-                border: `2px solid ${warn ? C.warn : C.line}`,
-                opacity: Math.min(1, p * 1.3),
-                transform: `scale(${0.8 + 0.2 * Math.min(1, p)})`,
-              }}
-            >
-              <span style={{ fontFamily: num, fontWeight: 700, fontSize: 34, color: warn ? C.bg : C.accent }}>{String(i + 1).padStart(2, '0')}</span>
-              <span style={{ fontSize: 32, fontWeight: 900 }}>{label}</span>
-            </div>
-          )
-        })}
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 1260, textAlign: 'center', ...fadeUp(f, bone) }}>
+        <div style={{ fontSize: 52, fontWeight: 900 }}>
+          <span style={{ color: C.accent }}>骨格</span>で、フォームを見る。
+        </div>
+        <div style={{ fontSize: 34, color: C.muted, marginTop: 18 }}>映像は、保存も送信もしません。</div>
       </div>
-      <Voice text={cue.text} at={cue.start} top={1470} />
     </Bg>
   )
 }
@@ -430,50 +377,50 @@ function Joints({ fr }: { fr: Frame }) {
   )
 }
 
-// 7. センサーを6か所に付けて、外でも。崩れたら声と振動
-type Spot = 'cap' | 'chest' | 'wrist' | 'ankle'
+// 8. センサーを6か所（額・両手首・胸・両足首）に付けて、外を走る。猫背になったら胸のセンサーが振動で知らせる
+type Spot = 'head' | 'chest' | 'wrist' | 'ankle'
 export function SSensor({ items }: { items: MItem[] }) {
   const f = useCurrentFrame()
-  const [m12, m13, cue] = items
+  const [m20, m21] = items
   const tx = 150
   const ty = 470
   const sc = 1.5
-  // m12 の「両手首、両足首、胸、帽子」の、文の中のおよその位置
-  const at = (r: number) => m12.start + Math.round(m12.len * r)
-  const show: Record<Spot, number> = { wrist: pop(f, at(0.3)), ankle: pop(f, at(0.4)), chest: pop(f, at(0.5)), cap: pop(f, at(0.56)) }
-  // 腕振りが小さくなり（m13）、声と振動のあとに戻る
-  const shrink = interpolate(f, [m13.start + 10, m13.start + 50], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
-  const fix = interpolate(f, [cue.start + cue.len - 10, cue.start + cue.len + 14], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
-  const bad = shrink * (1 - fix)
-  const arm = Math.round((1 - 0.65 * bad) * 20) / 20
-  const buzz = f >= cue.start - 4 && f < cue.start + cue.len - 6 ? 1 : 0
-  const armColor = fix > 0 ? interpolateColors(fix, [0, 1], [C.warn, C.accent]) : interpolateColors(bad, [0, 1], [C.accent, C.warn])
+  // m20 の「頭、両腕、胸、両足首」の、文の中のおよその位置
+  const at = (r: number) => m20.start + Math.round(m20.len * r)
+  const show: Record<Spot, number> = { head: pop(f, at(0.33)), wrist: pop(f, at(0.41)), chest: pop(f, at(0.49)), ankle: pop(f, at(0.56)) }
+  // 猫背になり（m21）、胸のセンサーが震えたあとに戻る
+  const buzz = buzzAt(m21)
+  const hunch = interpolate(f, [m21.start + 4, m21.start + 40], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
+  const fix = interpolate(f, [buzz + 16, buzz + 38], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
+  const bad = hunch * (1 - fix)
+  const shaking = f >= buzz && f < buzz + 15 ? 1 : 0
+  const upper = fix > 0 ? interpolateColors(fix, [0, 1], [C.warn, C.accent]) : interpolateColors(hunch, [0, 1], [C.limb, C.warn])
   // 札の位置（画面の座標 → 骨格の座標）
   const toFig = (x: number, y: number) => ({ x: (x - tx) / sc, y: (y - ty) / sc })
   const labels: { spot: Spot; text: string; x: number; y: number }[] = [
-    { spot: 'cap', text: '帽子', x: 760, y: 560 },
-    { spot: 'chest', text: '胸', x: 760, y: 700 },
-    { spot: 'wrist', text: '両手首', x: 760, y: 840 },
-    { spot: 'ankle', text: '両足首', x: 760, y: 1050 },
+    { spot: 'head', text: '頭（額）', x: 740, y: 560 },
+    { spot: 'chest', text: '胸', x: 740, y: 700 },
+    { spot: 'wrist', text: '両腕（手首）', x: 740, y: 840 },
+    { spot: 'ankle', text: '両足首', x: 740, y: 1050 },
   ]
+  const tell = interpolate(f, [buzz - 2, buzz + 6], [0, 1], clamp)
   return (
     <Bg>
-      <Head n="03" tag="外でも" at={m12.start - 4} title={<>センサーを付けて、<br /><span style={{ color: C.accent }}>走る。</span></>} />
+      <Head n="03" at={m20.start - 4} title={<>センサーを付けて、<br /><span style={{ color: C.accent }}>外を走る。</span></>} />
       <svg width={1080} height={1920} style={{ position: 'absolute', inset: 0 }}>
         <Road f={f} y={ty + 434 * sc} />
         <Figure
           frame={f}
-          lean={8}
-          head={1}
-          arm={arm}
-          upper={C.limb}
+          lean={8 + 9 * bad}
+          head={9 * bad}
+          upper={upper}
           transform={`translate(${tx},${ty}) scale(${sc})`}
-          overlay={(fr) => <Sensors fr={fr} f={f} show={show} armColor={armColor} buzz={buzz} labels={labels.map((l) => ({ ...l, ...toFig(l.x, l.y) }))} />}
+          overlay={(fr) => <Sensors fr={fr} f={f} show={show} warn={bad > 0.5} shaking={shaking} labels={labels.map((l) => ({ ...l, ...toFig(l.x, l.y) }))} />}
         />
       </svg>
       {labels.map((l) => {
         const s = Math.min(1, show[l.spot])
-        const warn = l.spot === 'wrist' && bad > 0.5
+        const warn = l.spot === 'chest' && bad > 0.5
         return (
           <div key={l.spot} style={{ position: 'absolute', left: l.x, top: l.y - 34, opacity: s, transform: `translateX(${(1 - s) * 40}px)` }}>
             <div style={{ padding: '10px 22px', borderRadius: 26, background: warn ? C.warn : 'rgba(20,24,28,0.92)', color: warn ? C.bg : C.text, border: `2px solid ${warn ? C.warn : C.accent}`, fontWeight: 900, fontSize: 36 }}>{l.text}</div>
@@ -481,61 +428,68 @@ export function SSensor({ items }: { items: MItem[] }) {
         )
       })}
       {/* センサーで見るもの */}
-      <div style={{ position: 'absolute', left: 60, right: 60, top: 1200, display: 'flex', gap: 16, justifyContent: 'center', ...fadeUp(f, m13.start) }}>
-        {['腕振り', '左右の差', '着地の衝撃', '頭と上体'].map((t, i) => {
+      <div style={{ position: 'absolute', left: 60, right: 60, top: 1220, display: 'flex', gap: 18, justifyContent: 'center', ...fadeUp(f, m21.start) }}>
+        {['猫背', '左右の差'].map((t, i) => {
           const warn = i === 0 && bad > 0.5
           return (
-            <div key={t} style={{ padding: '10px 20px', borderRadius: 18, background: warn ? C.warn : 'rgba(20,24,28,0.92)', color: warn ? C.bg : C.text, border: `2px solid ${warn ? C.warn : C.line}`, fontSize: 32, fontWeight: 900 }}>
+            <div key={t} style={{ padding: '12px 28px', borderRadius: 20, background: warn ? C.warn : 'rgba(20,24,28,0.92)', color: warn ? C.bg : C.text, border: `2px solid ${warn ? C.warn : C.line}`, fontSize: 38, fontWeight: 900 }}>
               {t}
             </div>
           )
         })}
       </div>
-      <Voice text={cue.text} at={cue.start} top={1330} vibe />
+      {/* 振動で知らせる（声はなし） */}
+      <div style={{ position: 'absolute', left: 50, right: 50, top: 1360, display: 'flex', justifyContent: 'center', opacity: tell }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '24px 36px', borderRadius: 60, background: 'rgba(10,12,14,0.9)', border: `3px solid ${fix > 0.5 ? C.accent : C.warn}` }}>
+          <Vibe color={fix > 0.5 ? C.accent : C.warn} size={56} />
+          <div style={{ fontSize: 38, fontWeight: 900 }}>{fix > 0.5 ? '胸が開きました' : '胸のセンサーが、ブルッ。'}</div>
+        </div>
+      </div>
     </Bg>
   )
 }
 
-// センサーの印。手首は振動しているとき震えて、波が出る
+// センサーの印。胸は振動しているとき震えて、波が出る
 function Sensors({
   fr,
   f,
   show,
-  armColor,
-  buzz,
+  warn,
+  shaking,
   labels,
 }: {
   fr: Frame
   f: number
   show: Record<Spot, number>
-  armColor: string
-  buzz: number
+  warn: boolean
+  shaking: number
   labels: { spot: Spot; x: number; y: number }[]
 }) {
   const ear = fr[L.leftEar]
   const nose = fr[L.nose]
   const head = { x: (ear.x + nose.x) / 2, y: (ear.y + nose.y) / 2 - 8 }
+  const brow = { x: head.x + 21, y: head.y - 12 } // 額（ヘッドバンドの前）
   const sh = fr[L.leftShoulder]
   const hip = fr[L.leftHip]
   const chest = mid(sh, hip, 0.28)
   const ang = (Math.atan2(sh.x - hip.x, hip.y - sh.y) * 180) / Math.PI
-  const jit = buzz ? Math.sin(f * 2.6) * 2.2 : 0
+  const jit = shaking ? Math.sin(f * 2.6) * 2.4 : 0
   const node = (p: XY, key: string, s: number, color = C.accent, far = false, shake = 0) => (
     <g key={key} transform={`translate(${p.x + shake} ${p.y})`} opacity={Math.min(1, s) * (far ? 0.55 : 1)}>
       <rect x={-8} y={-8} width={16} height={16} rx={5} fill={C.bg} stroke={color} strokeWidth={3} transform={`scale(${0.5 + 0.5 * Math.min(1.2, s)})`} />
       <circle r={2.6} fill={color} />
     </g>
   )
-  const waves = (p: XY, key: string, far: boolean) =>
-    buzz ? (
-      <g key={key} opacity={far ? 0.45 : 0.9}>
+  const waves = (p: XY) =>
+    shaking ? (
+      <g>
         {[0, 1].map((k) => {
           const r = 14 + (((f * 1.4 + k * 9) % 18) | 0)
           return <circle key={k} cx={p.x} cy={p.y} r={r} fill="none" stroke={C.warn} strokeWidth={2.2} opacity={1 - (r - 14) / 18} />
         })}
       </g>
     ) : null
-  const anchor: Record<Spot, XY> = { cap: { x: head.x - 4, y: head.y - 30 }, chest, wrist: fr[L.leftWrist], ankle: fr[L.leftAnkle] }
+  const anchor: Record<Spot, XY> = { head: brow, chest, wrist: fr[L.leftWrist], ankle: fr[L.leftAnkle] }
   return (
     <g>
       {/* 札への線（センサーの位置から） */}
@@ -543,23 +497,19 @@ function Sensors({
         const a = anchor[l.spot]
         return <path key={`l${l.spot}`} d={`M${a.x} ${a.y}L${l.x - 4} ${l.y}`} stroke={C.accent} strokeWidth={1.6} opacity={0.6 * Math.min(1, show[l.spot])} />
       })}
-      {/* 帽子 */}
-      <g opacity={Math.min(1, show.cap)}>
-        <path d={`M${head.x - 27} ${head.y - 4}A27 27 0 0 1 ${head.x + 27} ${head.y - 4}Z`} fill="#2A3138" stroke={C.muted} strokeWidth={2.5} />
-        <path d={`M${head.x + 20} ${head.y - 4}L${head.x + 48} ${head.y - 1}`} stroke={C.muted} strokeWidth={5} strokeLinecap="round" />
-      </g>
+      {/* ヘッドバンド */}
+      <path d={`M${head.x - 25} ${head.y - 4}L${brow.x} ${brow.y}`} stroke={C.muted} strokeWidth={6} strokeLinecap="round" opacity={Math.min(1, show.head)} />
       {/* 胸のベルト */}
       <g transform={`translate(${chest.x} ${chest.y}) rotate(${ang})`} opacity={Math.min(1, show.chest)}>
         <rect x={-19} y={-5} width={38} height={10} rx={4} fill="#1C2126" stroke={C.muted} strokeWidth={2} />
       </g>
-      {waves(fr[L.rightWrist], 'wr2', true)}
-      {waves(fr[L.leftWrist], 'wr1', false)}
-      {node(fr[L.rightWrist], 'w2', show.wrist, armColor, true, -jit)}
+      {node(fr[L.rightWrist], 'w2', show.wrist, C.accent, true)}
       {node(fr[L.rightAnkle], 'a2', show.ankle, C.accent, true)}
-      {node(anchor.cap, 'cap', show.cap)}
-      {node(chest, 'chest', show.chest)}
+      {node(brow, 'head', show.head)}
+      {waves(chest)}
+      {node(chest, 'chest', show.chest, warn ? C.warn : C.accent, false, jit)}
       {node(fr[L.leftAnkle], 'a1', show.ankle)}
-      {node(fr[L.leftWrist], 'w1', show.wrist, armColor, false, jit)}
+      {node(fr[L.leftWrist], 'w1', show.wrist)}
     </g>
   )
 }

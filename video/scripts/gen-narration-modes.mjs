@@ -1,7 +1,7 @@
 // 2本目の紹介動画（使い方は3つ）の声を作り、長さを src/narration-modes.json に書く
 //   m*: ナレーション（1本目と同じ声）→ public/narration-modes/
 //   a*: アプリの声かけ（アプリと同じ声）→ public/app-modes/。アプリにある言葉は、アプリの音声ファイルをそのまま使う
-//   1本目から使い回す音声（冒頭 n1〜n4、締め n19、頭の声かけ aHead）は、長さを測るだけ
+//   1本目から使い回す音声（冒頭 n1〜n4、締め n19、腰の声かけ aHip）は、長さを測るだけ
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { LINES, APP_LINES } from '../src/lines-modes.mjs'
@@ -11,7 +11,7 @@ const root = new URL('..', import.meta.url).pathname
 const durations = {}
 
 for (const id of ['n1', 'n2', 'n3', 'n4', 'n19']) durations[id] = length(join(root, 'public/narration', `${id}.m4a`))
-durations.aHead = length(join(root, 'public/app', 'aHead.m4a'))
+durations.aHip = length(join(root, 'public/app', 'aHip.m4a'))
 
 mkdirSync(join(root, 'public/narration-modes'), { recursive: true })
 for (const [id, text] of Object.entries(LINES)) {

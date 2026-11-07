@@ -24,7 +24,7 @@ export const LINES = {
 // appFile があるものは、アプリの音声ファイルをそのまま使う
 export const APP_LINES = {
   aOver: { text: '足が前に出すぎています。体の真下に着地してください。' },
-  aHip: { text: '腰が落ちています。上から吊られているように意識してください。', appFile: 'cueHip' },
+  aHip: { text: '腰が落ちています。地面を真下に押して、腰を高く運びましょう。', appFile: 'cueHip' },
   aHead: { text: '頭が前に出ています。顎を引いてください。', appFile: 'cueHead' },
   aLR: { text: '右の接地が長くなっています。左右を均等に意識してください。' },
   aGood: { text: 'いい感じです。その姿勢を保ちましょう。', appFile: 'recover1' },

@@ -34,13 +34,17 @@ const end = (p: (typeof POINTS)[number]) =>
 
 export function SPoints({ items }: { items: Item[] }) {
   const f = useCurrentFrame()
-  const [n4, n5, n6, n7] = items
-  // 3つずつ、そのナレーションの長さを3等分した時刻に出す
-  const times = [n5, n6, n7].flatMap((it) => [0, 1, 2].map((k) => it.start + Math.round((it.len * k) / 3)))
-  const nine = pop(f, n4.start + 10)
+  const [first, ...rest] = items
+  // 1本目：あとの3つのナレーションで3つずつ、その長さを3等分した時刻に出す
+  // 2本目：ナレーションは1つなので、その長さの中で9つを順に出す
+  const times =
+    rest.length >= 3
+      ? rest.slice(0, 3).flatMap((it) => [0, 1, 2].map((k) => it.start + Math.round((it.len * k) / 3)))
+      : Array.from({ length: 9 }, (_, i) => first.start + Math.round(first.len * (0.1 + (0.8 * i) / 9)))
+  const nine = pop(f, first.start + 10)
   return (
     <Bg>
-      <div style={{ position: 'absolute', left: 60, top: 200, display: 'flex', alignItems: 'flex-end', gap: 26, ...fadeUp(f, n4.start) }}>
+      <div style={{ position: 'absolute', left: 60, top: 200, display: 'flex', alignItems: 'flex-end', gap: 26, ...fadeUp(f, first.start) }}>
         <div style={{ fontFamily: num, fontWeight: 700, fontSize: 220, lineHeight: 0.8, color: C.accent, transform: `scale(${0.7 + 0.3 * nine})`, transformOrigin: 'left bottom' }}>9</div>
         <div style={{ fontWeight: 900, fontSize: 70, lineHeight: 1.25, paddingBottom: 6 }}>
           つのポイントを、
@@ -103,7 +107,8 @@ const EX: Record<Kind, { title: ReactNode; chip: string }> = {
   good: { title: <>直れば、<br /><span style={{ color: C.accent }}>すぐに伝える。</span></>, chip: '' },
 }
 
-export function SExample({ kind, items }: { kind: Kind; items: Item[] }) {
+// sub は見出しの下に、ナレーションの途中（at、場面の頭からのコマ）から足す一行（2本目の腰の場面）
+export function SExample({ kind, items, sub }: { kind: Kind; items: Item[]; sub?: { text: string; at: number } }) {
   const f = useCurrentFrame()
   const [narr, app] = items
   const ex = EX[kind]
@@ -120,6 +125,9 @@ export function SExample({ kind, items }: { kind: Kind; items: Item[] }) {
       <div style={{ position: 'absolute', left: 80, top: 220, ...fadeUp(f, Math.max(0, narr.start - 4)) }}>
         <div style={{ fontWeight: 900, fontSize: 74, lineHeight: 1.3, letterSpacing: -1 }}>{ex.title}</div>
       </div>
+      {sub && (
+        <div style={{ position: 'absolute', left: 80, top: 452, fontSize: 40, fontWeight: 700, color: C.muted, ...fadeUp(f, sub.at) }}>{sub.text}</div>
+      )}
       <div style={{ position: 'absolute', left: 50, right: 50, top: 560, height: 560, borderRadius: 56, background: C.stage, border: '6px solid #3A424B', overflow: 'hidden' }}>
         <svg width={968} height={548} style={{ position: 'absolute', inset: 0 }}>
           <g stroke={C.grid}>
@@ -154,10 +162,6 @@ export function SExample({ kind, items }: { kind: Kind; items: Item[] }) {
             </g>
           )}
         </svg>
-        <div style={{ position: 'absolute', left: 34, top: 28, display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ width: 18, height: 18, borderRadius: 9, background: C.accent }} />
-          <div style={{ fontFamily: num, fontSize: 32, letterSpacing: 5, color: C.muted }}>COACHING</div>
-        </div>
         <div style={{ position: 'absolute', right: 34, top: 18, fontFamily: num, fontWeight: 700, fontSize: 84 }}>
           {String(Math.floor(sec / 60)).padStart(2, '0')}:{String(sec % 60).padStart(2, '0')}
         </div>
@@ -188,7 +192,18 @@ export function SExample({ kind, items }: { kind: Kind; items: Item[] }) {
             <path d="M4 9v6h4l5 4V5L8 9H4z" />
             <path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />
           </svg>
-          <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.4 }}>{app.text}</div>
+          <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.4 }}>
+            {/* 長い声かけは、1つめの文のあとで改行する（行の途中で切れて1語だけ落ちるのを防ぐ） */}
+            {app.text.length > 26 && app.text.indexOf('。') > 0 ? (
+              <>
+                {app.text.slice(0, app.text.indexOf('。') + 1)}
+                <br />
+                {app.text.slice(app.text.indexOf('。') + 1)}
+              </>
+            ) : (
+              app.text
+            )}
+          </div>
         </div>
       </div>
     </Bg>

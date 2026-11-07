@@ -221,10 +221,6 @@ export function SCoach(_: { items?: unknown }) {
           </g>
           <Figure frame={f} lean={12 - 5 * k} head={12 * (1 - k)} upper={upper} transform="translate(330,40) scale(1.06)" />
         </svg>
-        <div style={{ position: 'absolute', left: 34, top: 28, display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ width: 18, height: 18, borderRadius: 9, background: C.accent }} />
-          <div style={{ fontFamily: num, fontSize: 32, letterSpacing: 5, color: C.muted }}>COACHING</div>
-        </div>
         <div style={{ position: 'absolute', right: 34, top: 18, fontFamily: num, fontWeight: 700, fontSize: 84 }}>
           {String(Math.floor(sec / 60)).padStart(2, '0')}:{String(sec % 60).padStart(2, '0')}
         </div>
@@ -320,8 +316,8 @@ export function SHabit(_: { items?: unknown }) {
   )
 }
 
-// 7. 走り姿を骨格で。次に直すのは1つだけ
-export function SInsight(_: { items?: unknown }) {
+// 7. 走り姿を骨格で。次に直すのは1つだけ。note は「次の一歩」の札の見出し（2本目は正しいフォームと比べる言い方）
+export function SInsight({ note = '次の一歩（自分のベスト＋ひとつ）' }: { items?: unknown; note?: string }) {
   const f = useCurrentFrame()
   const g = interpolate(f, [10, 60], [0, 1], { ...clamp, easing: Easing.out(Easing.cubic) })
   return (
@@ -355,7 +351,7 @@ export function SInsight(_: { items?: unknown }) {
         <Figure frame={f} lean={13} head={2} upper="#6B7480" ghost={f > 70 ? { lean: 6, head: 1 } : undefined} transform="translate(200,660) scale(1.65)" />
       </svg>
       <div style={{ position: 'absolute', left: 90, right: 90, top: 1450, padding: '28px 34px', borderRadius: 28, background: '#14181C', border: `2px solid ${C.line}`, ...fadeUp(f, 90) }}>
-        <div style={{ fontSize: 28, color: C.accent, fontWeight: 700 }}>次の一歩（自分のベスト＋ひとつ）</div>
+        <div style={{ fontSize: 28, color: C.accent, fontWeight: 700 }}>{note}</div>
         <div style={{ fontSize: 50, fontWeight: 900, marginTop: 8 }}>骨盤を立てて、上体を起こす</div>
       </div>
     </Bg>
