@@ -106,7 +106,7 @@ export default function App() {
       return <Slow video={screen.video} go={setScreen} />
     case 'posture': {
       const s = find(screen.id)
-      return s ? <Posture session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
+      return s ? <Posture session={s} go={setScreen} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
     }
   }
 }

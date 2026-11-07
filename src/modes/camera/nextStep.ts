@@ -1,4 +1,4 @@
-import type { FormGroup, FormResult, GaitResult, ItemKey, Session } from '../../core/types'
+import type { Category, FormGroup, FormResult, GaitResult, ItemKey, Session, Stride } from '../../core/types'
 import { ALL, STEPS, startPhrase, type Progress } from '../../core/level'
 import { LEVEL } from '../../core/params'
 import { FOCUS } from '../../core/phrases'
@@ -131,9 +131,13 @@ export interface Next {
   gap: number // 離れていた量（度。line は線から、good はよい例の範囲から。頭は首の角度と頭の位置の小さいほう）
 }
 
-// 一番良かった回（良い姿勢の割合が最大）
-export function bestSession(sessions: Session[]): Session | undefined {
-  return sessions.filter((s) => s.strides.good).reduce<Session | undefined>((a, b) => (!a || b.share.good > a.share.good ? b : a), undefined)
+// その走りでいちばん多かった姿勢の1周（ホームの「今日のフォーム」と、比べのない前の版の記録の次の一歩に使う）。
+// 良い・ふつう・悪いは、その日の自分の基準からの崩れで分けたもので、正しいフォームとの比べではない。
+// そのため「良い」の1周や、良い姿勢の割合がいちばん大きい走りを「よいフォーム」として見せない（基準が猫背の日は、良いも猫背のまま）
+export function mainStride(s: Pick<Session, 'strides' | 'share'>): Stride | undefined {
+  const cats = (['good', 'mid', 'bad'] as Category[]).filter((c) => s.strides[c])
+  if (!cats.length) return undefined
+  return s.strides[cats.reduce((a, b) => (s.share[b] > s.share[a] ? b : a))]
 }
 
 const norm = (g: FormGroup, x: number) => x / FORM[g].span
@@ -158,12 +162,12 @@ function pick(rs: FormResult[], good: GoodRanges): Next | undefined {
   return { item: top.key, group: top.r.group, kind: 'good', from: top.r.value, to: goodTo(top.r, top.key, top.gap, good), gap: top.gap }
 }
 
-// 次の一歩。その走りの比べ（Session.form）があればそれで、なければ（前の版の記録）良い姿勢の1歩の平均の上体・体全体で見る。
+// 次の一歩。その走りの比べ（Session.form）があればそれで、なければ（前の版の記録）いちばん多かった姿勢の1周（mainStride）の平均の上体・体全体で見る。
 // よい例の範囲は、その走りの速さのもの（speedKmh。無ければ講師の速さ）。線の外の項目も、よい例から離れた項目もなければ undefined
 export function nextItem(s: Session): Next | undefined {
   const good = goodFor(s)
   if (s.form?.length) return pick(s.form, good)
-  const avg = s.strides.good?.avg
+  const avg = mainStride(s)?.avg
   if (!avg) return undefined
   const v = { trunk: avg.trunk, body: avg.body, neck: 0, headLean: 0 }
   const rs: FormResult[] = (['body', 'trunk'] as FormGroup[]).map((g) => {
@@ -267,10 +271,10 @@ export function nextNote(n: Next): string {
 //   1. 段階が上がった次の走りは、新しく見る項目を伝える（level.ts。1回だけ）
 //   2. 前回の走りに正しいフォームとの比べがあれば、その次の一歩（線の外の項目、なければよい例から一番離れていた項目）
 //   3. なければ、注意する項目を広げている途中なら、その段階のこと
-//   4. すべて見る段階なら、比べのない前の版の記録のベストの走りの次の一歩。それもなければ「すべての項目を見ます」
+//   4. すべて見る段階なら、比べのない前の版の記録（前回の走り）の、いちばん多かった姿勢での次の一歩。それもなければ「すべての項目を見ます」
 export interface Focus {
   item?: ItemKey // 選んだ項目（段階のことを言うときは無い）
-  next?: Next // 項目を選んだときの次の一歩（ホームの走り姿の「今日のフォーム」も、この1つだけを変えて見せる）
+  next?: Next // 項目を選んだときの次の一歩（ホームの走り姿の右に、前回の値 → 目指す値で出す）
   title: string // ホームの見出し
   reason: string // ホームの説明
   say: string // 走り出す前に言う言葉（「今日意識するのは…」）
@@ -303,10 +307,9 @@ export function todayFocus(sessions: Session[], p: Progress): Focus {
     }
   }
   if (p.step < ALL) return stage()
-  const best = compared ? undefined : bestSession(sessions)
-  const n = best ? nextItem(best) : undefined
+  const n = last && !compared ? nextItem(last) : undefined
   if (n) {
-    const reason = n.kind === 'line' ? NEXT_TEXT[n.item].reason : `あなたのベストの走りで、よい例より ${gapOf(n.group, n.gap)} ${past(GAP_WORD[n.item])}`
+    const reason = n.kind === 'line' ? NEXT_TEXT[n.item].reason : `前回の走りで、よい例より ${gapOf(n.group, n.gap)} ${past(GAP_WORD[n.item])}`
     return { item: n.item, next: n, title: NEXT_TEXT[n.item].title, reason, say: FOCUS[n.item] }
   }
   return stage()

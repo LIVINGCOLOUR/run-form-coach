@@ -2,7 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } 
 import { exportLog } from '../core/exportLog'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
-import { bestSession, pct0, todayFocus } from '../modes/camera/nextStep'
+import { goodFor, mainStride, pct0, todayFocus } from '../modes/camera/nextStep'
+import { FORM, kmh1 } from '../modes/camera/params'
 import { loadProgress, loadSettings, saveSettings, setLevel, type Settings } from '../core/storage'
 import { ALL, LEVEL_LABEL, LEVEL_NOTE, type Level, type Progress } from '../core/level'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
@@ -11,7 +12,7 @@ import { PHRASES } from '../core/phrases'
 import { VOICES, VOICE_ORDER, type VoiceKind } from '../core/voices'
 import { startGravity } from '../modes/camera/gravity'
 import { fullFrames } from '../modes/camera/fullFrames'
-import { demoStride, idealFrame, lerpFrame, nextStepFrame, normalizeStride } from '../modes/camera/ui/figure'
+import { correctFrames, demoStride, normalizeStride } from '../modes/camera/ui/figure'
 import { ShareBar } from '../ui/ShareBar'
 import type { PhoneKind, PhoneSession, PhoneWhere } from '../modes/phone/session'
 import { nextPractice } from '../modes/phone/practice'
@@ -33,25 +34,6 @@ const unit = (item: ItemKey) => (item === 'hip' ? '%' : '°')
 const fmt1 = (x: number) => String(Math.round(x * 10) / 10)
 // 着地は、速さで補正したかかとの前（脚の長さに対する割合）を % で
 const show = (item: ItemKey, x: number) => (item === 'landing' ? pct0(x) : `${fmt1(x)}${unit(item)}`)
-
-// 形が変わっていく割合 k を 0↔1 でなめらかに動かす
-function useMorph(on: boolean) {
-  const [k, setK] = useState(0)
-  const kRef = useRef(0)
-  useEffect(() => {
-    let raf = 0
-    const tick = () => {
-      const target = on ? 1 : 0
-      const next = Math.abs(target - kRef.current) < 0.05 ? target : kRef.current + (target > kRef.current ? 0.05 : -0.05)
-      kRef.current = next
-      setK(next)
-      if (next !== target) raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [on])
-  return k
-}
 
 const WHERE_LABEL: Record<PhoneWhere, string> = { outdoor: '外', treadmill: 'トレッドミル' }
 const WHERE_NOTE: Record<PhoneWhere, string> = {
@@ -96,10 +78,8 @@ const linkStyle = { background: 'none', border: 0, padding: 0, color: 'var(--mut
 export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]; phoneSessions?: PhoneSession[]; go: (s: Screen) => void }) {
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [progress, setProgress] = useState<Progress>(loadProgress)
-  const [ideal, setIdeal] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const slowRef = useRef<HTMLInputElement>(null)
-  const k = useMorph(ideal)
   const [mode, setMode] = useState<RunMode>(loadMode)
   const chooseMode = (m: RunMode) => {
     setMode(m)
@@ -114,32 +94,28 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
 
   const last = sessions[0]
   const prev = sessions[1]
-  const best = bestSession(sessions)
-  // 今日の意識：走り出す前に言う1つと同じもの（nextStep.ts の todayFocus）。走り姿の「今日のフォーム」も、この1つだけを変えて見せる
+  // 今日の意識：走り出す前に言う1つと同じもの（nextStep.ts の todayFocus）。走り姿の右に、前回の値 → 目指す値で出す
   const focus = useMemo(() => todayFocus(sessions, progress), [sessions, progress])
   const next = focus.next
 
-  const { base, ghost, idealFrames, exaggerated } = useMemo(() => {
-    const stride = best?.strides.good
-    if (!stride) {
-      const demo = demoStride({ lean: 12, head: 3, drop: 0 })
-      return { base: demo, ghost: undefined, idealFrames: demoStride({ lean: 7, head: 0, drop: 0 }), exaggerated: false }
-    }
-    const frames = normalizeStride(stride, best.gait?.cadence)
-    let ghost
-    let exaggerated = false
-    if (next) {
-      const d = next.from - next.to
-      // 差が小さいと見えないので、角度は4°、着地は脚の長さの5%までは大きく見せる
-      const least = next.group === 'landing' ? 0.05 : 4
-      const shown = Math.abs(d) < least ? Math.sign(d || 1) * least : d
-      exaggerated = shown !== d
-      ghost = frames.map((f) => nextStepFrame(f, next.item, next.from, next.from - shown))
-    }
-    return { base: frames, ghost, idealFrames: frames.map((f) => idealFrame(f, stride.avg)), exaggerated }
-  }, [best, next])
+  // 走り姿：後ろの灰色の人形が正しいフォーム（その走りの速さのよい例の真ん中に、上体と頭を直した形。figure.ts の correctFrames）、
+  // 上の緑の点線が前回の走り（いちばん多かった姿勢の1周。nextStep.ts の mainStride）。同じ1周から作るので、同じタイミングで動く。
+  // 過去でいちばん良い走りは出さない（良い姿勢の割合は、その日の自分の基準との比べなので、正しいフォームに近いとは限らない。2026-11-07 本人の決め）。
+  // まだ走っていなければ、見本（研究データの脚に、上体 7° を足したもの）だけ
+  const run = sessions.find((s) => mainStride(s))
+  const { correct, today, good } = useMemo(() => {
+    const st = run && mainStride(run)
+    if (!run || !st) return { correct: demoStride({ lean: 7, head: 0, drop: 0 }), today: undefined, good: undefined }
+    const frames = normalizeStride(st, run.gait?.cadence)
+    const good = goodFor(run)
+    return { correct: correctFrames(frames, good), today: frames, good }
+  }, [run])
+  // 前回の走りが今日なら「今日のフォーム」、前の日なら「前回のフォーム」
+  const todayRun = !!run && new Date(run.startedAt).toDateString() === new Date().toDateString()
+  const runLabel = todayRun ? '今日のフォーム' : '前回のフォーム'
+  // 次の一歩の項目が、前回の走り（緑の点線）の項目のときだけ右に出す（前回の走りに比べがなく、もっと前の走りから選んだときは出さない）
+  const nextShown = !!today && !!next && run === sessions[0]
 
-  const shown = k > 0 ? base.map((f, i) => lerpFrame(f, idealFrames[i % idealFrames.length], k)) : base
   const chooseLevel = (level: Level) => {
     if (level === progress.level) return
     setProgress(setLevel(level))
@@ -221,63 +197,41 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         </div>
       </div>
 
-      <button
-        className="stage"
-        onClick={() => setIdeal((v) => !v)}
-        aria-label={ideal ? '自分のフォームに戻す' : '理想のフォームを見る'}
-        style={{ height: 236, padding: 0, textAlign: 'left', borderColor: k > 0.5 ? '#3A424B' : undefined }}
-      >
+      <div className="stage" style={{ height: 236 }}>
         <Mannequin
-          frames={shown}
-          ghost={k < 0.05 && !ideal ? ghost : undefined}
-          upperColor={k > 0.5 ? '#F2F4F5' : best ? '#6B7480' : '#4A535D'}
+          frames={correct}
+          ghost={today}
+          upperColor="#6B7480"
           width={358}
           height={236}
           viewBox="0 0 358 236"
           transform="translate(52,-22) scale(0.56)"
         />
-        {k < 0.05 && !ideal && (
-          <div style={{ position: 'absolute', left: 14, top: 12, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#C9CFD5' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 16, height: 8, borderRadius: 4, background: '#6B7480' }} />
-              {best ? 'あなたのベスト' : '見本'}
-            </div>
-            {ghost && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 16, borderTop: '2px dashed var(--accent)' }} />
-                今日のフォーム
-              </div>
-            )}
+        <div style={{ position: 'absolute', left: 14, top: 12, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#C9CFD5' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 16, height: 8, borderRadius: 4, background: '#6B7480' }} />
+            {today ? '正しいフォーム' : '見本'}
           </div>
-        )}
-        {k < 0.05 && !ideal && ghost && next && (
+          {today && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 16, borderTop: '2px dashed var(--accent)' }} />
+              {runLabel}
+            </div>
+          )}
+          {good && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>{good.kmh !== undefined ? `時速${kmh1(good.kmh)}kmのよい例` : '時速12kmのよい例（速さが分からないとき）'}</div>}
+          {!today && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>研究にもとづく目安</div>}
+        </div>
+        {nextShown && next && (
           <div style={{ position: 'absolute', right: 14, top: 64, textAlign: 'right' }}>
             <div style={{ fontSize: 11 }} className="muted">{next.kind === 'good' ? `${next.group === 'head' ? '首の角度' : ITEM_LABEL[next.group]}（よい例へ）` : ITEM_LABEL[next.item]}</div>
             <div className="num" style={{ fontSize: 30 }}>
-              <span className="muted">{show(next.item, next.from)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
-              <span style={{ color: 'var(--accent)' }}>{show(next.item, next.to)}</span>
+              <span style={{ color: 'var(--accent)' }}>{show(next.item, next.from)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
+              <span style={{ color: '#C9CFD5' }}>{show(next.item, next.to)}</span>
             </div>
-            <div style={{ fontSize: 11, paddingTop: 4 }} className="muted">ほかはそのまま</div>
-            {exaggerated && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>差は見やすく強調</div>}
+            <div style={{ fontSize: 11, paddingTop: 4 }} className="muted">{next.kind === 'line' ? (next.group === 'landing' && !FORM.landing.say ? '試しの線まで' : '声をかける線まで') : 'よい例の範囲まで'}</div>
           </div>
         )}
-        {k > 0.95 && (
-          <>
-            <div style={{ position: 'absolute', left: 14, top: 12 }}>
-              <div style={{ fontSize: 15, fontWeight: 900 }}>理想のフォーム</div>
-              <div style={{ fontSize: 11 }} className="muted">研究にもとづく目安</div>
-            </div>
-            <div style={{ position: 'absolute', right: 14, top: 56, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, fontSize: 12, color: '#C9CFD5' }}>
-              <div>耳・肩・腰が一直線</div>
-              <div>体幹の前傾 7°前後</div>
-              <div>足首から少し前へ</div>
-            </div>
-          </>
-        )}
-        <div style={{ position: 'absolute', right: 12, bottom: 10, padding: '6px 10px', borderRadius: 14, background: 'rgba(10,12,14,0.8)', fontSize: 11, color: '#C9CFD5' }}>
-          {ideal ? 'タップで自分のフォームに戻る' : 'タップで理想のフォーム'}
-        </div>
-      </button>
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 4px' }}>
         <div style={{ fontSize: 12 }} className="muted">今日の意識</div>

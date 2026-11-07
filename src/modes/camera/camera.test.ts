@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { levelFrame, measure, midstance, rotateFrame, sideOffDeg } from './geometry'
 import { itemScore, postureScore } from './scoring'
 import { Coach, headForward, hipDropOf, hipOf, hunchOf, toScale } from './coach'
-import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, HEAD_OPEN, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
+import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, goodAt, HEAD_OPEN, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
 import { formOver, formScale, FormStage, yawDeg, yawFixed } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
-import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
+import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, mainStride, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
 import { capBaseline, standingIssue, STANDING_LIMITS } from './standing'
 import { LogRecorder, LOG_COLUMNS, LOG_POINTS } from './log'
 import { worldAngles, type P3 } from './world'
@@ -14,8 +14,8 @@ import { analyzeRun, type TimedFrame } from './slowmo'
 import { MotionDetector, RunningGate, bodyVisible } from './motion'
 import { CUE, HIP_REF, RUNNING } from '../../core/params'
 import { FOCUS, PHRASES, phraseId } from '../../core/phrases'
-import { demoStride, strideStats, DEMO_FRAMES, DEMO_SPM, REFERENCE } from './ui/figure'
-import type { FormGroup, FormResult, Frame, Session } from '../../core/types'
+import { correctFrames, demoStride, frameAngles, strideStats, DEMO_FRAMES, DEMO_SPM, REFERENCE } from './ui/figure'
+import type { FormGroup, FormResult, Frame, Session, Stride } from '../../core/types'
 import type { Measure } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
@@ -946,6 +946,48 @@ describe('よい例との差', () => {
     expect(gapSentence(row)).toBe(`よい例より 首${(33 - GOOD.head.neck.max).toFixed(1)}° 前に出ています`)
     // 次の一歩は頭（線の外）
     expect(nextItem(runOf(GOOD.body.mid, GOOD.trunk.mid, 33, 37))!.item).toBe('head')
+  })
+})
+
+describe('正しいフォームの走り姿と、前回の走り（ホーム・走り姿の画面）', () => {
+  const strideOf = (lean: number, head: number, score: number): Stride => ({ frames: demoStride({ lean, head, drop: 0 }), dir: 1, score, avg: { head, trunk: lean, body: lean, hipDrop: 0 }, sec: 120 / DEMO_SPM })
+
+  it('正しいフォームは、その1周の上体と首の角度を、その速さのよい例の真ん中にする（脚はそのまま）', () => {
+    const today = demoStride({ lean: 13, head: 8, drop: 0 })
+    for (const kmh of [undefined, 8, 12]) {
+      const good = goodAt(kmh)
+      const c = correctFrames(today, good)
+      const a = frameAngles(c)
+      expect(a.trunk).toBeCloseTo(good.trunk.mid, 0)
+      expect(Math.abs(a.neck - good.head.neck.mid)).toBeLessThan(0.5)
+      expect(c[3][27]).toEqual(today[3][27]) // 足首は動かさない
+    }
+    // 遅い速さほど上体は起きる（よい例は速さごと）
+    expect(frameAngles(correctFrames(today, goodAt(8))).trunk).toBeLessThan(frameAngles(correctFrames(today, goodAt(12))).trunk)
+  })
+
+  it('左向きの1周でも、同じ角度にそろう', () => {
+    const left = demoStride({ lean: 13, head: 8, drop: 0 }).map(mirror)
+    const a = frameAngles(correctFrames(left, GOOD))
+    expect(a.trunk).toBeCloseTo(GOOD.trunk.mid, 0)
+    expect(Math.abs(a.neck - GOOD.head.neck.mid)).toBeLessThan(0.5)
+  })
+
+  it('前回の走りの1周は、いちばん多かった姿勢のもの（良い姿勢の1周を手本にしない）', () => {
+    const s = { strides: { good: strideOf(5, 0, 90), mid: strideOf(12, 4, 60) }, share: { good: 0.3, mid: 0.6, bad: 0.1 } }
+    expect(mainStride(s)).toBe(s.strides.mid)
+    expect(mainStride({ strides: { good: s.strides.good }, share: s.share })).toBe(s.strides.good) // ある分類から
+    expect(mainStride({ strides: {}, share: s.share })).toBeUndefined()
+  })
+
+  it('比べのない前の版の記録は、前回の走りの次の一歩（過去でいちばん良い走りからは選ばない）', () => {
+    const base = { samples: [], cues: [], quietHeldSec: 0, durationSec: 900 }
+    // 前回：上体が線の外（前かがみ）がいちばん多い。もっと前の走り：良い姿勢の割合が大きく、上体はよい例の範囲
+    const last = { ...base, id: 'last', startedAt: 2, strides: { mid: strideOf(FORM.trunk.max + 3, 0, 60) }, share: { good: 0.2, mid: 0.8, bad: 0 } } as Session
+    const older = { ...base, id: 'older', startedAt: 1, strides: { good: strideOf(GOOD.trunk.mid, 0, 95) }, share: { good: 0.95, mid: 0.05, bad: 0 } } as Session
+    const f = todayFocus([last, older], startProgress('advanced'))
+    expect(f.item).toBe('trunk')
+    expect(f.reason).not.toContain('ベスト')
   })
 })
 

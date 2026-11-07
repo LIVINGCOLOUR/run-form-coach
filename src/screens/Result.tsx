@@ -131,7 +131,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
           <div style={{ fontSize: 15, fontWeight: 700 }}>あなたの走り姿</div>
           <div style={{ fontSize: 13, color: 'var(--accent)' }}>詳しく見る →</div>
         </div>
-        <div style={{ fontSize: 13, lineHeight: 1.6 }} className="muted">良い・ふつう・悪いそれぞれの1歩を、自分のベストや次の一歩と重ねて見比べられます。</div>
+        <div style={{ fontSize: 13, lineHeight: 1.6 }} className="muted">良い・ふつう・悪いそれぞれの1歩を、正しいフォーム（この速さのよい例）や次の一歩と重ねて見比べられます。</div>
       </button>
 
       <div style={{ borderTop: '1px solid var(--line)' }}>

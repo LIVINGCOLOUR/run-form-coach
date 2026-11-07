@@ -1,6 +1,7 @@
 import type { Frame, ItemKey, Pt, Stride } from '../../../core/types'
 import { L } from '../landmarks'
-import { legLength, mid } from '../geometry'
+import { facing, legLength, measure, mid } from '../geometry'
+import type { GoodRanges } from '../params'
 import reference from '../reference.json'
 import { legacyCycle } from '../stride'
 
@@ -68,10 +69,28 @@ export function nextStepFrame(f: Frame, item: ItemKey, from: number, to: number)
   return f.map((p, i) => (i <= 26 ? { ...p, y: p.y - lift } : p))
 }
 
-// 理想の形：体幹を 7° に、頭を直立の並びに
-export function idealFrame(f: Frame, avg: Stride['avg']): Frame {
-  const a = rotateSet(f, UPPER, hipMid(f), avg.trunk - 7)
-  return rotateSet(a, FACE, shoulderMid(a), avg.head)
+// 正しいフォーム：その走りの1周の、上体と頭だけを、その速さのよい例（params.ts の goodAt）の真ん中に直した形。
+// 上体（腰の中心→肩の中心）と首の角度は、アプリと同じ測り方（geometry.ts の measure）で1周の平均を測って合わせる
+// （首の角度は、よい姿勢でもアプリの点では 20〜30° 出る。耳を肩の真上に置いた絵にすると、よい例より起きた頭になり比べられない）。
+// 脚と腕の振りはその走りのまま（同じタイミングで重ねて、上体と頭の違いだけが見えるように。着地はよい例の範囲を形に直せないので直さない）
+export function correctFrames(frames: Frame[], good: Pick<GoodRanges, 'trunk' | 'head'>): Frame[] {
+  if (!frames.length) return frames
+  // rot は右向きの人の前傾をへらす向きなので、左向きなら逆に回す
+  const dir = facing(frames[0])
+  const m = frameAngles(frames)
+  let out = frames.map((f) => rotateSet(f, UPPER, hipMid(f), (m.trunk - good.trunk.mid) * dir))
+  // 首の角度は手前の肩で測り、頭は両肩の真ん中で回すので、ずれが残る。2回合わせる
+  for (let k = 0; k < 2; k++) {
+    const n = frameAngles(out).neck
+    out = out.map((f) => rotateSet(f, FACE, shoulderMid(f), (n - good.head.neck.mid) * dir))
+  }
+  return out
+}
+
+// 1周の平均の上体と首の角度（アプリと同じ測り方）
+export function frameAngles(frames: Frame[]): { trunk: number; neck: number } {
+  const ms = frames.map(measure)
+  return { trunk: ms.reduce((a, m) => a + m.trunk, 0) / ms.length, neck: ms.reduce((a, m) => a + m.neck, 0) / ms.length }
 }
 
 export function lerpFrame(a: Frame, b: Frame, k: number): Frame {
