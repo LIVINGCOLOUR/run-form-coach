@@ -379,8 +379,8 @@ function report(c: Cache): string {
   const PAIRS: [string, string, string, string][] = [
     ['rbds', '25', '35', '速さ +1m/s'],
     ['rbds', '35', '45', '速さ +1m/s'],
-    ['riglet', '楽', '速い', '速さ +0.5m/s'],
-    ['vh', 'highfreq', 'lowfreq', '同じ速さでピッチ −10%'],
+    ['riglet', '楽', '速い', '速さ +2km/h（決まり）'],
+    ['vh', 'highfreq', 'lowfreq', '同じ速さでピッチ −20歩/分（いつもの +10 → −10歩/分、約 −12%）'],
     ['vh', '333', 'trunklean', '上体を前に倒す'],
   ]
   const pairRows = PAIRS.map(([ds, a, b, what]) => {
@@ -428,7 +428,7 @@ function report(c: Cache): string {
   p(`# 着地が体より前か（オーバーストライド）を、走りながらの骨格（毎秒13〜15コマ）で測れるか（仮想実験）`)
   p()
   p(
-    `研究データ ${people}人・${recs.length}本（RBDS：Fukuchi 2017、秒速2.5・3.5・4.5m、床反力つき。Riglet 2024：楽なペースと速いペース、重心と接地のイベントつき。` +
+    `研究データ ${people}人・${recs.length}本（RBDS：Fukuchi 2017、秒速2.5・3.5・4.5m、床反力つき。Riglet 2024：楽なペースと速いペース、重心と接地のイベント〔床反力ではなく足の速さから出したもの〕つき。` +
       `Van Hooren 2024：秒速3.33m のふつう・ピッチを上げる・下げる・上体を前に倒す、床反力つき）の走りを、仮想のスマホ（真横・1.2m・高さ80cm・超広角、` +
       `点のぶれ1%・奥の脚の寄り・左右の取り違え、アプリと同じ One Euro）で映した。コマの間隔は、毎秒15・13コマと、実機の記録（2026-10-19、iPhone 12 mini）の間隔` +
       `（平均12.5コマ、2割は1コマ抜け）。ピッチが 130〜230 歩／分に入らない記録（${bad.join('・') || 'なし'}）は除いた。`,
@@ -659,7 +659,7 @@ describe.skipIf(!ANY)('着地：アプリのコーチに通す', () => {
     const KINDS: [string, string, string, string][] = [
       ['vh', 'highfreq', 'lowfreq', 'VH 同じ速さでピッチを約10%下げる'],
       ['rbds', '25', '35', 'RBDS 秒速2.5m → 3.5m（速さ +1m/s）'],
-      ['riglet', '楽', '速い', 'Riglet 楽なペース → 速いペース（速さ +0.5m/s）'],
+      ['riglet', '楽', '速い', 'Riglet 楽なペース → 速いペース（速さ +2km/h。論文の決まり）'],
     ]
     const sw: { kind: string; thin: CoachRun; full: CoachRun }[] = []
     let k = 0

@@ -1,12 +1,12 @@
 // 仮想実験の材料（頭と上体）：Riglet ら 2024 の公開データ（CC0、https://doi.org/10.6084/m9.figshare.c.7056797.v1）
 //   30人がトレッドミルを楽なペースと速いペースで各2分走り、立ったままの記録（Calibration）もある
-//   印は Conventional Gait Model 2.5 の63個。頭に4つ（LFHD RFHD LBHD RBHD）と耳の後ろ（LMAS RMAS）と眉間（GLAB）があり、
+//   印は Conventional Gait Model 2.5 の63個。頭に4つ（LFHD RFHD LBHD RBHD）と耳の後ろ（LMAS RMAS）と額の真ん中（GLAB。論文では「Forehead middle、ヘッドバンドの上」）があり、
 //   計算された関節の中心（股関節 HJC・膝 KJC・足首 AJC・肩 SJC）も入っている
 //   座標（ファイル）：Z が上。前は人ごとに向きが違うので、骨盤の印（ASIS − PSIS）の向きから決める
 // MediaPipe の点に合わせて作るもの
 //   腰・膝・足首・肩：関節の中心をそのまま使う
 //   耳：耳の後ろの印（MAS）から、頭の前の向きに2cm前
-//   鼻：眉間の印（GLAB）。向きを決めるのにしか使わない
+//   鼻：額の真ん中の印（GLAB）。向きを決めるのにしか使わない
 import { readC3D } from './c3d'
 import type { V3 } from './rbds'
 

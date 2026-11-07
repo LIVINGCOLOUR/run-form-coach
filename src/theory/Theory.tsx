@@ -107,6 +107,11 @@ const REFS: Record<string, Ref> = {
     text: 'Teng HL, Powers CM. Sagittal plane trunk posture influences patellofemoral joint stress during running. J Orthop Sports Phys Ther 44(10):785–792 (2014).',
     url: 'https://doi.org/10.2519/jospt.2014.5249',
   },
+  teng2015: {
+    key: 'Teng 2015',
+    text: 'Teng HL, Powers CM. Influence of trunk posture on lower extremity energetics during running. Med Sci Sports Exerc 47(3):625–630 (2015).',
+    url: 'https://doi.org/10.1249/MSS.0000000000000436',
+  },
   mcmahon: {
     key: 'McMahon 1987',
     text: 'McMahon TA, Valiant G, Frederick EC. Groucho running. J Appl Physiol 62(6):2326–2337 (1987).',
@@ -162,10 +167,10 @@ const POINTS: Point[] = [
     no: '02',
     title: '上体の傾き',
     base: '腰から肩にかけて、わずかに前に傾く（見本は7°）。5000mのレースで測ると、接地のときの上体の前傾は日本の一流選手で約8.6°、ケニアの選手で約12.4°だった（筑波大学）。',
-    off: '97人のランナーを調べた研究では、上体がまっすぐに近い人ほど記録が良かった。一方で、上体を7°ほど前に倒すと膝の負担が約6%減り、そのぶんお尻の筋肉の負担が増える。倒れすぎず、反りすぎずが目安。',
+    off: '97人のランナーを調べた研究では、上体がまっすぐに近い人ほど記録が良かった（関係は弱く、エネルギーの消費とは関係がなかった）。一方で、上体を7°ほど前に倒して走ってもらうと、膝の負担が約6%減った。もともと前傾が大きい人は、膝の代わりにお尻（股関節）の筋肉が多く働いていた。倒れすぎず、反りすぎずが目安。',
     how: `走り出しに、腰から肩の線が${FORM.trunk.min}〜${FORM.trunk.max}°、足首から肩の線が${FORM.body.min}〜${FORM.body.max}°（正しいフォームの範囲）に入っているかを見て、外れていれば1つずつ直してもらう。そのあとは、整えた形より腰から肩の線が${REL_LIMITS.trunk.cue}°以上、足首から肩の線が${REL_LIMITS.body.cue}°以上、前に倒れたり後ろに起きたりした状態が続いたら声をかける。背中が丸まった形（猫背）は、腰から肩の線の前傾と首の角度が、整えた形からいっしょに増えたとき（小さいほうが${LIMITS.hunch.cue}°を越えたとき）に、前かがみとは別に「${PHRASES.cueHunch}」と言う（横からの骨格の点では背中の曲がりそのものは測れないので、丸まると一緒に動く上体の線と頭で見る）。線の高さはランナーのレベルで変わる（上級ほどきびしい）。`,
     status: 'coach',
-    refs: ['enomoto', 'folland', 'teng'],
+    refs: ['enomoto', 'folland', 'teng', 'teng2015'],
     demo: { lean: 17, head: 3, drop: 0 },
     offLabel: '上体が倒れすぎた形',
   },
@@ -310,12 +315,12 @@ export function Theory() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <p style={P}>
-              脚の動き（股関節・膝・足首の角度、接地の長さ）は、市民ランナー39人をトレッドミルで3Dモーションキャプチャした公開データ
+              脚の動き（股関節・膝・足首の角度、接地の長さ）は、いつも走っている人（論文では28人。10kmをキロ5分より速く走る人たち）をトレッドミルで3Dモーションキャプチャした公開データ
               <Cite id="fukuchi" />
               から作っています。キロ4分10秒前後（サブ3のペース）に合わせ、秒速3.5mと4.5mのデータを合わせました。
             </p>
             <p style={P}>
-              データ全体の平均は「ふつうの市民ランナー」の走りで、かかとから着く人が多く、着地のすねは平均で前に{Math.round(normal.shankAtContact[0])}°倒れています。
+              データ全体の平均は「ふつうに走っている人」の走りで、かかとから着く人が多く、着地のすねは平均で前に{Math.round(normal.shankAtContact[0])}°倒れています。
               そこで見本は、<b>着地のすねが鉛直に近い上位4分の1の脚（{ideal.limbs}本・{ideal.runners}人）</b>の平均にしました。
             </p>
             <Numbers />

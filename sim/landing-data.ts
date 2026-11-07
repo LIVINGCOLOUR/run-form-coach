@@ -6,7 +6,8 @@
 //     すねの角度（膝→足首の線と鉛直。足首が膝より前で正）、膝の曲がり、両膝の前後の開き、脚の角度（腰→足首と鉛直）
 //   ブレーキ：その接地の前後の力のうち、体を後ろへ押す側の山（体重の倍）と力積（体重 × 秒）。体重は上下の力の平均
 // 座標は sim/rbds.ts と同じ（X が前、Y が上、Z が右、mm）。床の高さは、かかと・つま先の低いほうから2%の高さを0にする
-// データ：RBDS（Fukuchi 2017、150Hz、床反力 300Hz）、Riglet 2024（100Hz、床反力 1000Hz、重心 CentreOfMass）、
+// データ：RBDS（Fukuchi 2017、150Hz、床反力 300Hz）、Riglet 2024（100Hz、重心 CentreOfMass。床反力は地面の走りだけで、トレッドミルにはない。
+//         接地は記録のイベントで、足の速さから出したもの〔O'Connor の方法〕）、
 //         Van Hooren 2024（100Hz、床反力 1000Hz。ふつう 3.33m/s・ピッチを下げる lowfreq・上げる highfreq・上体を前に倒す trunklean）
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'

@@ -6,7 +6,7 @@
 // を並べ、線（頭・上体）ごとに、まっすぐ立った人が通る割合と、猫背が通らない割合を出す
 // 動かし方：RIGLET_DIR=<Riglet のデータ> [RFC_RUNS_DIR=<記録の置き場所>] npx vitest run --config sim/vitest.config.ts sim/standing.sim.ts
 //   結果は sim/result-standing.md（記録そのものは書かない。値の真ん中と範囲だけ）
-// 限り：研究データの耳は「耳の後ろの印から2cm前」（sim/riglet.ts）で、アプリの骨格の推定の耳とは少し違う。研究データの立った姿勢は、腕を広げた形の人もいる
+// 限り：研究データの耳は「耳の後ろの印から2cm前」（sim/riglet.ts）で、アプリの骨格の推定の耳とは少し違う。研究データの立った姿勢は較正の記録（Calibration）で、全員が決まった形（腕を前に90°曲げて手のひらを下、まっすぐ前を見る）。ふつうの立ち方ではないので、肩の中心の位置がふつうの立ち方とずれるかもしれない（未確認）
 import { it as itAll } from 'vitest'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'

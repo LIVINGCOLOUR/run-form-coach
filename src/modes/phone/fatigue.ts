@@ -2,7 +2,7 @@ import { HIP_REF } from '../../core/params'
 import { FATIGUE, PHONE_REF } from './params'
 
 // 疲れの見分け（docs/phone-spec.md 機能5）と、上下動・ブレーキ・接地時間の変化（機能6）。走り終わった後に、1秒ごとの記録から出す。
-// 走っている最中は声にしない（何をすれば直るかを言いにくく、接地時間は短いほど良いとも言えないため：Lussiana 2019）
+// 走っている最中は声にしない（何をすれば直るかを言いにくく、接地時間は短いほど良いとも言えないため：Lussiana 2019。人と人の比べ）
 // 数字（FATIGUE）と考え方は params.ts に書いた。決まった線での良し悪しは言わず、走り始めの自分からの変化だけを出す
 
 export const FATIGUE_KEYS = ['regularity', 'apRegularity', 'ratioV', 'ratioAP', 'ratioML', 'contactMs'] as const

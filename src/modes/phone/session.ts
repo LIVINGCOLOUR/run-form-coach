@@ -27,7 +27,7 @@ import { Drill, type DrillOptions } from './drill'
 // 声にする項目：ピッチだけ（docs/phone-spec.md 機能2・6）。線は params.ts の PHONE_LIMITS。
 // 接地の割合・上下動は、測って記録し、結果の画面に出すだけ（PHONE_MEASURED）。仮の線（PHONE_LIMITS.contact・bounce）は
 // 実機の記録がそろうまで声にしない（本人の決め 2026-11-07）：どちらの線も Huawei の1本（崩しは1区間）だけから置いたもので、
-// 接地は研究のまとめ（Lussiana 2019。docs/research/phone-methods.md）とも合わない。腰の iPhone の記録が3本以上
+// 接地は、増えたら悪いという研究の根拠もない（Lussiana 2019 は人と人の比べで、同じ人の中で増えたときのことは調べていない。docs/research/phone-methods.md）。腰の iPhone の記録が3本以上
 // （ふつうの走りと、わざと腰を落とす・弾む区間）そろって線を決め直したら、PHONE_VOICED に足す。採点（npm run grade -- … --items all）では、
 // 声にしたとして通して「声が出たはずか」を確かめられる。
 // ブレーキは、前と後ろの見分けの仮定を確かめるまで声にしない。声にしない項目は、大きく崩れても声をかけない（しくみの muteOthers）。

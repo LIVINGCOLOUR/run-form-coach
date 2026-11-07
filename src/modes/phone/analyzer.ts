@@ -62,7 +62,8 @@ export const PHONE_SAY: Partial<EngineSay> = {
 const NEVER = { full: 0, zero: 1, cue: 1 }
 
 // 並び順が、声をかける優先順。ピッチは、言葉は初めの1回だけで、あとは走り始めのテンポのメトロノームで知らせる（tone）。
-// ピッチを先にするのは、ピッチを上げると上下動・接地もまとめて変わるため（Heiderscheit 2011）。接地は上下動より先
+// ピッチを先にするのは、ピッチを変えると上下動・ブレーキもまとめて変わるため（Heiderscheit 2011。接地の割合は ±10% でだけ
+// 少し変わり、ピッチを下げると研究ではむしろ少し減った）。接地は上下動より先
 // （上下動は付け方で値が大きく変わり、外れやすい。2026-10-19 の記録で、付け直しただけで 4.6cm → 7.2cm）。
 // いま声にするのはピッチだけ（session.ts の PHONE_VOICED）。接地・上下動は仮の線で測って記録するだけで、
 // 腰の iPhone の記録が3本そろって線を決め直したら声にする（この並びはそのときの優先順）。ブレーキは測るだけで声にしない
@@ -91,7 +92,7 @@ const median = (xs: number[]) => {
   return a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : 0
 }
 
-// duty：接地の割合（有効接地時間 ÷ 1歩の時間）。上下の加速度が1gを上回る時間（Patoz 2021）を、ピッチから出した1歩の時間で割る
+// duty：接地の割合（有効接地時間 ÷ 1歩の時間）。上下の加速度が1gを上回る時間（Patoz 2021。研究は 5Hz でならしてから線を引くが、ここではならしていない）を、ピッチから出した1歩の時間で割る
 // up：基準の区間のスマホの上向き（スマホの座標）。上下動・接地を判定してよいか（付け方が変わっていないか）を見るのに使う
 type Ref = { cadence: number; bounceCm: number; brakingMs: number; duty: number; up: Vec3 }
 // 基準の区間の1秒
@@ -243,8 +244,9 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
       if (ref && !gate) {
         values.cadence = ((ref.cadence - e.cadence) / ref.cadence) * 100
         if (!loose) {
-          // ピッチが声の線より下がっている秒は、上下動・接地は判定しない。ピッチが落ちると上下動も接地も増えるので
-          // （Heiderscheit 2011）、同じ崩れをピッチの声と二重に言わないため（ピッチの声を先にする）。
+          // ピッチが声の線より下がっている秒は、上下動・接地は判定しない。ピッチが落ちると上下動が増え（Heiderscheit 2011）、
+          // 接地も1歩の時間とともに変わるので、同じ崩れをピッチの声と二重に言わないため（ピッチの声を先にする）。
+          // なお Heiderscheit 2011 では、同じ速さでピッチを下げると接地の割合はむしろ少し減った（−10% で 35.4→34.2%）
           // スマホの上向きが基準の区間から PHONE.upShiftDeg より傾いた秒も判定しない（ベルトの中でスマホが動くと、
           // 上下動の値が変わる。付け方の確認の「ずれた」の線より小さな動きでも）
           this.upShift = angleDeg(e.up, ref.up)
