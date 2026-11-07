@@ -12,7 +12,8 @@
 //   --grace 秒             崩しの区間が終わってから、この秒数までに出た声は、その崩しを見つけたと数える（既定 10）
 //   --camera-offset 秒     カメラ版の時計 − Mac の時計（既定 0。ジャンプの表で大きくずれていたら入れる）
 //   --phone-offset 秒      スマホ版の時計 − Mac の時計（既定 0）
-//   --items all            カメラ版で、撮ったときの「注意した項目」（ランナーのレベル）ではなく、すべての項目で声をかけるとして通す
+//   --items all            カメラ版で、撮ったときの「注意した項目」（ランナーのレベル）ではなく、すべての項目で声をかけるとして通す。
+//                          スマホ版では、測って記録するだけの接地・上下動（いまは声にしない仮の線）も声にしたとして通す
 //   --no-replay            判定に通し直さず、記録にある声だけで採点する
 //   --thin                 カメラ版の全コマ記録（?full=1 で撮ったもの）を、ふだんの間引き（安定して走っている間は10秒のうち3秒）に
 //                          通し直す。同じ走りで、間引いたときに声が遅れる・抜けるかを比べるため
@@ -133,7 +134,7 @@ function prepare(f, kind) {
   const sources = [{ name: 'そのとき', cues: cuesOf(R.loggedEvents(f.data).events, off) }]
   const warnings = []
   const fromMs = replayFrom === 'jog' && jogFrom !== null ? jogFrom + off : undefined
-  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs, thin, running }) : (d) => R.replayPhone(d, { fromMs })
+  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs, thin, running }) : (d) => R.replayPhone(d, { fromMs, items: itemsAll ? 'all' : 'app' })
   const canReplay = kind === 'camera' ? inv.measures > 0 : inv.frames > 0
   let faithful = null
   let now = null
@@ -316,7 +317,10 @@ for (const d of devices) {
     const items = d.sources.find((s) => s.items)?.items
     if (items) p(`声をかける項目（${itemsAll ? '--items all：すべて' : '撮ったときのランナーのレベル'}）：${items.join('・')}。ほかの項目は、大きく崩れたとき（点数が 50 未満）だけ声が出る（この声は cue の線ではなく、full・zero で決まる点数で出る）`)
   }
-  else p('出てほしい項目：cadence＝ピッチ（言葉は初めの1回だけで、あとはメトロノーム）・contact＝接地の割合・bounce＝上下動。ブレーキ（braking）は声にしない')
+  else {
+    p('出てほしい項目：cadence＝ピッチ（言葉は初めの1回だけで、あとはメトロノーム）・contact＝接地の割合・bounce＝上下動・braking＝ブレーキ。アプリが声にするのはピッチだけ（接地・上下動は仮の線で測って記録するだけ、ブレーキは声にしない）')
+    p(itemsAll ? '通し直し（いまの線・上書き）は --items all：接地・上下動も声にしたとして通した（声が出たはずか）' : '通し直し（いまの線・上書き）はアプリと同じくピッチだけ声にする。接地・上下動が声を出したはずかは --items all で見られる')
+  }
   p()
   p(`| 区間 | 種類 | 長さ | 出てほしい | ${graded.map((g) => g.src.name).join(' | ')} |`)
   p(`|---|---|---|---|${graded.map(() => '---').join('|')}|`)

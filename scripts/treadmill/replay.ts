@@ -21,7 +21,7 @@ import { activeItems } from '../../src/core/level'
 import { ITEM_KEYS, type Frame, type ItemKey, type RunLog, type Session } from '../../src/core/types'
 import type { Measure } from '../../src/modes/camera/types'
 import { midstance } from '../../src/modes/camera/geometry'
-import { PhoneRun } from '../../src/modes/phone/session'
+import { PHONE_MEASURED, PHONE_VOICED, PhoneRun } from '../../src/modes/phone/session'
 import { PHONE_CUE } from '../../src/modes/phone/analyzer'
 import { MOUNT, PHONE_LIMITS } from '../../src/modes/phone/params'
 import type { PhoneLog } from '../../src/modes/phone/log'
@@ -51,8 +51,8 @@ export const ALIASES: Record<string, string> = {
   speedGuard: 'LANDING.speedGuard', // 着地：速さの目安がこの割合を越えて変わったら、比べずに基準を作り直す
   window: 'CUE.window', // 声をかける窓（秒）
   cadence: 'PHONE_LIMITS.cadence.cue', // スマホ：ピッチの下がり（%）
-  bounce: 'PHONE_LIMITS.bounce.cue', // スマホ：上下動の増え（%）
-  contact: 'PHONE_LIMITS.contact.cue', // スマホ：接地の割合の増え（%）
+  bounce: 'PHONE_LIMITS.bounce.cue', // スマホ：上下動の増え（%）。いまは声にしない（--items all で声にしたとして通す）
+  contact: 'PHONE_LIMITS.contact.cue', // スマホ：接地の割合の増え（%）。いまは声にしない（--items all で声にしたとして通す）
   braking: 'PHONE_LIMITS.braking.cue', // スマホ：ブレーキ（声にしない）
 }
 
@@ -270,7 +270,8 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
 }
 
 // ---- スマホ版：生の値を PhoneRun にもう一度通す ----
-export function replayPhone(file: unknown, opts: { fromMs?: number } = {}): ReplayOut {
+// items: 'all' なら、測って記録するだけの項目（接地・上下動、session.ts の PHONE_MEASURED）も声にしたとして通す（声が出たはずかを見るため）
+export function replayPhone(file: unknown, opts: { fromMs?: number; items?: 'all' | 'app' } = {}): ReplayOut {
   const { log } = unwrap<PhoneLog>(file)
   const warnings: string[] = []
   const kindEv = log.events.find(([, text]) => text.startsWith('kind:'))?.[1]
@@ -280,7 +281,8 @@ export function replayPhone(file: unknown, opts: { fromMs?: number } = {}): Repl
     kind = { kind: 'drill', drill: { version: version as DrillOptions['version'], extra: extra === 'extra', upper: extra === 'upper' } }
   } else if (kindEv) warnings.push(`練習・テストの記録（${kindEv}）は、ふつうの走りとして通しました`)
   if (log.where === 'outdoor') warnings.push('外の記録です。GPS の速さは通し直していません（トレッドミルとして通しました）')
-  const run = new PhoneRun(log.clock, { userAgent: log.device.userAgent, intervalMs: log.device.intervalMs }, 'treadmill', kind)
+  const voiced = opts.items === 'all' ? [...PHONE_VOICED, ...PHONE_MEASURED] : PHONE_VOICED
+  const run = new PhoneRun(log.clock, { userAgent: log.device.userAgent, intervalMs: log.device.intervalMs }, 'treadmill', kind, voiced)
   const ci = (n: string) => log.columns.indexOf(n)
   const [it, iax, iay, iaz, igx, igy, igz] = ['t', 'ax', 'ay', 'az', 'gx', 'gy', 'gz'].map(ci)
   const num = (v: number | null | undefined) => (v === null || v === undefined ? undefined : v)
@@ -303,7 +305,7 @@ export function replayPhone(file: unknown, opts: { fromMs?: number } = {}): Repl
   if (log.truncated) warnings.push('生の値が途中で止まっている記録です（MAX_RAW）')
   const c = log.clock
   const events = run.rec.log.events.map(([t, text]) => ({ T: c.epochMs + t * 1000 - c.perfMs, text }))
-  return { events, items: ['cadence'], warnings, runStartT: null }
+  return { events, items: [...voiced], warnings, runStartT: null }
 }
 
 // 時計を合わせる手がかり：ジャンプの「はい」の前後で、大きく動き始めた時刻（ふつうの時刻 ms）。strength は動きの大きさ ÷ ふだんのばらつき（999 まで）

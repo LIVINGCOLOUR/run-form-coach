@@ -64,7 +64,8 @@ const NEVER = { full: 0, zero: 1, cue: 1 }
 // 並び順が、声をかける優先順。ピッチは、言葉は初めの1回だけで、あとは走り始めのテンポのメトロノームで知らせる（tone）。
 // ピッチを先にするのは、ピッチを上げると上下動・接地もまとめて変わるため（Heiderscheit 2011）。接地は上下動より先
 // （上下動は付け方で値が大きく変わり、外れやすい。2026-10-19 の記録で、付け直しただけで 4.6cm → 7.2cm）。
-// ブレーキは測るだけで声にしない（session.ts の PHONE_VOICED に入れていない）
+// いま声にするのはピッチだけ（session.ts の PHONE_VOICED）。接地・上下動は仮の線で測って記録するだけで、
+// 腰の iPhone の記録が3本そろって線を決め直したら声にする（この並びはそのときの優先順）。ブレーキは測るだけで声にしない
 export const PHONE_ITEMS: ItemSpec<PhoneItem>[] = [
   { key: 'cadence', limits: PHONE_LIMITS.cadence, cue: PHONE_CUE.cadence, tone: true },
   { key: 'contact', limits: PHONE_LIMITS.contact, cue: PHONE_CUE.contact },
