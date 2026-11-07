@@ -36,7 +36,8 @@ export interface Estimate {
   ratioV: number // 3方向の揺れの割合：上下・前後・左右の加速度のばらつき（RMS）÷ 3方向合わせたばらつき（2乗の和は1）
   ratioAP: number
   ratioML: number
-  contactMs: number // 有効接地時間（ms）：1歩の中で、上下の加速度（重力を含む）が1gを上回っている時間の平均（Patoz 2021）
+  contactMs: number // 有効接地時間（ms）：1歩の中で、上下の加速度（重力を含む）が1gを上回っている時間の平均（Patoz 2021。ならさない値）
+  contactMs5: number // 同じものを、研究と同じく 5Hz でならしてから数えた値（記録だけ）
   up: Vec3 // スマホの座標で見た上向き
   forward: Vec3 // スマホの座標で見た前向き（水平）
 }
@@ -271,10 +272,12 @@ export function estimate(ms: PhoneMeasure[]): Estimate | null {
   const [rv, ra, rl] = [rms(vert), rms(apW), rms(mlW)]
   const rt = Math.hypot(rv, ra, rl) || 1
   const contactMs = effectiveContactMs(vertAll.map((v) => v + norm(g)), norm(g), cuts, fs)
+  // 研究（Patoz 2021）と同じく 5Hz でならしてから数えた値。記録だけ（判定は上の contactMs。PHONE.contactLowHz の説明）
+  const contactMs5 = effectiveContactMs(lowpass(vertAll, fs, PHONE.contactLowHz).map((v) => v + norm(g)), norm(g), cuts, fs)
 
   return {
     cadence, regularity: sp.regularity, accRms, bounceCm, brakingMs, brakingFixed, gyroLevel, up, forward,
-    apRegularity, ratioV: rv / rt, ratioAP: ra / rt, ratioML: rl / rt, contactMs,
+    apRegularity, ratioV: rv / rt, ratioAP: ra / rt, ratioML: rl / rt, contactMs, contactMs5,
   }
 }
 
@@ -366,7 +369,35 @@ export function lagCorr(x: number[], lag: number): number {
   return at(lo) * (1 - w) + at(lo + 1) * w
 }
 
+// 窓の値を、fc（Hz）までのフーリエ級数でならす（Patoz 2021 のならし方。前後にずれない）。
+// 窓の始めと終わりの値の差は直線で引いてから級数にし、あとで足し戻す（端の段差が細かい波になって残らないように）
+export function lowpass(x: number[], fs: number, fc: number): number[] {
+  const N = x.length
+  if (N < 3) return x.slice()
+  const d = (x[N - 1] - x[0]) / (N - 1)
+  const r = x.map((v, i) => v - x[0] - d * i)
+  const K = Math.min(Math.floor((fc * N) / fs), Math.floor((N - 1) / 2))
+  const out = new Array<number>(N).fill(mean(r))
+  for (let k = 1; k <= K; k++) {
+    let re = 0
+    let im = 0
+    for (let i = 0; i < N; i++) {
+      const a = (2 * Math.PI * k * i) / N
+      re += r[i] * Math.cos(a)
+      im += r[i] * Math.sin(a)
+    }
+    re = (2 * re) / N
+    im = (2 * im) / N
+    for (let i = 0; i < N; i++) {
+      const a = (2 * Math.PI * k * i) / N
+      out[i] += re * Math.cos(a) + im * Math.sin(a)
+    }
+  }
+  return out.map((v, i) => v + x[0] + d * i)
+}
+
 // 有効接地時間（Patoz 2021）：上下の加速度（重力を含む、上向き正）が1gを上回っている時間を、1歩ずつ数えて平均する（ms）
+// 判定にはならさない値を、記録には 5Hz でならした値（PHONE.contactLowHz）も渡す
 // 本当の接地時間より短く出る別物なので、自分の走り始めとの差だけを見る
 export function effectiveContactMs(vertWithG: number[], g: number, cuts: number[], fs: number): number {
   const out: number[] = []

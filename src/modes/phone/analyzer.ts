@@ -92,7 +92,7 @@ const median = (xs: number[]) => {
   return a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : 0
 }
 
-// duty：接地の割合（有効接地時間 ÷ 1歩の時間）。上下の加速度が1gを上回る時間（Patoz 2021。研究は 5Hz でならしてから線を引くが、ここではならしていない）を、ピッチから出した1歩の時間で割る
+// duty：接地の割合（有効接地時間 ÷ 1歩の時間）。上下の加速度が1gを上回る時間（Patoz 2021。研究は 5Hz でならしてから線を引くが、ここではならさない値を使う。ならした値は記録だけ。PHONE.contactLowHz）を、ピッチから出した1歩の時間で割る
 // up：基準の区間のスマホの上向き（スマホの座標）。上下動・接地を判定してよいか（付け方が変わっていないか）を見るのに使う
 type Ref = { cadence: number; bounceCm: number; brakingMs: number; duty: number; up: Vec3 }
 // 基準の区間の1秒

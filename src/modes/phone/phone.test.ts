@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { CueEngine } from '../../core/engine'
 import { PhoneAnalyzer, PHONE_CUE, PHONE_SAY } from './analyzer'
 import { mountFeatures, mountVerdict } from './mount'
-import { estimate, isRunning, type PhoneMeasure, type Vec3 } from './signal'
+import { estimate, isRunning, lowpass, type PhoneMeasure, type Vec3 } from './signal'
 import { cadenceIn, simulateRun, simulateRunWithSteps, simulateStanding, type MountSim, type RunSpec } from './simulate'
 import { HIP_REF, RUNNING } from '../../core/params'
 import { PHRASES, phraseId } from '../../core/phrases'
@@ -294,5 +294,16 @@ describe('スマホ：付け方の確認', () => {
     expect(verdict({ ...REAL, mount: { kind: 'loose', tiltDeg: 8, accMs: 3 } })).toBe('ok')
     expect(verdict({ ...REAL, mount: { kind: 'arm' } })).toBe('ok')
     expect(verdict({ ...REAL, mount: { kind: 'hand' } })).toBe('notWaist')
+  })
+})
+
+describe('スマホ：ならし（lowpass）', () => {
+  it('5Hz より細かい波を落とし、ゆっくりした波と傾きは残す', () => {
+    const fs = 50
+    const x = Array.from({ length: 200 }, (_, i) => 0.01 * i + Math.sin((2 * Math.PI * 2 * i) / fs) + 0.5 * Math.sin((2 * Math.PI * 12 * i) / fs))
+    const y = lowpass(x, fs, 5)
+    const want = x.map((_, i) => 0.01 * i + Math.sin((2 * Math.PI * 2 * i) / fs))
+    const err = Math.max(...y.slice(20, 180).map((v, i) => Math.abs(v - want[i + 20])))
+    expect(err).toBeLessThan(0.1)
   })
 })
