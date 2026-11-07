@@ -14,7 +14,7 @@ export const STEPS = {
   lean: { name: '体ごと前に', say: '体ごと前に倒して', camera: ['body', 'trunk'], phone: [] },
   armstill: { name: '腕を振らない', say: '腕を振らないで', camera: [], phone: [] },
   armcross: { name: '腕を横に振る', say: '腕を体の前で、横に振って', camera: [], phone: [] },
-  sit: { name: '腰を落とす', say: '腰を落として。ひざを曲げて', camera: ['hip'], phone: [] },
+  sit: { name: '腰を落とす', say: '腰を落として。ひざを曲げて', camera: ['hip'], phone: ['contact'] },
   // 同じ速さでピッチを約1割下げる。仮想実験（sim/result-landing.md）で、着地の基準からの増えの声が出たのは 56%（本当の増え +0.025）。
   // 前回（2026-10-19）は言葉だけで、歩いたり脚の山が出なかったりして使えなかったので、メトロノームに合わせてもらう
   slow: { name: 'ピッチを落とす', say: 'ピッチを約1割落とします。速さはそのまま、走ったまま、メトロノームの音に足音を合わせて、大またで', camera: ['landing'], phone: ['cadence'], sec: 60, metronome: 0.9 },

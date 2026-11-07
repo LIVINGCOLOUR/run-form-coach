@@ -17,7 +17,7 @@ export const PHONE_RAW_COLUMNS = ['t', 'wallMs', 'ax', 'ay', 'az', 'gx', 'gy', '
 export const PHONE_SECOND_COLUMNS = [
   't', 'wallMs', 'sec', 'cadence', 'bounceCm', 'brakingMs', 'regularity', 'accRms', 'score', 'quiet', 'mount',
   'vCadence', 'vBounce', 'vBraking', 'stepHz', 'gravity', 'gyroSwing', 'gyroHf', 'upX', 'upY', 'upZ', 'speed', 'gate',
-  'brakingFixed', 'gyroLevel', 'apRegularity', 'ratioV', 'ratioAP', 'ratioML', 'contactMs',
+  'brakingFixed', 'gyroLevel', 'apRegularity', 'ratioV', 'ratioAP', 'ratioML', 'contactMs', 'vContact',
 ] as const
 // 位置が届くたびの1行（外だけ）。位置そのもの（緯度・経度）は残さない（家の場所が分かるため）。速さは前の点からの距離で出し直せる
 export const PHONE_GPS_COLUMNS = ['t', 'wallMs', 'accuracy', 'speedDevice', 'stepM', 'raw', 'speed', 'used', 'altitude', 'altitudeAccuracy'] as const
@@ -62,7 +62,7 @@ const UNITS = {
   'ratioV,ratioAP,ratioML': '3方向の揺れの割合（上下・前後・左右のばらつき ÷ 3方向合わせたばらつき）',
   contactMs: 'ms。有効接地時間（上下の加速度が1gを上回っている時間の、1歩ごとの平均。Patoz 2021。本当の接地時間より短く出る）',
   fatigue: '疲れの見分けの結果（fatigue.ts）：基準の区間、1分ごとの「いつもと違う度合い」と上下動・ブレーキ・有効接地時間の変化、崩れ始め（秒）',
-  'vCadence,vBounce,vBraking': '線と比べた値（走り始めからのピッチの下がり %・上下動の増え cm・ブレーキの増え m/s）。判定しない秒は null',
+  'vCadence,vBounce,vBraking,vContact': '線と比べた値（走り始めからのピッチの下がり %・上下動の増え %・ブレーキの増え m/s・接地の割合〔有効接地時間 ÷ 1歩の時間〕の増え %）。判定しない秒は null。2026-11-07 より前の記録の vBounce は cm',
   mount: `付け方の問題（${PHONE_MOUNTS.map((s, i) => `${i}=${s ?? 'なし'}`).join('、')}）`,
   'stepHz,gravity,gyroSwing,gyroHf,upX,upY,upZ': '付け方の確認の手がかり（mount.ts の MountFeatures）',
   speed: 'm/s。GPS のならした速さ（外だけ。取れない秒・トレッドミルは null）',
@@ -122,7 +122,7 @@ export class PhoneLogRecorder {
       n(x?.stepHz, 1000), n(x?.gravity, 100), n(x?.gyroSwing, 1000), n(x?.gyroHf, 1000), n(x?.up[0], 1000), n(x?.up[1], 1000), n(x?.up[2], 1000),
       n(s.speed, 100), s.gate === undefined ? null : SPEED_GATES.indexOf(s.gate),
       n(est?.brakingFixed, 1000), est ? (est.gyroLevel ? 1 : 0) : null, n(est?.apRegularity, 1000),
-      n(est?.ratioV, 1000), n(est?.ratioAP, 1000), n(est?.ratioML, 1000), n(est?.contactMs, 1),
+      n(est?.ratioV, 1000), n(est?.ratioAP, 1000), n(est?.ratioML, 1000), n(est?.contactMs, 1), n(s.values.contact, 100),
     ])
   }
 

@@ -1,6 +1,6 @@
 import { CueEngine, type CoachEvent, type CueRecord } from '../../core/engine'
 import type { Category } from '../../core/types'
-import { PhoneAnalyzer, type PhoneItem, type PhoneSample } from './analyzer'
+import { PHONE_CUE, PhoneAnalyzer, type PhoneItem, type PhoneSample } from './analyzer'
 import { fatigueOf, type FatigueResult } from './fatigue'
 import { formTestOf, type FormTestResult } from './formtest'
 import { PhoneLogRecorder, type PhoneLog } from './log'
@@ -24,10 +24,13 @@ import { Drill, type DrillOptions } from './drill'
 //   state が ended なら終える
 //   終えるとき：run.finish() → 結果（短すぎれば null）と記録
 
-// 声にする項目。ブレーキ・上下動だけの声は、トレッドミルでカメラ版と比べて確かめるまで出さない（docs/phone-spec.md）。
-// ほかの項目は、大きく崩れても声をかけない（しくみの muteOthers）。測って記録し、結果の画面に出すだけ。
+// 声にする項目：ピッチ・接地の割合・上下動（docs/phone-spec.md 機能2・6）。線は params.ts の PHONE_LIMITS（ピッチのほかは仮の値）。
+// ブレーキは、前と後ろの見分けの仮定を確かめるまで声にしない。大きく崩れても声をかけない（しくみの muteOthers）。測って記録し、結果の画面に出すだけ。
 // 付け方の確認の声（mount・loose・place）は、見る役の「一度だけかける声」なので、これとは別にかかる
-export const PHONE_VOICED: PhoneItem[] = ['cadence']
+export const PHONE_VOICED: PhoneItem[] = ['cadence', 'contact', 'bounce']
+
+// フォームの崩れの声（崩しの撮影で、区間に入ってすぐは出さない声）
+const FORM_CUES = new Set<string>(PHONE_VOICED.map((k) => PHONE_CUE[k]))
 
 // どこで走るか。outdoor：外。GPS の速さが基準から外れた秒・GPS が取れない秒は判定しない（docs/phone-spec.md 機能4）。
 // treadmill：トレッドミル（実機テスト）。GPS は使わず、速さは一定とみなす
@@ -51,7 +54,7 @@ export interface PhoneSession {
   breakdownMin?: number // 崩れ始め（分）。スマホ版では疲れの見分け（fatigue.onsetSec）から出す
   fatigue?: FatigueResult | null // 疲れの見分けと、上下動・ブレーキ・接地時間の変化。基準を作れなければ null。ないのは、入れる前の記録
   quietHeldSec: number
-  ref: { cadence: number; bounceCm: number; brakingMs: number } | null // 走り始めの自分（基準）
+  ref: { cadence: number; bounceCm: number; brakingMs: number; duty?: number } | null // 走り始めの自分（基準）。duty は接地の割合（ないのは、入れる前の記録）
   where?: PhoneWhere // ないのは、外とトレッドミルを分ける前の記録（速さで止めていない）
   refSpeed?: number | null // 基準の速さ（m/s）。外だけ
   refLater?: boolean // 基準を5〜12分の平均に置き換えた（false なら仮の基準：30秒〜3分）
@@ -81,7 +84,7 @@ class PhoneCoach extends CueEngine<PhoneMeasure, PhoneSample, PhoneItem> {
   }
 }
 
-// 崩しの撮影：走る区間に入ってから、ピッチの声とメトロノームを出し始めるまでの秒（しくみの窓 CUE.window より長く）
+// 崩しの撮影：走る区間に入ってから、フォームの崩れの声とメトロノームを出し始めるまでの秒（しくみの窓 CUE.window より長く）
 const DRILL_SETTLE = 10
 
 // 結果に残すのは、これだけ走ったときだけ（カメラ版と同じ）
@@ -169,9 +172,9 @@ export class PhoneRun {
     const ev: CoachEvent[] = g.say.map((text) => ({ type: 'speak', text }))
     for (const e of ev) if (e.type === 'speak') this.rec.event(t, e.text)
     if (this.held.length && !this.drill.busy(t)) {
-      // 段が変わったら、ピッチの声とメトロノームは捨てる（前の区間のことなので）。付け方の確認の声などは出す
+      // 段が変わったら、フォームの崩れの声とメトロノームは捨てる（前の区間のことなので）。付け方の確認の声などは出す
       const cur = this.drill.at(t).index
-      const out = this.held.filter((h) => h.phase === cur || (h.e.type === 'speak' && h.e.text !== PHRASES.phoneCadence)).map((h) => h.e)
+      const out = this.held.filter((h) => h.phase === cur || (h.e.type === 'speak' && !FORM_CUES.has(h.e.text))).map((h) => h.e)
       this.held = []
       for (const e of out) {
         if (e.type === 'speak') this.rec.event(t, e.text)
@@ -205,10 +208,10 @@ export class PhoneRun {
           this.held = this.held.filter((h) => !(h.e.type === 'tone' && h.e.item === e.item))
           continue
         }
-        // ピッチの声とメトロノームは、走る区間に入って DRILL_SETTLE 秒たってから（しくみの窓は休みをまたぐので、
-        // 前の区間のピッチで次の区間の始めに鳴らさないように）。それより前に来たものは捨てる
+        // フォームの崩れの声（ピッチ・接地・上下動）とメトロノームは、走る区間に入って DRILL_SETTLE 秒たってから
+        // （しくみの窓は休みをまたぐので、前の区間の値で次の区間の始めに言わないように）。それより前に来たものは捨てる
         const at = this.drill.at(t)
-        const pitch = (e.type === 'tone' && e.on) || (e.type === 'speak' && e.text === PHRASES.phoneCadence)
+        const pitch = (e.type === 'tone' && e.on) || (e.type === 'speak' && FORM_CUES.has(e.text))
         if (pitch && (at.phase.kind !== 'run' || t - this.drill.t0 - at.phase.start < DRILL_SETTLE)) continue
         if ((e.type === 'speak' || (e.type === 'tone' && e.on)) && (this.held.length || this.drill.busy(t))) this.held.push({ e, phase: at.index })
         else now.push(e)

@@ -140,21 +140,72 @@ describe('スマホ：1回の走りと記録', () => {
   })
 })
 
-describe('スマホ：声にするのはピッチだけ', () => {
-  it('上下動とブレーキが大きく崩れても、ピッチが落ちていなければ声をかけない（確かめるまで出さない）', () => {
-    const o: [number, number, number] = [90, 0, 0]
-    const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, orientation: o }
-    const data = [
-      ...simulateRun({ ...real, cadence: 172, bounceCm: 8, brakingMs: 0.3, seconds: 240, seed: 21 }),
-      ...simulateRun({ ...real, cadence: 172, bounceCm: 12, brakingMs: 0.6, seconds: 90, seed: 22, t0: 240 }),
-    ]
-    const { run, said } = feedAll(data)
-    // 崩れは測れている（判定の値が線を大きく越えている）
+describe('スマホ：上下動・接地の声（ブレーキは声にしない）', () => {
+  const o: [number, number, number] = [90, 0, 0]
+  const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, orientation: o }
+  const texts = (said: { text: string }[]) => said.map((s) => s.text)
+  // 4分ふつうに走って基準を作り、そのあと走り方を変えて90秒
+  const after = (b: Partial<{ cadence: number; bounceCm: number; brakingMs: number }>, base = { cadence: 172, bounceCm: 9, brakingMs: 0.3 }) => [
+    ...simulateRun({ ...real, ...base, seconds: 240, seed: 21 }),
+    ...simulateRun({ ...real, ...base, ...b, seconds: 90, seed: 22, t0: 240 }),
+  ]
+
+  it('ピッチはそのままで弾む（上下動 +37%）と、上下動の声をかける。崩れる前には言わない', () => {
+    const { run, said } = feedAll(after({ bounceCm: 11 }, { cadence: 172, bounceCm: 8, brakingMs: 0.3 }))
+    const b = said.filter((s) => s.text === PHONE_CUE.bounce)
+    expect(b.length).toBeGreaterThanOrEqual(1)
+    expect(b[0].t).toBeGreaterThan(1240) // feedAll の時刻は 1000 から
+    expect(texts(said)).not.toContain(PHONE_CUE.cadence)
+    expect(texts(said)).not.toContain(PHONE_CUE.contact)
+    expect(run.coach.cues.some((c) => c.item === 'bounce')).toBe(true)
+  }, 30000)
+
+  it('ピッチはそのままで接地の割合が増える（上下動が減って、着いている時間が延びる）と、接地の声をかける', () => {
+    // 模擬データは、ばね・質量の形なので、同じピッチで上下動を 9cm → 7cm にすると、接地の割合が約2割増える
+    const { run, said } = feedAll(after({ bounceCm: 7 }))
+    const c = said.filter((s) => s.text === PHONE_CUE.contact)
+    expect(c.length).toBeGreaterThanOrEqual(1)
+    expect(c[0].t).toBeGreaterThan(1240)
+    expect(texts(said)).not.toContain(PHONE_CUE.bounce)
+    expect(texts(said)).not.toContain(PHONE_CUE.cadence)
+    const late = run.coach.samples.slice(-30)
+    expect(Math.min(...late.map((s) => s.values.contact ?? 0))).toBeGreaterThan(10)
+  }, 30000)
+
+  it('ふつうに走り続けるだけなら、上下動・接地の声はかけない', () => {
+    const { said } = feedAll(after({}))
+    expect(texts(said)).not.toContain(PHONE_CUE.bounce)
+    expect(texts(said)).not.toContain(PHONE_CUE.contact)
+    expect(texts(said)).not.toContain(PHONE_CUE.cadence)
+  }, 30000)
+
+  it('ブレーキだけが大きく崩れても、声をかけない（前と後ろの見分けを確かめるまで）', () => {
+    const { run, said } = feedAll(after({ brakingMs: 0.6 }))
     const last = run.coach.samples.slice(-30)
-    expect(Math.min(...last.map((s) => s.values.bounce ?? 0))).toBeGreaterThan(3)
-    expect(said.map((s) => s.text)).not.toContain(PHONE_CUE.bounce)
-    expect(said.map((s) => s.text)).not.toContain(PHONE_CUE.braking)
-  })
+    expect(Math.min(...last.map((s) => s.values.braking ?? 0))).toBeGreaterThan(0.15) // 崩れは測れている
+    expect(texts(said)).not.toContain(PHONE_CUE.braking)
+  }, 30000)
+
+  it('ピッチが落ちて上下動も増えたときは、ピッチの声だけ（同じ崩れを二重に言わない）', () => {
+    const { run, said } = feedAll(after({ cadence: 155, bounceCm: 11 }, { cadence: 172, bounceCm: 8, brakingMs: 0.3 }))
+    expect(texts(said)).toContain(PHONE_CUE.cadence)
+    expect(texts(said)).not.toContain(PHONE_CUE.bounce)
+    expect(texts(said)).not.toContain(PHONE_CUE.contact)
+    // ピッチが線より下がっている秒は、上下動・接地を判定していない
+    const low = run.coach.samples.filter((s) => (s.values.cadence ?? 0) > 5)
+    expect(low.length).toBeGreaterThan(30)
+    expect(low.every((s) => s.values.bounce === undefined && s.values.contact === undefined)).toBe(true)
+  }, 30000)
+
+  it('スマホがベルトの中で少し傾いた（付け方の確認が鳴らない 10°）あとは、上下動・接地を判定しない（ピッチは判定する）', () => {
+    const data = simulateRun({ ...real, cadence: 172, bounceCm: 8, brakingMs: 0.3, seconds: 330, seed: 23, mount: { kind: 'shift', at: 240, rotate: [10, 0, 0] } })
+    const { run, said } = feedAll(data)
+    expect(run.analyzer.mount.issue).toBeNull()
+    const late = run.coach.samples.filter((s) => s.t > 260)
+    expect(late.length).toBeGreaterThan(50)
+    expect(late.every((s) => s.values.bounce === undefined && s.values.contact === undefined && s.values.cadence !== undefined)).toBe(true)
+    expect(texts(said)).not.toContain(PHONE_CUE.bounce)
+  }, 30000)
 })
 
 describe('スマホ：ピッチの声とメトロノーム', () => {

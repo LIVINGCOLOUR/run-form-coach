@@ -51,8 +51,9 @@ export const ALIASES: Record<string, string> = {
   speedGuard: 'LANDING.speedGuard', // 着地：速さの目安がこの割合を越えて変わったら、比べずに基準を作り直す
   window: 'CUE.window', // 声をかける窓（秒）
   cadence: 'PHONE_LIMITS.cadence.cue', // スマホ：ピッチの下がり（%）
-  bounce: 'PHONE_LIMITS.bounce.cue',
-  braking: 'PHONE_LIMITS.braking.cue',
+  bounce: 'PHONE_LIMITS.bounce.cue', // スマホ：上下動の増え（%）
+  contact: 'PHONE_LIMITS.contact.cue', // スマホ：接地の割合の増え（%）
+  braking: 'PHONE_LIMITS.braking.cue', // スマホ：ブレーキ（声にしない）
 }
 
 // 「名前=値」を入れ物に書き込む。戻り値は書き込んだ場所と、前の値。はい・いいえの値（FORM.landing.say）は 0 か 1 で渡す

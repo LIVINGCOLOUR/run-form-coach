@@ -4,7 +4,7 @@ import { PHRASES } from '../../core/phrases'
 import { MountCheck, mountFeatures, offWaistRunning, type MountFeatures, type MountIssue } from './mount'
 import { PHONE, PHONE_LIMITS, PHONE_REF, SPEED } from './params'
 import type { FatigueFeatures } from './fatigue'
-import { estimate, isRunning, type Estimate, type PhoneMeasure } from './signal'
+import { estimate, isRunning, type Estimate, type PhoneMeasure, type Vec3 } from './signal'
 import { speedGate, type SpeedGate, type SpeedTrack } from './speed'
 
 // スマホ1台（腰のベルト）の入り口の「見る役」。engine.ts の CueEngine に渡す
@@ -16,12 +16,12 @@ import { speedGate, type SpeedGate, type SpeedTrack } from './speed'
 // 付け方の確認（mount.ts）で、ずれた・腰以外と分かったら、1回だけ知らせて、その走りではもう判定しない
 // （外れた付け方で測った値で、フォームを誤って直させないため）。記録には印（PhoneSample.mount）が残る。
 // ゆるいと分かったときも1回だけ知らせるが、ピッチだけは基準を作って判定を続ける（ゆるくても1歩のリズムは測れる。
-// 上下動・ブレーキは、スマホの揺れが混ざるので判定しない）
+// 上下動・接地・ブレーキは、スマホの揺れが混ざるので判定しない）
 // 外で走るとき（speed に GPS の速さを渡したとき）は、速さが走り始めの基準の速さから外れた秒・GPS が取れない秒も判定しない
 // （speed.ts。ペースを落としただけで「崩れ」と言わないため）。止めた理由は記録（PhoneSample.gate）に残る。
 // speed が null（トレッドミル）なら、速さは一定とみなして止めない
 
-export type PhoneItem = 'cadence' | 'braking' | 'bounce' | 'mount' | 'loose' | 'place'
+export type PhoneItem = 'cadence' | 'contact' | 'bounce' | 'braking' | 'mount' | 'loose' | 'place'
 
 // 1秒の記録（画面や結果に使う）
 export interface PhoneSample {
@@ -41,8 +41,9 @@ export interface PhoneSample {
 // 崩れたとき・付け方がおかしいときの言葉
 export const PHONE_CUE: Record<PhoneItem, string> = {
   cadence: PHRASES.phoneCadence,
-  braking: PHRASES.phoneBraking,
+  contact: PHRASES.phoneContact,
   bounce: PHRASES.phoneBounce,
+  braking: PHRASES.phoneBraking,
   mount: PHRASES.phoneMount,
   loose: PHRASES.phoneLoose,
   place: PHRASES.phonePlace,
@@ -60,11 +61,15 @@ export const PHONE_SAY: Partial<EngineSay> = {
 // 付け方の知らせは、しくみの「一度だけかける声」（once）で出す。値は渡さないので、線と比べて声をかけることはない
 const NEVER = { full: 0, zero: 1, cue: 1 }
 
-// 並び順が、声をかける優先順。ピッチは、言葉は初めの1回だけで、あとは走り始めのテンポのメトロノームで知らせる（tone）
+// 並び順が、声をかける優先順。ピッチは、言葉は初めの1回だけで、あとは走り始めのテンポのメトロノームで知らせる（tone）。
+// ピッチを先にするのは、ピッチを上げると上下動・接地もまとめて変わるため（Heiderscheit 2011）。接地は上下動より先
+// （上下動は付け方で値が大きく変わり、外れやすい。2026-10-19 の記録で、付け直しただけで 4.6cm → 7.2cm）。
+// ブレーキは測るだけで声にしない（session.ts の PHONE_VOICED に入れていない）
 export const PHONE_ITEMS: ItemSpec<PhoneItem>[] = [
   { key: 'cadence', limits: PHONE_LIMITS.cadence, cue: PHONE_CUE.cadence, tone: true },
-  { key: 'braking', limits: PHONE_LIMITS.braking, cue: PHONE_CUE.braking },
+  { key: 'contact', limits: PHONE_LIMITS.contact, cue: PHONE_CUE.contact },
   { key: 'bounce', limits: PHONE_LIMITS.bounce, cue: PHONE_CUE.bounce },
+  { key: 'braking', limits: PHONE_LIMITS.braking, cue: PHONE_CUE.braking },
   { key: 'mount', limits: NEVER, cue: PHONE_CUE.mount },
   { key: 'loose', limits: NEVER, cue: PHONE_CUE.loose },
   { key: 'place', limits: NEVER, cue: PHONE_CUE.place },
@@ -73,20 +78,33 @@ export const PHONE_ITEMS: ItemSpec<PhoneItem>[] = [
 // 付け方の問題 → 知らせる項目（言葉）
 const MOUNT_ITEM: Record<MountIssue, PhoneItem> = { notWaist: 'place', loose: 'loose', shifted: 'mount' }
 
+const unit = (v: Vec3): Vec3 => {
+  const n = Math.hypot(v[0], v[1], v[2]) || 1
+  return [v[0] / n, v[1] / n, v[2] / n]
+}
+// 2つの向きのなす角（度）
+export const angleDeg = (a: Vec3, b: Vec3) => (Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))) * 180) / Math.PI
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 const median = (xs: number[]) => {
   const a = [...xs].sort((x, y) => x - y)
   return a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : 0
 }
 
-type Ref = { cadence: number; bounceCm: number; brakingMs: number }
+// duty：接地の割合（有効接地時間 ÷ 1歩の時間）。上下の加速度が1gを上回る時間（Patoz 2021）を、ピッチから出した1歩の時間で割る
+// up：基準の区間のスマホの上向き（スマホの座標）。上下動・接地を判定してよいか（付け方が変わっていないか）を見るのに使う
+type Ref = { cadence: number; bounceCm: number; brakingMs: number; duty: number; up: Vec3 }
 // 基準の区間の1秒
 interface RefSec {
   cadence: number
   bounceCm: number
   brakingMs: number
+  duty: number
+  up: Vec3
   speed: number | null
 }
+
+// 接地の割合（有効接地時間 ÷ 1歩の時間）
+export const dutyOf = (e: Pick<Estimate, 'contactMs' | 'cadence'>) => (e.contactMs * e.cadence) / 60000
 
 // 基準の区間の秒から、基準を作る。need 秒より少なければ null
 // 外（gps）では、速さの中央値から SPEED.band の中にある秒だけを使い、速さの基準もそこから出す
@@ -94,7 +112,13 @@ interface RefSec {
 // そういう秒が、測れた秒の PHONE_REF.coverage の割合に足りなければ、ピッチなどはすべての秒から作り、
 // 速さの基準は null（速さが分からないので、その基準のあいだは判定しない）
 function refFrom(xs: RefSec[], gps: boolean, need: number): { ref: Ref; speed: number | null } | null {
-  const avg = (ys: RefSec[]): Ref => ({ cadence: mean(ys.map((y) => y.cadence)), bounceCm: mean(ys.map((y) => y.bounceCm)), brakingMs: mean(ys.map((y) => y.brakingMs)) })
+  const avg = (ys: RefSec[]): Ref => ({
+    cadence: mean(ys.map((y) => y.cadence)),
+    bounceCm: mean(ys.map((y) => y.bounceCm)),
+    brakingMs: mean(ys.map((y) => y.brakingMs)),
+    duty: mean(ys.map((y) => y.duty)),
+    up: unit([mean(ys.map((y) => y.up[0])), mean(ys.map((y) => y.up[1])), mean(ys.map((y) => y.up[2]))]),
+  })
   if (xs.length < need || !xs.length) return null
   if (!gps) return { ref: avg(xs), speed: null }
   const withSpeed = xs.filter((x): x is RefSec & { speed: number } => x.speed !== null)
@@ -128,6 +152,8 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
   private lastGate: SpeedGate | null = null
   // 直近の1秒で使った、測った値と付け方の手がかり（記録の書き出しで使う）。走っていない秒は est が null
   lastSecond: { est: Estimate | null; mount: MountFeatures | null } | null = null
+  upShift: number | null = null // 直近の秒の、スマホの上向きの基準からの傾き（度）。基準ができる前は null
+  private form: { t: number; bounce: number; contact: number }[] = [] // 上下動・接地の、直近 PHONE.formHold 秒の値（続けて判定できた秒だけ）
 
   // センサーの値を1つ受け取る。走っているかの判定は、走る前（engine が走っていないとき）にも要るので、ここで続ける
   feed(m: PhoneMeasure) {
@@ -174,7 +200,7 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
     const loose = this.mount.issue === 'loose'
     if (e && (!this.mount.issue || loose)) {
       // 走り始め（HIP_REF の区間）の自分を基準にする
-      const sec: RefSec = { cadence: e.cadence, bounceCm: e.bounceCm, brakingMs: e.brakingMs, speed: v }
+      const sec: RefSec = { cadence: e.cadence, bounceCm: e.bounceCm, brakingMs: e.brakingMs, duty: dutyOf(e), up: e.up, speed: v }
       if (t >= HIP_REF.from && t <= HIP_REF.to) this.refs.push(sec)
       if (this.ref === null && t > HIP_REF.to && this.refs.length) {
         const r = refFrom(this.refs, gps, 1)!
@@ -216,7 +242,22 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
       if (ref && !gate) {
         values.cadence = ((ref.cadence - e.cadence) / ref.cadence) * 100
         if (!loose) {
-          values.bounce = e.bounceCm - ref.bounceCm
+          // ピッチが声の線より下がっている秒は、上下動・接地は判定しない。ピッチが落ちると上下動も接地も増えるので
+          // （Heiderscheit 2011）、同じ崩れをピッチの声と二重に言わないため（ピッチの声を先にする）。
+          // スマホの上向きが基準の区間から PHONE.upShiftDeg より傾いた秒も判定しない（ベルトの中でスマホが動くと、
+          // 上下動の値が変わる。付け方の確認の「ずれた」の線より小さな動きでも）
+          this.upShift = angleDeg(e.up, ref.up)
+          if (values.cadence <= PHONE_LIMITS.cadence.cue && this.upShift <= PHONE.upShiftDeg && ref.bounceCm > 0 && ref.duty > 0) {
+            this.form.push({ t, bounce: ((e.bounceCm - ref.bounceCm) / ref.bounceCm) * 100, contact: ((dutyOf(e) - ref.duty) / ref.duty) * 100 })
+          } else this.form = []
+          // 直近 PHONE.formHold 秒が続けて判定できたときだけ、その間でいちばん小さい値を渡す（その秒数ずっと線を越えていたときだけ、線を越える）。
+          // 止まる・走り出すときは、窓の中に止まりかけの歩が入って、接地の割合が一瞬大きく跳ねるため（模擬データで +70%、約3秒）
+          while (this.form.length && this.form[0].t <= t - PHONE.formHold) this.form.shift()
+          const f = this.form
+          if (f.length >= PHONE.formHold && f.every((x, i) => i === 0 || x.t - f[i - 1].t <= 1)) {
+            values.bounce = Math.min(...f.map((x) => x.bounce))
+            values.contact = Math.min(...f.map((x) => x.contact))
+          }
           values.braking = e.brakingMs - ref.brakingMs
         }
       }

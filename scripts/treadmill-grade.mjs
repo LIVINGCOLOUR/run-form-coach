@@ -8,7 +8,7 @@
 //   --set 名前=値          線を上書きして、記録をもう一度判定に通す（何回でも）。例 --set head=7 --set trunkRel=4
 //                          短い名前：head・hip（LIMITS の cue）、trunkRel・bodyRel（REL_LIMITS の cue）、bodyMin・bodyMax・trunkMin・trunkMax・headNeck・headLean（正しいフォームの線 FORM）、window、
 //                          landing（着地の基準からの増えの線）・landingMax（着地の決まった線）・landingSay（1 で着地の決まった線を声にする）・speedGuard、
-//                          cadence・bounce・braking（スマホ）。ほかは LIMITS.head.full のように場所で
+//                          cadence・contact・bounce・braking（スマホ）。ほかは LIMITS.head.full のように場所で
 //   --grace 秒             崩しの区間が終わってから、この秒数までに出た声は、その崩しを見つけたと数える（既定 10）
 //   --camera-offset 秒     カメラ版の時計 − Mac の時計（既定 0。ジャンプの表で大きくずれていたら入れる）
 //   --phone-offset 秒      スマホ版の時計 − Mac の時計（既定 0）
@@ -316,7 +316,7 @@ for (const d of devices) {
     const items = d.sources.find((s) => s.items)?.items
     if (items) p(`声をかける項目（${itemsAll ? '--items all：すべて' : '撮ったときのランナーのレベル'}）：${items.join('・')}。ほかの項目は、大きく崩れたとき（点数が 50 未満）だけ声が出る（この声は cue の線ではなく、full・zero で決まる点数で出る）`)
   }
-  else p('出てほしい項目：cadence＝ピッチ（言葉は初めの1回だけで、あとはメトロノーム）。スマホ版は、いまピッチだけ声にする')
+  else p('出てほしい項目：cadence＝ピッチ（言葉は初めの1回だけで、あとはメトロノーム）・contact＝接地の割合・bounce＝上下動。ブレーキ（braking）は声にしない')
   p()
   p(`| 区間 | 種類 | 長さ | 出てほしい | ${graded.map((g) => g.src.name).join(' | ')} |`)
   p(`|---|---|---|---|${graded.map(() => '---').join('|')}|`)

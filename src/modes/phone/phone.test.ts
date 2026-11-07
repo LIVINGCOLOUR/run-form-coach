@@ -254,7 +254,7 @@ describe('スマホ：付け方の確認', () => {
       expect(coach.cues.some((c) => c.item === 'place')).toBe(true)
     }, 30000)
 
-  it('ゆるい：1回だけ知らせ、記録に印を付けるが、基準は作り続けてピッチだけ判定する（上下動・ブレーキは判定しない）', () => {
+  it('ゆるい：1回だけ知らせ、記録に印を付けるが、基準は作り続けてピッチだけ判定する（上下動・接地・ブレーキは判定しない）', () => {
     const analyzer = new PhoneAnalyzer()
     const mount: MountSim = { kind: 'loose', tiltDeg: 6, accMs: 2 }
     // 基準ができた後に、ピッチを落とす。ゆるくても、ピッチの声はかける
@@ -267,10 +267,10 @@ describe('スマホ：付け方の確認', () => {
     const cad = said.filter((s) => s.text === PHONE_CUE.cadence)
     expect(cad.length).toBe(1)
     expect(cad[0].t).toBeGreaterThan(210) // 落ちる前には声をかけない
-    expect(said.some((s) => [PHONE_CUE.braking, PHONE_CUE.bounce].includes(s.text))).toBe(false)
+    expect(said.some((s) => [PHONE_CUE.braking, PHONE_CUE.bounce, PHONE_CUE.contact].includes(s.text))).toBe(false)
     const judged = coach.samples.filter((s) => s.t > HIP_REF.to)
     expect(judged.length).toBeGreaterThan(50)
-    expect(judged.every((s) => s.mount === 'loose' && s.score !== null && s.values.cadence !== undefined && s.values.bounce === undefined && s.values.braking === undefined)).toBe(true)
+    expect(judged.every((s) => s.mount === 'loose' && s.score !== null && s.values.cadence !== undefined && s.values.bounce === undefined && s.values.contact === undefined && s.values.braking === undefined)).toBe(true)
   }, 30000)
 
   it('途中でずれたら、ずれたあとに1回だけ知らせる。小さな傾き（20°）では鳴らない', () => {
