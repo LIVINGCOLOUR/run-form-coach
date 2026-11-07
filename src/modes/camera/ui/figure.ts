@@ -10,6 +10,7 @@ const CY = 262
 const LEG = 164
 const HEAD_BACK = 4 // 頭の丸の中心を耳から後ろへ（下の paths）
 const HEAD_UP = 8 // 同じく上へ
+export const HEAD_R = 26 // 頭の丸の半径（Mannequin が描く）
 
 // 前の記録（1周ではない1.2秒）は、ここで1周に直してから描く。cadence：その走りのピッチ（あれば、1周の長さの目安にする）
 export function normalizeStride(s: Stride, cadence?: number): Frame[] {
@@ -116,13 +117,20 @@ export function paths(f: Frame, nearLeft: boolean): Paths {
   //   描画の座標は脚の長さ 164 ≒ 85cm（約 1.9 / cm）なので、後ろ 4 ≒ 2cm・上 8 ≒ 4cm。半径 26 ≒ 13cm で、顔の前は耳から約 11cm 先まで
   const back = nose.x >= ear.x ? -HEAD_BACK : HEAD_BACK
   const head = { x: ear.x + back, y: ear.y - HEAD_UP }
+  // 首は肩から頭の丸の中心へ向けて、丸のふちで止める。前は耳まで引いていて、太い首（16）が丸の前側に刺さり、
+  //   首と顔が前に突き出て見えた（2026-11-07 本人。骨格の値は変えず、見た目だけ）
+  const dx = head.x - sh.x
+  const dy = head.y - sh.y
+  const len = Math.hypot(dx, dy) || 1
+  const k = Math.max(0, len - HEAD_R) / len
+  const neckEnd = { x: sh.x + dx * k, y: sh.y + dy * k, v: 1 }
   return {
     legBack: `M${P(hip)} L${P(f[o.k])} L${P(f[o.a])} L${P(f[o.ft])}`,
     legFront: `M${P(hip)} L${P(f[n.k])} L${P(f[n.a])} L${P(f[n.ft])}`,
     armBack: `M${P(sh)} L${P(f[o.el])} L${P(f[o.w])}`,
     armFront: `M${P(sh)} L${P(f[n.el])} L${P(f[n.w])}`,
     trunk: `M${P(hip)} L${P(sh)}`,
-    neck: `M${P(sh)} L${P(ear)}`,
+    neck: `M${P(sh)} L${P(neckEnd)}`,
     hx: head.x,
     hy: head.y,
   }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Frame } from '../../../core/types'
-import { nearIsLeft, paths } from './figure'
+import { HEAD_R, nearIsLeft, paths } from './figure'
 
 interface Props {
   frames: Frame[]
@@ -49,13 +49,13 @@ export function Mannequin({ frames, ghost, ghostColor = 'var(--accent)', upperCo
         <path d={p.legFront} stroke="#4A535D" strokeWidth={22} strokeLinecap="round" strokeLinejoin="round" fill="none" />
         <path d={p.trunk} stroke={upperColor} strokeWidth={26} strokeLinecap="round" fill="none" />
         <path d={p.neck} stroke={upperColor} strokeWidth={16} strokeLinecap="round" fill="none" />
-        <circle cx={p.hx} cy={p.hy} r={26} fill={upperColor} />
+        <circle cx={p.hx} cy={p.hy} r={HEAD_R} fill={upperColor} />
         <path d={p.armFront} stroke="#5A646F" strokeWidth={16} strokeLinecap="round" strokeLinejoin="round" fill="none" />
         {g && (
           <g stroke={ghostColor} strokeWidth={3.5} strokeDasharray="7 6" fill="none" strokeLinecap="round" strokeLinejoin="round">
             <path d={g.trunk} />
             <path d={g.neck} />
-            <circle cx={g.hx} cy={g.hy} r={26} />
+            <circle cx={g.hx} cy={g.hy} r={HEAD_R} />
             <path d={g.armFront} opacity={0.6} />
             <path d={g.legFront} opacity={0.6} />
           </g>
