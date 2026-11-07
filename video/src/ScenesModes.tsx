@@ -390,7 +390,9 @@ export function SSensor({ items }: { items: MItem[] }) {
   const show: Record<Spot, number> = { head: pop(f, at(0.33)), wrist: pop(f, at(0.41)), chest: pop(f, at(0.49)), ankle: pop(f, at(0.56)) }
   // 猫背になり（m21）、胸のセンサーが震えたあとに戻る
   const buzz = buzzAt(m21)
-  const hunch = interpolate(f, [m21.start + 4, m21.start + 40], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
+  // 見るものの札を読み上げに合わせて出したあと（m21 の前半）、猫背になる
+  const hunch = interpolate(f, [m21.start + Math.round(m21.len * 0.4), m21.start + Math.round(m21.len * 0.4) + 36], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
+  const said = (r: number) => pop(f, m21.start + Math.round(m21.len * r))
   const fix = interpolate(f, [buzz + 16, buzz + 38], [0, 1], { ...clamp, easing: Easing.inOut(Easing.quad) })
   const bad = hunch * (1 - fix)
   const shaking = f >= buzz && f < buzz + 15 ? 1 : 0
@@ -428,11 +430,13 @@ export function SSensor({ items }: { items: MItem[] }) {
         )
       })}
       {/* センサーで見るもの */}
-      <div style={{ position: 'absolute', left: 60, right: 60, top: 1220, display: 'flex', gap: 18, justifyContent: 'center', ...fadeUp(f, m21.start) }}>
-        {['猫背', '左右の差'].map((t, i) => {
-          const warn = i === 0 && bad > 0.5
+      <div style={{ position: 'absolute', left: 60, right: 60, top: 1200, display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'center' }}>
+        {/* m21 の「頭の位置、猫背、腕振り、接地時間、左右の差」の、文の中のおよその位置で1つずつ出す */}
+        {([['頭の位置', 0.01], ['猫背', 0.09], ['腕振り', 0.14], ['接地時間', 0.2], ['左右の差', 0.28]] as const).map(([t, r]) => {
+          const warn = t === '猫背' && bad > 0.5
+          const s = Math.min(1, said(r))
           return (
-            <div key={t} style={{ padding: '12px 28px', borderRadius: 20, background: warn ? C.warn : 'rgba(20,24,28,0.92)', color: warn ? C.bg : C.text, border: `2px solid ${warn ? C.warn : C.line}`, fontSize: 38, fontWeight: 900 }}>
+            <div key={t} style={{ padding: '10px 24px', borderRadius: 20, background: warn ? C.warn : 'rgba(20,24,28,0.92)', color: warn ? C.bg : C.text, border: `2px solid ${warn ? C.warn : C.line}`, fontSize: 34, fontWeight: 900, opacity: s, transform: `scale(${0.8 + 0.2 * s})` }}>
               {t}
             </div>
           )
