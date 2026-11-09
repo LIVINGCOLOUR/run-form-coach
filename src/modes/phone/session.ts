@@ -31,7 +31,7 @@ import { Drill, type DrillOptions } from './drill'
 // （ふつうの走りと、わざと腰を落とす・弾む区間）そろって線を決め直したら、PHONE_VOICED に足す。採点（npm run grade -- … --items all）では、
 // 声にしたとして通して「声が出たはずか」を確かめられる。
 // ブレーキは、前と後ろの見分けの仮定を確かめるまで声にしない。声にしない項目は、大きく崩れても声をかけない（しくみの muteOthers）。
-// 付け方の確認の声（mount・loose・place）は、見る役の「一度だけかける声」なので、これとは別にかかる
+// 付け方の確認の声（mount・place）は、見る役の「一度だけかける声」なので、これとは別にかかる。ゆるい（loose）は記録だけで声にしない
 export const PHONE_VOICED: PhoneItem[] = ['cadence']
 // 仮の線で測るが、声にしない項目（上の3本の条件がそろったら声にする候補）
 export const PHONE_MEASURED: PhoneItem[] = ['contact', 'bounce']
@@ -65,8 +65,9 @@ export interface PhoneSession {
   where?: PhoneWhere // ないのは、外とトレッドミルを分ける前の記録（速さで止めていない）
   refSpeed?: number | null // 基準の速さ（m/s）。外だけ
   refLater?: boolean // 基準を5〜12分の平均に置き換えた（false なら仮の基準：30秒〜3分）
-  mount: MountIssue | null // 付け方の問題（見つけたら、その走りでは判定を止めた。ゆるいときはピッチだけ判定を続けた）
+  mount: MountIssue | null // 判定を止めた付け方の問題（腰以外・ずれた）。前の記録には 'loose'（そのときはピッチだけ判定を続けた）がある
   mountAt?: number // 見つけた秒
+  looseAt?: number // ゆるいと見えた秒（記録だけ。声にせず、判定も止めていない）。ないのは、見えなかったか、入れる前の記録
   logId?: string
   sensorLogId?: string // いっしょに使ったセンサーの記録（テスト期間。sensor/runLog.ts の SensorRunLog）
   kind?: 'practice' | 'test' | 'drill' // ないのはふつうの走り
@@ -84,7 +85,7 @@ class PhoneCoach extends CueEngine<PhoneMeasure, PhoneSample, PhoneItem> {
     // 崩れ始めは、しくみの点数（ピッチの崩れ）ではなく、疲れの見分けから出す（docs/phone-spec.md 機能5）
     const fatigue = fatigueOf(this.samples)
     return {
-      ...this.summary(), id: `phone-${this.startedAt}`, mode: 'phone', samples: this.samples, ref: a.ref, refLater: a.refLater, mount: a.mount.issue, mountAt: a.mount.issueAt ?? undefined,
+      ...this.summary(), id: `phone-${this.startedAt}`, mode: 'phone', samples: this.samples, ref: a.ref, refLater: a.refLater, mount: a.mount.issue, mountAt: a.mount.issueAt ?? undefined, looseAt: a.mount.looseAt ?? undefined,
       where: a.speed ? 'outdoor' : 'treadmill', refSpeed: a.speed ? a.refSpeed : undefined,
       fatigue, breakdownMin: fatigue?.onsetSec != null ? Math.round(fatigue.onsetSec / 60) : undefined,
     }
@@ -110,6 +111,7 @@ export class PhoneRun {
   private seen = 0
   private lastState: PhoneCoach['state']
   private refLogged = false
+  private looseLogged = false
   private speedRefKey: string | null = null
   private lastGate: string | null = null
 
@@ -229,6 +231,11 @@ export class PhoneRun {
     // 練習：走りが止まったら（一時停止・途切れ・終わり）、メトロノームを止める
     if (this.practice && this.coach.state !== 'running' && this.practice.halt()) ev.push({ type: 'tone', on: false, item: 'practice' })
     const a = this.analyzer
+    // 付け方がゆるいと見えた（記録だけ。声にしない）
+    if (a.mount.looseAt !== null && !this.looseLogged) {
+      this.looseLogged = true
+      this.rec.event(t, 'mount:loose')
+    }
     if (a.refLater && !this.refLogged && a.ref) {
       this.refLogged = true
       this.rec.event(t, `ref:later:${a.ref.cadence.toFixed(1)}`)

@@ -50,7 +50,7 @@ export const DRILL_STEPS: DrillStep[] = [
   { key: 'heel', name: 'かかとから前に', how: '足を体の前に伸ばして、かかとから着地', intro: 'drillHeel', full: 60, short: 30, waist: true, expect: null, legs: true },
   { key: 'flat', name: 'べた足', how: '足の裏全体で、ぺたっと着地', intro: 'drillFlat', full: 60, short: 30, waist: true, expect: null, legs: true },
   { key: 'normal2', name: 'ふつう（戻す）', how: 'いつもの走りに戻す', intro: 'drillNormal', full: 120, short: 60, waist: true, expect: null },
-  { key: 'loose', name: 'ゆるい', how: 'ベルトをゆるめて、スマホが揺れるくらいに。付け方の確認の声が鳴っても続ける', intro: 'drillLoose', full: 60, short: 30, waist: false, expect: 'loose', extra: true },
+  { key: 'loose', name: 'ゆるい', how: 'ベルトをゆるめて、スマホが揺れるくらいに。ゆるいは声にせず、記録にだけ残す（線を決め直す材料）', intro: 'drillLoose', full: 60, short: 30, waist: false, expect: 'loose', extra: true },
   { key: 'hand', name: '手に持つ', how: 'スマホを手に持って、いつもどおり腕を振って走る', intro: 'drillHand', full: 60, short: 30, waist: false, expect: 'notWaist', extra: true },
   { key: 'pocket', name: 'ポケット', how: 'スマホをパンツの前のポケットに入れて走る', intro: 'drillPocket', full: 60, short: 30, waist: false, expect: 'notWaist', extra: true },
 ]

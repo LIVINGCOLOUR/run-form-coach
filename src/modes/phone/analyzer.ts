@@ -1,7 +1,7 @@
 import type { EngineSay, ItemSpec, ModeAnalyzer, SecondContext, SecondOut, Values } from '../../core/engine'
 import { HIP_REF, RUNNING } from '../../core/params'
 import { PHRASES } from '../../core/phrases'
-import { MountCheck, mountFeatures, offWaistRunning, type MountFeatures, type MountIssue } from './mount'
+import { MountCheck, mountFeatures, offWaistRunning, type MountFeatures, type MountIssue, type StopIssue } from './mount'
 import { PHONE, PHONE_LIMITS, PHONE_REF, SPEED } from './params'
 import type { FatigueFeatures } from './fatigue'
 import { estimate, isRunning, type Estimate, type PhoneMeasure, type Vec3 } from './signal'
@@ -15,8 +15,8 @@ import { speedGate, type SpeedGate, type SpeedTrack } from './speed'
 //     （値が途切れたまま update を呼ばないと、しくみは途切れたことに気づけない）
 // 付け方の確認（mount.ts）で、ずれた・腰以外と分かったら、1回だけ知らせて、その走りではもう判定しない
 // （外れた付け方で測った値で、フォームを誤って直させないため）。記録には印（PhoneSample.mount）が残る。
-// ゆるいと分かったときも1回だけ知らせるが、ピッチだけは基準を作って判定を続ける（ゆるくても1歩のリズムは測れる。
-// 上下動・接地・ブレーキは、スマホの揺れが混ざるので判定しない）
+// ゆるいは記録だけ：声にせず、判定も止めない（実機では、しっかり付けても線を越えたため。params.ts の MOUNT.looseGyroHf）。
+// 決まった秒は mount.looseAt に残り、session.ts が記録の出来事（mount:loose）にする
 // 外で走るとき（speed に GPS の速さを渡したとき）は、速さが走り始めの基準の速さから外れた秒・GPS が取れない秒も判定しない
 // （speed.ts。ペースを落としただけで「崩れ」と言わないため）。止めた理由は記録（PhoneSample.gate）に残る。
 // speed が null（トレッドミル）なら、速さは一定とみなして止めない
@@ -29,9 +29,9 @@ export interface PhoneSample {
   cadence: number | null // 歩／分。付け方がおかしく、測れなかった秒は null
   bounceCm: number | null
   brakingMs: number | null
-  score: number | null // 判定しない秒（走り始めの基準ができる前・腰以外かずれたと分かった後）は null。ゆるいと分かった後はピッチだけの点数
+  score: number | null // 判定しない秒（走り始めの基準ができる前・腰以外かずれたと分かった後）は null。前の記録では、ゆるいと分かった後はピッチだけの点数
   quiet: boolean
-  mount: MountIssue | null // この走りで見つけた付け方の問題（見つけた秒から後に付く）
+  mount: MountIssue | null // この走りで見つけた、判定を止める付け方の問題（見つけた秒から後に付く）。ゆるいは付けない（前の記録には 'loose' がある）
   speed?: number | null // GPS のならした速さ（m/s）。トレッドミルでは付けない
   gate?: SpeedGate | null // 速さで判定を止めた理由（speed.ts）。止めていない秒・トレッドミルでは null か、付けない
   values: Values<PhoneItem> // 線と比べた値（走り始めの自分からの崩れ）。判定しない秒は {}
@@ -45,7 +45,7 @@ export const PHONE_CUE: Record<PhoneItem, string> = {
   bounce: PHRASES.phoneBounce,
   braking: PHRASES.phoneBraking,
   mount: PHRASES.phoneMount,
-  loose: PHRASES.phoneLoose,
+  loose: PHRASES.phoneLoose, // いまは使わない（ゆるいは記録だけ）。前の記録の表示のために残す
   place: PHRASES.phonePlace,
 }
 
@@ -73,12 +73,12 @@ export const PHONE_ITEMS: ItemSpec<PhoneItem>[] = [
   { key: 'bounce', limits: PHONE_LIMITS.bounce, cue: PHONE_CUE.bounce },
   { key: 'braking', limits: PHONE_LIMITS.braking, cue: PHONE_CUE.braking },
   { key: 'mount', limits: NEVER, cue: PHONE_CUE.mount },
-  { key: 'loose', limits: NEVER, cue: PHONE_CUE.loose },
+  { key: 'loose', limits: NEVER, cue: PHONE_CUE.loose }, // いまは知らせない（ゆるいは記録だけ）
   { key: 'place', limits: NEVER, cue: PHONE_CUE.place },
 ]
 
-// 付け方の問題 → 知らせる項目（言葉）
-const MOUNT_ITEM: Record<MountIssue, PhoneItem> = { notWaist: 'place', loose: 'loose', shifted: 'mount' }
+// 判定を止める付け方の問題 → 知らせる項目（言葉）。ゆるいは知らせない
+const MOUNT_ITEM: Record<StopIssue, PhoneItem> = { notWaist: 'place', shifted: 'mount' }
 
 const unit = (v: Vec3): Vec3 => {
   const n = Math.hypot(v[0], v[1], v[2]) || 1
@@ -192,15 +192,13 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
     const gps = this.speed !== null
     const v = this.speed ? this.speed.at(this.lastFedAt ?? 0) : null
     const found = this.mount.check(t, x)
-    const once: SecondOut<PhoneSample, PhoneItem>['once'] = found ? { item: MOUNT_ITEM[found], back: 0 } : undefined
+    const once: SecondOut<PhoneSample, PhoneItem>['once'] = found && found !== 'loose' ? { item: MOUNT_ITEM[found], back: 0 } : undefined
 
-    // 腰以外・ずれたと分かった後（または測れない秒）は判定しない。基準も作らない。
-    // ゆるいと分かった後は、基準を作り続け、ピッチだけ判定する
+    // 腰以外・ずれたと分かった後（または測れない秒）は判定しない。基準も作らない
     const values: Values<PhoneItem> = {}
     let ready = false
     this.gate = null
-    const loose = this.mount.issue === 'loose'
-    if (e && (!this.mount.issue || loose)) {
+    if (e && !this.mount.issue) {
       // 走り始め（HIP_REF の区間）の自分を基準にする
       const sec: RefSec = { cadence: e.cadence, bounceCm: e.bounceCm, brakingMs: e.brakingMs, duty: dutyOf(e), up: e.up, speed: v }
       if (t >= HIP_REF.from && t <= HIP_REF.to) this.refs.push(sec)
@@ -243,26 +241,24 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
       this.gate = gate
       if (ref && !gate) {
         values.cadence = ((ref.cadence - e.cadence) / ref.cadence) * 100
-        if (!loose) {
-          // ピッチが声の線より下がっている秒は、上下動・接地は判定しない。ピッチが落ちると上下動が増え（Heiderscheit 2011）、
-          // 接地も1歩の時間とともに変わるので、同じ崩れをピッチの声と二重に言わないため（ピッチの声を先にする）。
-          // なお Heiderscheit 2011 では、同じ速さでピッチを下げると接地の割合はむしろ少し減った（−10% で 35.4→34.2%）
-          // スマホの上向きが基準の区間から PHONE.upShiftDeg より傾いた秒も判定しない（ベルトの中でスマホが動くと、
-          // 上下動の値が変わる。付け方の確認の「ずれた」の線より小さな動きでも）
-          this.upShift = angleDeg(e.up, ref.up)
-          if (values.cadence <= PHONE_LIMITS.cadence.cue && this.upShift <= PHONE.upShiftDeg && ref.bounceCm > 0 && ref.duty > 0) {
-            this.form.push({ t, bounce: ((e.bounceCm - ref.bounceCm) / ref.bounceCm) * 100, contact: ((dutyOf(e) - ref.duty) / ref.duty) * 100 })
-          } else this.form = []
-          // 直近 PHONE.formHold 秒が続けて判定できたときだけ、その間でいちばん小さい値を渡す（その秒数ずっと線を越えていたときだけ、線を越える）。
-          // 止まる・走り出すときは、窓の中に止まりかけの歩が入って、接地の割合が一瞬大きく跳ねるため（模擬データで +70%、約3秒）
-          while (this.form.length && this.form[0].t <= t - PHONE.formHold) this.form.shift()
-          const f = this.form
-          if (f.length >= PHONE.formHold && f.every((x, i) => i === 0 || x.t - f[i - 1].t <= 1)) {
-            values.bounce = Math.min(...f.map((x) => x.bounce))
-            values.contact = Math.min(...f.map((x) => x.contact))
-          }
-          values.braking = e.brakingMs - ref.brakingMs
+        // ピッチが声の線より下がっている秒は、上下動・接地は判定しない。ピッチが落ちると上下動が増え（Heiderscheit 2011）、
+        // 接地も1歩の時間とともに変わるので、同じ崩れをピッチの声と二重に言わないため（ピッチの声を先にする）。
+        // なお Heiderscheit 2011 では、同じ速さでピッチを下げると接地の割合はむしろ少し減った（−10% で 35.4→34.2%）
+        // スマホの上向きが基準の区間から PHONE.upShiftDeg より傾いた秒も判定しない（ベルトの中でスマホが動くと、
+        // 上下動の値が変わる。付け方の確認の「ずれた」の線より小さな動きでも）
+        this.upShift = angleDeg(e.up, ref.up)
+        if (values.cadence <= PHONE_LIMITS.cadence.cue && this.upShift <= PHONE.upShiftDeg && ref.bounceCm > 0 && ref.duty > 0) {
+          this.form.push({ t, bounce: ((e.bounceCm - ref.bounceCm) / ref.bounceCm) * 100, contact: ((dutyOf(e) - ref.duty) / ref.duty) * 100 })
+        } else this.form = []
+        // 直近 PHONE.formHold 秒が続けて判定できたときだけ、その間でいちばん小さい値を渡す（その秒数ずっと線を越えていたときだけ、線を越える）。
+        // 止まる・走り出すときは、窓の中に止まりかけの歩が入って、接地の割合が一瞬大きく跳ねるため（模擬データで +70%、約3秒）
+        while (this.form.length && this.form[0].t <= t - PHONE.formHold) this.form.shift()
+        const f = this.form
+        if (f.length >= PHONE.formHold && f.every((x, i) => i === 0 || x.t - f[i - 1].t <= 1)) {
+          values.bounce = Math.min(...f.map((x) => x.bounce))
+          values.contact = Math.min(...f.map((x) => x.contact))
         }
+        values.braking = e.brakingMs - ref.brakingMs
       }
     }
     const sample: PhoneSample = {

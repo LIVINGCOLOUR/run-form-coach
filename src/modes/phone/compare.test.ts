@@ -190,8 +190,8 @@ describe('スマホ版とカメラ版を比べる道具', () => {
     const got = Object.fromEntries(c.summary.map((s) => [s.seg.step!.key, s.mount.replay]))
     expect(got).toEqual({ normal1: null, slow: null, normal2: null, bouncy: null, normal3: null, loose: 'loose', arm: 'notWaist', pocket: 'notWaist', normal4: null })
     expect(c.gates.mount.ok).toBe(true)
-    // 走りの中では、最初に見つけた区間（ゆるい）でだけ鳴る
-    expect(c.summary.find((s) => s.mount.live)?.seg.step?.key).toBe('loose')
+    // 走りの中では、ゆるいは記録だけで鳴らず、最初に見つけた腰以外（腕）でだけ鳴る
+    expect(c.summary.find((s) => s.mount.live)?.seg.step?.key).toBe('arm')
   })
 
   it('表・図・CSV を出す', () => {

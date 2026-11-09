@@ -5,7 +5,9 @@ import { refineFreq, resample, stepPeriod, type PhoneMeasure, type Vec3 } from '
 //   notWaist（腰以外：腕・手・ポケット）：腕や脚は2歩で1回、肩や股関節を支点に前後に振れるので、水平な軸まわりの
 //     回転（ジャイロ）が大きい。腰の回転は、ねじれ（上下の軸まわり）が主で、水平な軸まわりは左右の傾きの分だけ。
 //     手に持つと、振りの遠心力で平均の加速度が g よりはっきり大きくなる（ジャイロが無くても分かる）
-//   loose（ゆるい）：着地のたびにスマホが体に対して揺れ、歩くリズムより速い細かい回転が出る
+//   loose（ゆるい）：着地のたびにスマホが体に対して揺れ、歩くリズムより速い細かい回転が出る。
+//     **記録だけ。** 声にせず、判定も止めない（実機ではしっかり付けても線を越えた。params.ts の MOUNT.looseGyroHf）。
+//     ゆるいと見えた秒も、腰以外・ずれたの見分けでは「ふつう」として数える
 //   shifted（途中でずれた）：走り始めに決めた、スマホの座標で見た上向きから、大きく傾いた
 // 模擬データで試して使わなかったもの：加速度の「2歩で1回の波」の強さ（腕では、振りの加速度と重力の傾きが打ち消し
 //   合って小さく出て、左右の揺れが大きい腰と分けられなかった）、2歩ずらした自己相関（ゆるくても下がらなかった。
@@ -13,6 +15,8 @@ import { refineFreq, resample, stepPeriod, type PhoneMeasure, type Vec3 } from '
 // 線はどれも模擬データ（simulate.ts）だけで決めた仮の値。研究の根拠はない（params.ts の MOUNT）
 
 export type MountIssue = 'notWaist' | 'loose' | 'shifted'
+// 判定を止める付け方の問題（ゆるいは記録だけなので入らない）
+export type StopIssue = Exclude<MountIssue, 'loose'>
 
 export interface MountFeatures {
   stepHz: number // 1歩の周波数
@@ -80,7 +84,9 @@ function strideRegularity(acc: Vec3[], g: Vec3, lag0: number): number {
   return best
 }
 
-// 1つの窓の見立て。ジャイロが取れないときは、手に持ったときの遠心力だけを見る（ゆるみ・腕・ポケットは見分けない）
+// 1つの窓の見立て。ジャイロが取れないときは、手に持ったときの遠心力だけを見る（ゆるみ・腕・ポケットは見分けない）。
+// ゆるいを腰以外（水平な軸まわりの回転）より先に見る：ゆるいとスマホの揺れで水平な軸まわりの回転も大きくなり
+// （模擬データのゆるいで 1.5 を越えた）、腰以外と言うと判定を止めて声もかけるため。ゆるいの見立ては記録だけ
 export function mountVerdict(x: MountFeatures): 'ok' | 'notWaist' | 'loose' {
   if (x.gravity >= MOUNT.handGravity) return 'notWaist'
   if (x.gyroHf === undefined || x.gyroSwing === undefined) return 'ok'
@@ -104,16 +110,22 @@ export const angleDeg = (a: Vec3, b: Vec3) => (Math.acos(Math.max(-1, Math.min(1
 //   走り出して MOUNT.startFrom 秒までは見ない（走り出しは揺れが落ち着かない）
 //   直近 MOUNT.window 回の見立てのうち MOUNT.share 以上が同じ問題なら、その問題とする（1回の見立てでは決めない）
 //   ずれは、走り始め（MOUNT.startFrom〜MOUNT.refUntil 秒）の上向きの平均から MOUNT.shiftDeg 以上傾いた見立てで数える
+//   ゆるいは記録だけ：同じ決め方で決まったら1回だけ 'loose' を返して loose・looseAt に残すが、issue には入れず、
+//   腰以外・ずれたは見続ける（ゆるいの見立ての秒は、ここでは「ふつう」として数える）
 export class MountCheck {
-  issue: MountIssue | null = null // 見つけた問題（1つだけ。見つけたら、その走りではもう見ない）
+  issue: StopIssue | null = null // 判定を止める問題（1つだけ。見つけたら、その走りではもう見ない）
   issueAt: number | null = null
-  private recent: (MountIssue | 'ok')[] = []
+  loose = false // ゆるいと決まった（記録だけ。声にせず、判定も止めない）
+  looseAt: number | null = null
+  private recent: (StopIssue | 'ok')[] = []
+  private recentLoose: boolean[] = []
   private upSum: Vec3 = [0, 0, 0]
   private ref: Vec3 | null = null
 
   check(t: number, x: MountFeatures | null): MountIssue | null {
     if (this.issue || !x || t < MOUNT.startFrom) return null
-    let v: MountIssue | 'ok' = mountVerdict(x)
+    const verdict = mountVerdict(x)
+    let v: StopIssue | 'ok' = verdict === 'loose' ? 'ok' : verdict
     if (t <= MOUNT.refUntil) {
       if (v === 'ok') this.upSum = [this.upSum[0] + x.up[0], this.upSum[1] + x.up[1], this.upSum[2] + x.up[2]]
     } else if (!this.ref && norm(this.upSum) > 0) {
@@ -121,14 +133,21 @@ export class MountCheck {
     }
     if (v === 'ok' && this.ref && angleDeg(this.ref, x.up) >= MOUNT.shiftDeg) v = 'shifted'
     this.recent.push(v)
+    this.recentLoose.push(verdict === 'loose')
     if (this.recent.length > MOUNT.window) this.recent.shift()
+    if (this.recentLoose.length > MOUNT.window) this.recentLoose.shift()
     if (this.recent.length < MOUNT.window) return null
-    for (const k of ['notWaist', 'loose', 'shifted'] as const) {
+    for (const k of ['notWaist', 'shifted'] as const) {
       if (this.recent.filter((r) => r === k).length >= MOUNT.share * MOUNT.window) {
         this.issue = k
         this.issueAt = t
         return k
       }
+    }
+    if (!this.loose && this.recentLoose.filter(Boolean).length >= MOUNT.share * MOUNT.window) {
+      this.loose = true
+      this.looseAt = t
+      return 'loose'
     }
     return null
   }

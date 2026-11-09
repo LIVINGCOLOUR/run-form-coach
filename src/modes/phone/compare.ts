@@ -710,7 +710,7 @@ export function report(c: Comparison): string {
     const st = (x: [number, number] | null, d: number) => (x ? `${x[0].toFixed(d)}・${x[1].toFixed(d)}` : '–')
     L.push(`| ${s.seg.name} | ${s.seg.step ? issueName(s.seg.step.expect) : '–'} | ${issueName(m.replay)}${m.at !== null ? `（${Math.round(m.at)}秒）` : ''} | ${m.live ? `${issueName(m.live)}（${Math.round(m.liveAt!)}秒）` : ''} | ${st(m.features.gyroHf, 2)} | ${st(m.features.gyroSwing, 2)} | ${st(m.features.gravity, 1)} | ${okMark(m.ok)} |`)
   }
-  L.push('', '走りの中では1回鳴ると止まるので、区間ごとに最初からやり直した結果で比べる。線は params.ts の MOUNT（細かい回転 ≥ 0.5 でゆるい、水平軸の回転 ≥ 1.5 で腰以外）')
+  L.push('', '走りの中では1回鳴ると止まるので、区間ごとに最初からやり直した結果で比べる。線は params.ts の MOUNT（水平軸の回転 ≥ 1.5 で腰以外、細かい回転 ≥ 0.5 でゆるい。ゆるいは記録だけで、走りの中では声にも判定にも使わない）')
   return L.join('\n') + '\n'
 }
 

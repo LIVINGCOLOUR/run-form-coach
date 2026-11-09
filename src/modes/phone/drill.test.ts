@@ -162,9 +162,10 @@ describe.each([
     const tonesOn = log.events.filter((e) => e[1].startsWith('tone:on:'))
     expect(tonesOn.length).toBeGreaterThan(0)
     for (const [t] of tonesOn) expect(d.at(t).phase.kind).toBe('run')
-    // 付け方の区間で、付け方の確認の声がかかる
+    // 付け方の区間で、付け方の確認の声がかかる（ゆるいは記録だけで声にしないので、手・ポケットで）
     const loose = d.phases.find((p) => p.mark === 'loose')!
-    const mount = said.find((s) => s.text === PHRASES.phoneMount || s.text === PHRASES.phoneLoose || s.text === PHRASES.phonePlace)
+    expect(said.some((s) => s.text === PHRASES.phoneLoose)).toBe(false)
+    const mount = said.find((s) => s.text === PHRASES.phoneMount || s.text === PHRASES.phonePlace)
     expect(mount).toBeDefined()
     expect(mount!.t - base).toBeGreaterThanOrEqual(loose.start)
   })

@@ -1,7 +1,7 @@
 import type { CoachState } from '../../core/engine'
 import type { PhoneSample } from './analyzer'
 import type { Estimate, PhoneMeasure } from './signal'
-import type { MountFeatures } from './mount'
+import { mountVerdict, type MountFeatures } from './mount'
 import type { FatigueResult } from './fatigue'
 import { SPEED_GATES, type FixOut, type GpsFix } from './speed'
 
@@ -17,7 +17,7 @@ export const PHONE_RAW_COLUMNS = ['t', 'wallMs', 'ax', 'ay', 'az', 'gx', 'gy', '
 export const PHONE_SECOND_COLUMNS = [
   't', 'wallMs', 'sec', 'cadence', 'bounceCm', 'brakingMs', 'regularity', 'accRms', 'score', 'quiet', 'mount',
   'vCadence', 'vBounce', 'vBraking', 'stepHz', 'gravity', 'gyroSwing', 'gyroHf', 'upX', 'upY', 'upZ', 'speed', 'gate',
-  'brakingFixed', 'gyroLevel', 'apRegularity', 'ratioV', 'ratioAP', 'ratioML', 'contactMs', 'vContact', 'contactMs5',
+  'brakingFixed', 'gyroLevel', 'apRegularity', 'ratioV', 'ratioAP', 'ratioML', 'contactMs', 'vContact', 'contactMs5', 'loose',
 ] as const
 // 位置が届くたびの1行（外だけ）。位置そのもの（緯度・経度）は残さない（家の場所が分かるため）。速さは前の点からの距離で出し直せる
 export const PHONE_GPS_COLUMNS = ['t', 'wallMs', 'accuracy', 'speedDevice', 'stepM', 'raw', 'speed', 'used', 'altitude', 'altitudeAccuracy'] as const
@@ -64,13 +64,14 @@ const UNITS = {
   contactMs5: 'ms。contactMs と同じものを、研究と同じく上下の加速度を 5Hz でならしてから数えた値（記録だけ。2026-11-07 より前の記録にはない）',
   fatigue: '疲れの見分けの結果（fatigue.ts）：基準の区間、1分ごとの「いつもと違う度合い」と上下動・ブレーキ・有効接地時間の変化、崩れ始め（秒）',
   'vCadence,vBounce,vBraking,vContact': '線と比べた値（走り始めからのピッチの下がり %・上下動の増え %・ブレーキの増え m/s・接地の割合〔有効接地時間 ÷ 1歩の時間〕の増え %）。判定しない秒は null。2026-11-07 より前の記録の vBounce は cm',
-  mount: `付け方の問題（${PHONE_MOUNTS.map((s, i) => `${i}=${s ?? 'なし'}`).join('、')}）`,
+  mount: `判定を止めた付け方の問題（${PHONE_MOUNTS.map((s, i) => `${i}=${s ?? 'なし'}`).join('、')}）。2026-11-09 からは loose は付かない（ゆるいは記録だけ。loose の列と mount:loose の出来事）`,
+  loose: 'その秒の付け方の見立てが「ゆるい」（細かい回転 gyroHf が MOUNT.looseGyroHf 以上で、腰以外ではない）なら 1。記録だけで、声にも判定にも使わない。2026-11-09 より前の記録にはない',
   'stepHz,gravity,gyroSwing,gyroHf,upX,upY,upZ': '付け方の確認の手がかり（mount.ts の MountFeatures）',
   speed: 'm/s。GPS のならした速さ（外だけ。取れない秒・トレッドミルは null）',
   gate: `速さで判定を止めた理由（${SPEED_GATES.map((s, i) => `${i}=${s ?? '止めていない'}`).join('、')}。noGps=GPS が取れない、noBase=基準の速さを作れなかった、slow・fast=基準の速さから外れた）。トレッドミルは null`,
   'gps:accuracy,speedDevice,stepM,raw,speed,used,altitude,altitudeAccuracy':
     '位置が届くたび（外だけ）：横の誤差 m・端末が出した速さ m/s・前に使った点からの距離 m・ならす前の速さ m/s・ならした速さ m/s・速さに使ったか（1/0）・高さ m・高さの誤差 m',
-  events: '話した言葉、state:状態（しくみの状態の切り替え）、tone:on:項目:テンポ（歩/分）・tone:off:項目（メトロノームを鳴らす・止める）、ref:later:ピッチ（基準を5〜12分の平均に置き換えた）、ref:speed:速さ（基準の速さ m/s。作れなければ none）、gate:on:理由・gate:off（速さで判定を止めた・戻した）、kind:practice:何回目:自分のピッチ・kind:test（ピッチを上げる練習・フォームのテストの走り）。練習のメトロノームは tone:on:practice:テンポ。崩しの撮影（drill.ts）は kind:drill:full|short:extra|base|upper（upper は上半身だけ）と、区間の印 protocol:区間:start・protocol:区間:end（jump1・still・jump2 は走る前・あとのジャンプと立つ間）・protocol:stopped（途中でやめた）・protocol:done',
+  events: '話した言葉、state:状態（しくみの状態の切り替え）、tone:on:項目:テンポ（歩/分）・tone:off:項目（メトロノームを鳴らす・止める）、ref:later:ピッチ（基準を5〜12分の平均に置き換えた）、mount:loose（付け方がゆるいと見えた。記録だけで声にしない）、ref:speed:速さ（基準の速さ m/s。作れなければ none）、gate:on:理由・gate:off（速さで判定を止めた・戻した）、kind:practice:何回目:自分のピッチ・kind:test（ピッチを上げる練習・フォームのテストの走り）。練習のメトロノームは tone:on:practice:テンポ。崩しの撮影（drill.ts）は kind:drill:full|short:extra|base|upper（upper は上半身だけ）と、区間の印 protocol:区間:start・protocol:区間:end（jump1・still・jump2 は走る前・あとのジャンプと立つ間）・protocol:stopped（途中でやめた）・protocol:done',
 }
 
 const r = (x: number, k: number) => Math.round(x * k) / k
@@ -124,6 +125,7 @@ export class PhoneLogRecorder {
       n(s.speed, 100), s.gate === undefined ? null : SPEED_GATES.indexOf(s.gate),
       n(est?.brakingFixed, 1000), est ? (est.gyroLevel ? 1 : 0) : null, n(est?.apRegularity, 1000),
       n(est?.ratioV, 1000), n(est?.ratioAP, 1000), n(est?.ratioML, 1000), n(est?.contactMs, 1), n(s.values.contact, 100), n(est?.contactMs5, 1),
+      x ? (mountVerdict(x) === 'loose' ? 1 : 0) : null,
     ])
   }
 

@@ -223,6 +223,20 @@ describe('スマホ：上下動・接地（測って記録するだけ。声に�
     expect(low.every((s) => s.values.bounce === undefined && s.values.contact === undefined)).toBe(true)
   }, 30000)
 
+  it('付け方がゆるいと見えても声はかけず、記録（出来事 mount:loose・1秒ごとの loose の列・結果の looseAt）にだけ残す', () => {
+    const data = simulateRun({ ...real, cadence: 172, bounceCm: 8, brakingMs: 0.3, seconds: 120, seed: 31, mount: { kind: 'loose', tiltDeg: 6, accMs: 2 } })
+    const { run, said } = feedAll(data)
+    expect(texts(said)).not.toContain(PHONE_CUE.loose)
+    expect(run.analyzer.mount.issue).toBeNull()
+    const { session, log } = run.finish()
+    expect(session!.mount).toBeNull()
+    expect(session!.looseAt).toBeLessThanOrEqual(25)
+    expect(log.events.filter(([, e]) => e === 'mount:loose').length).toBe(1)
+    const i = PHONE_SECOND_COLUMNS.indexOf('loose')
+    expect(log.seconds.filter((r) => r[i] === 1).length).toBeGreaterThan(50)
+    expect(log.seconds.every((r) => r[PHONE_SECOND_COLUMNS.indexOf('mount')] === 0)).toBe(true)
+  }, 30000)
+
   it('スマホがベルトの中で少し傾いた（付け方の確認が鳴らない 10°）あとは、上下動・接地を判定しない（ピッチは判定する）', () => {
     const data = simulateRun({ ...real, cadence: 172, bounceCm: 8, brakingMs: 0.3, seconds: 330, seed: 23, mount: { kind: 'shift', at: 240, rotate: [10, 0, 0] } })
     const { run, said } = feedAll(data)

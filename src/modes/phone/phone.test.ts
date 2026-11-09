@@ -254,23 +254,35 @@ describe('スマホ：付け方の確認', () => {
       expect(coach.cues.some((c) => c.item === 'place')).toBe(true)
     }, 30000)
 
-  it('ゆるい：1回だけ知らせ、記録に印を付けるが、基準は作り続けてピッチだけ判定する（上下動・接地・ブレーキは判定しない）', () => {
+  it('ゆるい：記録だけ。声をかけず、判定も止めない（ピッチ・上下動・接地・ブレーキを判定し続ける）', () => {
     const analyzer = new PhoneAnalyzer()
     const mount: MountSim = { kind: 'loose', tiltDeg: 6, accMs: 2 }
-    // 基準ができた後に、ピッチを落とす。ゆるくても、ピッチの声はかける
+    // 基準ができた後に、ピッチを落とす。ゆるいと見えても、ふつうの走りと同じく判定する
     const { coach, said } = drive(analyzer, run([{ seconds: 210, cadence: 172, mount }, { seconds: 50, cadence: 158, mount }], [90, 0, 0]))
-    expect(analyzer.mount.issue).toBe('loose')
-    expect(analyzer.mount.issueAt!).toBeLessThanOrEqual(25)
-    expect(said.filter((s) => MOUNT_SAID.includes(s.text)).map((s) => s.text)).toEqual([PHRASES.phoneLoose])
-    expect(coach.cues.filter((c) => c.item === 'loose').length).toBe(1)
+    expect(analyzer.mount.loose).toBe(true)
+    expect(analyzer.mount.looseAt!).toBeLessThanOrEqual(25)
+    expect(analyzer.mount.issue).toBeNull()
+    expect(said.filter((s) => MOUNT_SAID.includes(s.text))).toEqual([])
+    expect(coach.cues.some((c) => c.item === 'loose')).toBe(false)
     expect(analyzer.ref!.cadence).toBeCloseTo(172, 0)
     const cad = said.filter((s) => s.text === PHONE_CUE.cadence)
     expect(cad.length).toBe(1)
     expect(cad[0].t).toBeGreaterThan(210) // 落ちる前には声をかけない
-    expect(said.some((s) => [PHONE_CUE.braking, PHONE_CUE.bounce, PHONE_CUE.contact].includes(s.text))).toBe(false)
     const judged = coach.samples.filter((s) => s.t > HIP_REF.to)
     expect(judged.length).toBeGreaterThan(50)
-    expect(judged.every((s) => s.mount === 'loose' && s.score !== null && s.values.cadence !== undefined && s.values.bounce === undefined && s.values.contact === undefined && s.values.braking === undefined)).toBe(true)
+    expect(judged.every((s) => s.mount === null && s.score !== null && s.values.cadence !== undefined && s.values.braking !== undefined)).toBe(true)
+    expect(judged.some((s) => s.values.bounce !== undefined && s.values.contact !== undefined)).toBe(true)
+  }, 30000)
+
+  it('ゆるいと見えたあとも、途中でずれたのは見続けて知らせる', () => {
+    const analyzer = new PhoneAnalyzer()
+    const loose: MountSim = { kind: 'loose', tiltDeg: 6, accMs: 2 }
+    // 100 秒で付け直したが、105 秒にスマホが 40° 回った（ベルトの中でずれた）
+    const { said } = drive(analyzer, run([{ seconds: 100, cadence: 172, mount: loose }, { seconds: 60, cadence: 172, mount: { kind: 'shift', at: 5, rotate: [0, 40, 0] } }], [30, -50, 120]))
+    expect(analyzer.mount.loose).toBe(true)
+    expect(analyzer.mount.issue).toBe('shifted')
+    expect(analyzer.mount.issueAt!).toBeGreaterThan(100)
+    expect(said.filter((s) => MOUNT_SAID.includes(s.text)).map((s) => s.text)).toEqual([PHRASES.phoneMount])
   }, 30000)
 
   it('途中でずれたら、ずれたあとに1回だけ知らせる。小さな傾き（20°）では鳴らない', () => {
