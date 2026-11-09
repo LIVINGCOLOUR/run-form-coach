@@ -69,6 +69,7 @@ const SHORT: Record<string, string> = {
   [PHRASES.guideHidden]: '体の一部が見えていません',
   [PHRASES.guideNear]: '体が小さすぎます（スマホを近づける）',
   [PHRASES.guideTiltDown]: 'スマホが下を向いています',
+  [PHRASES.guideTiltUp]: 'スマホが上を向いています',
   [PHRASES.guideHigh]: 'スマホが高すぎます（腰の高さへ）',
   [PHRASES.guideLow]: 'スマホが低すぎます（腰の高さへ）',
   [PHRASES.guideSide]: '体の横をスマホに向けてください',
@@ -311,6 +312,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       // スマホが下を向いている・高すぎる・体の後ろ側から撮っている：着地の角度などが大きくずれるので直してもらう
       const pitch = !file && gravityAvailable() ? gravityPitch() : 0
       if (pitch > SETUP.pitchDownMax) return PHRASES.guideTiltDown
+      // 上向きも同じ角度で言う（上向きのときは高さの確かめもしないため、言わないと見上げたまま進んでしまう。角度は下向きと同じにした仮の値）
+      if (pitch < -SETUP.pitchDownMax) return PHRASES.guideTiltUp
       const hipY = (frame[L.leftHip].y + frame[L.rightHip].y) / 2 / h
       if (Math.abs(pitch) <= SETUP.pitchDownMax && hipY > SETUP.hipLowMax) return PHRASES.guideHigh
       if (Math.abs(pitch) <= SETUP.pitchDownMax && hipY < SETUP.hipHighMin) return PHRASES.guideLow

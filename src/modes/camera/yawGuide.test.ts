@@ -31,8 +31,8 @@ describe('真横からのずれの案内', () => {
     expect(yawHint(yawOffDeg(at(-20)), false)).toEqual({ side: 'behind', level: 'far' })
     expect(yawHint(yawOffDeg(at(3)), false)).toBeNull()
     expect(yawHint(yawOffDeg(at(6)), true)).toBeNull()
-    expect(YAW_PHRASE.front.mid).toContain('後ろのほう')
-    expect(YAW_PHRASE.behind.mid).toContain('前のほう')
+    expect(YAW_PHRASE.front.mid).toContain('後ろに')
+    expect(YAW_PHRASE.behind.mid).toContain('前に')
   })
 
   it('同じ向きの案内は、大きさが変わっても同じ案内として扱う', () => {
