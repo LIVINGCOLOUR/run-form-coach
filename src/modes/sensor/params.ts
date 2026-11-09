@@ -8,9 +8,8 @@ import { CUE } from '../../core/params'
 // （hardware/sensor の viewer/viewer.html の SLOTS、tools/coach.py の SLOTS も同じ並び。ただし下の足首の入れ替え中は、viewer・coach.py は元の並びのまま）。5番はモーターが回らず外した。手首は1個だけで、カメラから見える左手首に付ける（右手首は空き）
 export const SLOTS: readonly { place: string; name: string | null }[] = [
   { place: '頭', name: 'RFC-IMU-1' },
-  // 2026-11-06〜：2番は線が切れて（センサーのチップが見つからず赤く点滅）外した。直るまで、左手首の4番を胸に付ける（左手首は空き）
-  { place: '胸', name: 'RFC-IMU-4' },
-  { place: '左手首', name: null },
+  { place: '胸', name: 'RFC-IMU-2' },
+  { place: '左手首', name: 'RFC-IMU-4' },
   { place: '右手首', name: null },
   // 2026-11-05〜：左右の接地時間の差が体か付け方かを見るため、足首の3番と6番を入れ替えて走る（確かめたら戻す。viewer・coach.py は元のまま）
   { place: '左足首', name: 'RFC-IMU-6' },
