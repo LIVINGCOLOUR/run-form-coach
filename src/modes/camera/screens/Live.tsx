@@ -72,11 +72,11 @@ const SHORT: Record<string, string> = {
   [PHRASES.guideHigh]: 'スマホが高すぎます（腰の高さへ）',
   [PHRASES.guideLow]: 'スマホが低すぎます（腰の高さへ）',
   [PHRASES.guideSide]: '体の横をスマホに向けてください',
-  [PHRASES.guideFrontFar]: '前側から撮っています（スマホを後ろへ大きく）',
-  [PHRASES.guideFront]: '少し前側から撮っています（スマホを後ろへ少し）',
+  [PHRASES.guideFrontFar]: 'スマホが真横より前（後ろへ大きく動かす）',
+  [PHRASES.guideFront]: 'スマホが真横より少し前（後ろへ少し動かす）',
   [PHRASES.guideFrontNear]: 'あと少し（スマホを後ろへほんの少し）',
-  [PHRASES.guideBehindFar]: '後ろ側から撮っています（スマホを前へ大きく）',
-  [PHRASES.guideBehind]: '少し後ろ側から撮っています（スマホを前へ少し）',
+  [PHRASES.guideBehindFar]: 'スマホが真横より後ろ（前へ大きく動かす）',
+  [PHRASES.guideBehind]: 'スマホが真横より少し後ろ（前へ少し動かす）',
   [PHRASES.guideBehindNear]: 'あと少し（スマホを前へほんの少し）',
 }
 
@@ -998,7 +998,7 @@ function YawMeter({ deg, ok }: { deg: number; ok: boolean }) {
   const pos = (d: number) => 50 + (Math.max(-YAW_SPAN, Math.min(YAW_SPAN, d)) / YAW_SPAN) * 50
   const color = ok ? 'var(--accent)' : 'var(--warn)'
   const a = Math.abs(deg)
-  const text = ok ? '真横です' : `${deg > 0 ? '前側' : '後ろ側'}から約${a}°${deg > 0 ? '（スマホを後ろへ）' : '（スマホを前へ）'}`
+  const text = ok ? '真横です' : `スマホが真横より約${a}°${deg > 0 ? '前（後ろへ動かす）' : '後ろ（前へ動かす）'}`
   return (
     <div aria-label={`真横からのずれ：${text}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ color, fontWeight: 700, fontSize: 13 }}>
@@ -1010,9 +1010,9 @@ function YawMeter({ deg, ok }: { deg: number; ok: boolean }) {
         <div style={{ position: 'absolute', top: 1, width: 10, height: 10, marginLeft: -5, borderRadius: 5, left: `${pos(deg)}%`, background: color, transition: 'left 0.25s' }} />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }} className="muted">
-        <span>後ろ側から</span>
+        <span>スマホが後ろ</span>
         <span>真横</span>
-        <span>前側から</span>
+        <span>スマホが前</span>
       </div>
     </div>
   )
