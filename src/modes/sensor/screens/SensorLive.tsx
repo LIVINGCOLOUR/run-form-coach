@@ -10,7 +10,9 @@ import { SensorRunner, type SensorRunPhase } from '../runner'
 import { SensorRunLog } from '../runLog'
 import { SENSOR_RUN_NAME } from '../name'
 import { parseKmh } from '../../camera/belt'
-import { SPEED_FIT } from '../params'
+import { CHEST, HEAD_PLACE, SPEED_FIT } from '../params'
+import { loadMount } from '../mount'
+import { MountBadge } from '../MountPicker'
 import { fitSpeedA, saveSpeedFit } from '../speedFit'
 
 // センサーラン：カメラなし・腰にスマホなしで、体に付けたセンサーだけで走る（スマホは腰のポーチ。画面は見ない）。
@@ -52,6 +54,8 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
   const beltInvalid = beltText.trim() !== '' && beltRef.current === undefined
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
+  // 頭と胸を付けた場所（ホームで選んだもの）。2つの立ち方の案内の端に出して、毎回同じ場所に付けてもらう
+  const [mount] = useState(loadMount)
 
   useEffect(() => {
     let finished = false
@@ -133,6 +137,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       <div style={{ fontSize: 13 }} className="muted">{SENSOR_RUN_NAME}（走っていた時間）</div>
 
       <div style={{ fontSize: 22, fontWeight: 900, lineHeight: 1.5 }}>{p.text}</div>
+      {phase === 'stand' && <MountBadge mount={mount} head={on.some((n) => n.place === HEAD_PLACE)} chest={on.some((n) => n.place === CHEST)} />}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 15, fontWeight: 700 }}>

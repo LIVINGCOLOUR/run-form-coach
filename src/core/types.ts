@@ -210,6 +210,10 @@ export interface SensorPoseLog {
 export interface SensorLog {
   version: 1
   nodes: { place: string; name: string; fw?: string; lost?: number; battery?: number }[] // lost：抜けた件数、battery：終わりの電圧（V）
+  // 頭と胸のセンサーを付けた場所（本人がホームで選ぶ。src/modes/sensor/params.ts の MOUNTS）。head：forehead（額）・back（頭の後ろ）、
+  // chest：upper（胸の上）・sternum（胸の真ん中）・pit（みぞおち）。set：本人が選んだか（false なら既定の forehead・sternum のまま）。
+  // つながっていない場所も、そのときの選びが入る。2026-11-09 より前の記録にはない（その記録は額と胸の真ん中で付けていた）
+  mount?: { head: string; chest: string; set: boolean }
   stride: number // 100Hz のうち、通し番号がこの数で割り切れる件だけ残した（strides があれば、そちらが場所ごとの値）
   // 場所ごと（nodes と同じ並び）の、100Hz のうち何件に1件を残したか。mean の場所は、通し番号が割り切れる件から次の件の前までの平均
   // （通し番号と時刻は、その先頭の件）。場所ごとに変える前の記録にはない（すべて stride）

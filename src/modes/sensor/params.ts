@@ -19,6 +19,28 @@ export const SLOTS: readonly { place: string; name: string | null }[] = [
 export const CHEST = '胸'
 export const HEAD_PLACE = '頭'
 
+// 頭と胸のセンサーを体のどこに付けたか（本人がホームの「センサー」の枠で選ぶ。mount.ts・MountPicker.tsx。2026-11-09 本人の決め）。
+//   毎回同じ場所に付けてもらうためと、記録（SensorLog の mount）に残して、あとで場所ごとに比べるため。手首・足首は選ばない。
+//   判定の数字（HUNCH・HEAD・POSE など）は、どの場所でも同じ。いまの数字は、額（ヘッドバンド）と胸の真ん中（心拍計の胸ベルト）で測った記録から決めた。
+//   ほかの場所で走った記録がそろったら、場所ごとに決め直す（それまでは、ほかの場所の値は確かめていない）。
+//   x・y：選ぶ画面の、横から見た人型の絵（右が前。幅 100・高さ 200）の上の点
+export const MOUNTS = {
+  head: [
+    { id: 'forehead', label: '額', note: 'ヘッドバンド', x: 61, y: 19 },
+    { id: 'back', label: '頭の後ろ', note: '帽子', x: 39, y: 18 },
+  ],
+  chest: [
+    { id: 'upper', label: '胸の上', note: '鎖骨の下', x: 60, y: 54 },
+    { id: 'sternum', label: '胸の真ん中', note: '胸骨', x: 61, y: 67 },
+    { id: 'pit', label: 'みぞおち', note: '', x: 60, y: 80 },
+  ],
+} as const
+export type HeadMount = (typeof MOUNTS.head)[number]['id']
+export type ChestMount = (typeof MOUNTS.chest)[number]['id']
+// 選んでいないときの場所（いまのやり方）と、端末（localStorage）に覚える鍵
+export const MOUNT_DEFAULT: { head: HeadMount; chest: ChestMount } = { head: 'forehead', chest: 'sternum' }
+export const MOUNT_KEY = 'rfc.sensorMount'
+
 // 前への傾きで崩れを見る（lean.ts の LeanDetector。胸＝猫背、頭＝頭が前に出る。2026-11-02 のトレッドミルで確かめた）
 //   まっすぐ立ったとき（カメラの直立の基準を取った3秒）のセンサーの重力の向きを覚え、そこからの前への傾きを見る。
 //   走り出して skip 秒たってから learn 秒の傾きの真ん中の値を「走る前傾」にする（走る前傾は人と速さで変わるので、線はそこから決める）。

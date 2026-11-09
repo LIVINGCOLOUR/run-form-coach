@@ -1,6 +1,7 @@
 import type { SensorLog } from '../../core/types'
 import { A_SCALES, G_SCALE, HEADER_LEN, type ImuSample, type Vec3 } from './parse'
 import { SENSOR_LOG } from './params'
+import { mountForLog } from './mount'
 
 // 走った記録（RunLog の sensors）に入れるセンサーの値。場所ごとに SENSOR_LOG.rates の every 件に1件（mean なら、その間の平均）を、
 // センサーごとに約1秒ずつ1つのかたまり（ブロック）にして base64 で残す。形は core/types.ts の SensorLog。
@@ -58,7 +59,8 @@ export class SensorRecorder {
     this.every = rate.map((r) => Math.max(1, Math.round(r.every)))
     this.mean = rate.map((r, i) => r.mean && this.every[i] > 1)
     // stride：前の読み手のための値（足首の間隔）。場所ごとの値は strides
-    this.log = { version: 1, nodes: nodes.map((n) => ({ ...n })), stride: opts.fallback.every, strides: [...this.every], mean: [...this.mean], blocks: [], cues: [] }
+    // mount：頭と胸を付けた場所（端末に覚えたもの。mount.ts）。カメラ版・腰スマホ・センサーランのどれの記録にも入る
+    this.log = { version: 1, nodes: nodes.map((n) => ({ ...n })), mount: mountForLog(), stride: opts.fallback.every, strides: [...this.every], mean: [...this.mean], blocks: [], cues: [] }
     this.open = nodes.map(() => null)
     this.acc = nodes.map(() => null)
   }

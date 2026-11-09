@@ -1,7 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { sensors, type NodeView } from './ble'
 import { batteryPercent } from './battery'
-import { ANKLES, BATTERY_LOW, HEAD, HUNCH } from './params'
+import { ANKLES, BATTERY_LOW, CHEST, HEAD, HEAD_PLACE, HUNCH } from './params'
+import { loadMount, markMountAsked, mountLabel, saveMount } from './mount'
+import { MountPicker } from './MountPicker'
 
 // 走る前に、自作のセンサーをつなぐ小さな枠（ホームの「はじめる」の下）。つながなくてもカメラ版はいつもどおり使える。
 // 胸のセンサーがつながっていれば、走っている間に猫背になったとき胸が、頭のセンサーなら頭が前に出たとき頭が震える（lean.ts）。
@@ -17,6 +19,17 @@ export function SensorPanel({ defaultOpen = false }: { defaultOpen?: boolean }) 
   const on = nodes.filter((n) => n.status === 'connected').length
   // 電池が少ない（BATTERY_LOW % 以下）センサー。閉じていても見えるように、ボタンにも出す
   const low = nodes.filter((n) => n.status === 'connected' && n.battery !== null && batteryPercent(n.battery) <= BATTERY_LOW)
+  // 頭と胸を付ける場所（mount.ts）。初めて頭か胸がつながったときだけ、選ぶ画面を自動で開く（つないでいる途中は待つ）。次からは「付ける場所」の行から開く
+  const [mount, setMount] = useState(loadMount)
+  const [picking, setPicking] = useState(false)
+  const leanOn = nodes.some((n) => n.status === 'connected' && (n.place === HEAD_PLACE || n.place === CHEST))
+  useEffect(() => {
+    if (!leanOn || mount.asked || bulk.busy) return
+    markMountAsked()
+    setMount((m) => ({ ...m, asked: true }))
+    setOpen(true)
+    setPicking(true)
+  }, [leanOn, mount.asked, bulk.busy])
 
   // 前に選んだことのあるセンサーに、選ぶ画面なしでつなぎにいく（getDevices があるブラウザだけ。なければ何もしない）
   useEffect(() => {
@@ -40,6 +53,15 @@ export function SensorPanel({ defaultOpen = false }: { defaultOpen?: boolean }) 
           閉じる
         </button>
       </div>
+      {picking && (
+        <MountPicker
+          initial={mount}
+          onDone={(m) => {
+            setMount(saveMount(m))
+            setPicking(false)
+          }}
+        />
+      )}
       {!sensors.supported ? (
         <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
           このブラウザはセンサーにつなげません（iPhone の Safari は Bluetooth に対応していません）。iPhone では Bluefy というブラウザでこのページを開くと、つなげます。センサーなしでも、トレッドミル（カメラ）と腰スマホはいつもどおり使えます。
@@ -69,6 +91,12 @@ export function SensorPanel({ defaultOpen = false }: { defaultOpen?: boolean }) 
           {nodes.map((n, i) => (
             <Row key={n.place} n={n} onConnect={() => void sensors.connect(i)} onTest={TEST_BUZZ.includes(n.place) ? () => void sensors.buzz(n.place, 1, 300) : undefined} />
           ))}
+          {!picking && (
+            // 付ける場所：めったに変えないので、小さな行だけ
+            <button onClick={() => setPicking(true)} style={{ ...link, fontSize: 11, textAlign: 'left' }}>
+              付ける場所：頭 {mountLabel('head', mount.head)}・胸 {mountLabel('chest', mount.chest)}（変える）
+            </button>
+          )}
           {bulk.diag.length > 0 && (
             // つないだときに起きたこと（Bluefy でどう動くかを確かめるため。走りの記録にも sensor:ble で入る）
             <div className="muted" style={{ fontSize: 10, lineHeight: 1.5, wordBreak: 'break-all' }}>
