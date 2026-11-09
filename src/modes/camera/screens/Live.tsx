@@ -28,6 +28,7 @@ import { sensors } from '../../sensor/ble'
 import { POSE, SPEED_FIT } from '../../sensor/params'
 import { fitSpeedA, saveSpeedFit } from '../../sensor/speedFit'
 import { loadBeltText, parseKmh, runSpeedOf, saveBeltText } from '../belt'
+import { YAW_PHRASE, yawHint, yawInside, yawOffDeg, yawSideOf } from '../yawGuide'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -47,6 +48,8 @@ interface Hud {
   framing: Framing // 体が画面にどう収まっているか（直近1秒でならしたもの。framing.ts）
   fps: number // 骨格を取ったコマの毎秒の数（直近 WAIT.window 秒）
   slow: boolean // 走り出すのを待つ間に、骨格のコマが少なくて走りを数えにくい（WAIT.slowFps）
+  yawDeg: number | null // 置く間の、真横からのずれの目安（度。前側が正。yawGuide.ts）。測れないときは null
+  yawOk: boolean // 真横の線の内側か（入るときと出るときで線が違う）
 }
 
 // 頭から足までが画面の高さの何割か。超広角で 1m 前後なら約6割、3m だと約2割
@@ -69,8 +72,12 @@ const SHORT: Record<string, string> = {
   [PHRASES.guideHigh]: 'スマホが高すぎます（腰の高さへ）',
   [PHRASES.guideLow]: 'スマホが低すぎます（腰の高さへ）',
   [PHRASES.guideSide]: '体の横をスマホに向けてください',
-  [PHRASES.guideBehind]: '少し後ろ側から撮っています',
-  [PHRASES.guideFront]: '少し前側から撮っています',
+  [PHRASES.guideFrontFar]: '前側から撮っています（スマホを後ろへ大きく）',
+  [PHRASES.guideFront]: '少し前側から撮っています（スマホを後ろへ少し）',
+  [PHRASES.guideFrontNear]: 'あと少し（スマホを後ろへほんの少し）',
+  [PHRASES.guideBehindFar]: '後ろ側から撮っています（スマホを前へ大きく）',
+  [PHRASES.guideBehind]: '少し後ろ側から撮っています（スマホを前へ少し）',
+  [PHRASES.guideBehindNear]: 'あと少し（スマホを前へほんの少し）',
 }
 
 // 体の映り方ごとの声（framing.ts）。置く間は、どう直すかまで言う。2つの立ち方・走り出しを待つ・走っている間は、
@@ -111,7 +118,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
   const mirror = !file && loadSettings().camera === 'front'
   // 検証用の「全コマ記録」（URL に ?full=1）。走っている間も間引かず毎コマ骨格を取る。動画で試すときはもともと毎コマ取る
   const full = !file && fullFrames()
-  const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true }, framing: 'none', fps: 0, slow: false })
+  const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true }, framing: 'none', fps: 0, slow: false, yawDeg: null, yawOk: false })
   // ベルトの速さ（時速 km。走る前に入れる。前回の値を覚えている。空欄なら使わない）。belt.ts
   const [beltText, setBeltText] = useState<string>(() => (file ? '' : loadBeltText()))
   const beltRef = useRef<number | undefined>(undefined)
@@ -164,6 +171,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let hintMsg = ''
     let hintSince = 0
     let yawHist: { t: number; v: number }[] = []
+    let yawIn = false // 真横の線の内側か（yawGuide.ts の yawInside。入る線と出る線が違う）
+    let yawDeg: number | null = null // 真横からのずれの目安（度、前側が正）。測れないときは null
+    let yawGuided = false // 真横の案内を言ったあと、まだ真横に入っていない（入ったら「真横になりました」と言う）
     let firstSaid = false
     let lastPresent = true
     let lastMoving = false
@@ -294,8 +304,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
 
     // 置き方の案内。背面カメラでは画面が見えないので、本人がどう動けばいいかで言う
     // 全身が入ってから見ること（暗さと、全身が入っているかは、呼ぶ前に見る）。
-    // yaw：スマホが体の前側から（正）か後ろ側から（負）撮っているか。1秒でならした値
-    const guide = (frame: Frame, w: number, h: number, sideDeg: number, yaw: number): string | null => {
+    // yawOff：真横からのずれの目安（度。前側が正。SETUP.yawSmooth 秒でならした値から。測れないときは null）
+    const guide = (frame: Frame, w: number, h: number, sideDeg: number, yawOff: number | null): string | null => {
       // 小さく映っていると膝や足首の点がぶれて、走り出しや角度が取れない。画面の高さの4割はほしい
       if (bodySpan(frame, h) < SPAN_MIN) return PHRASES.guideNear
       // スマホが下を向いている・高すぎる・体の後ろ側から撮っている：着地の角度などが大きくずれるので直してもらう
@@ -306,9 +316,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       if (Math.abs(pitch) <= SETUP.pitchDownMax && hipY < SETUP.hipHighMin) return PHRASES.guideLow
       // 体がスマホのほうを向いているときは、まず横を向いてもらう（前側・後ろ側の値は、横を向いていないと当てにならない）
       if (sideDeg > 20) return PHRASES.guideSide
-      // 真横から約8°以内に置いてもらう。頭の位置は、前側に15°ずれるだけで +11° ずれて測れる（params.ts の SETUP）
-      if (yaw < SETUP.behindMax) return PHRASES.guideBehind
-      if (yaw > SETUP.frontMax) return PHRASES.guideFront
+      // 真横から約5°以内に置いてもらう（一度入ったら8°まで）。頭の位置は、前側に15°ずれるだけで +11° ずれて測れる（params.ts の SETUP）。
+      // どちらへ・どれくらいずらすかまで言う（yawGuide.ts）
+      const yh = yawOff === null ? null : yawHint(yawOff, yawIn)
+      if (yh) return YAW_PHRASE[yh.side][yh.level]
       const xs = frame.filter((p) => p.v > 0.5).map((p) => p.x)
       const cx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)
       if (cx < w * 0.3 || cx > w * 0.7) {
@@ -503,12 +514,23 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         const full = placed && framer.okNow
         if (frame && visible) yawHist.push({ t, v: yawSign(frame) })
         yawHist = yawHist.filter((x) => t - x.t <= SETUP.yawSmooth)
-        const yaw = yawHist.length ? yawHist.reduce((a, x) => a + x.v, 0) / yawHist.length : 0
+        // 真横からのずれは、全身が入って体の横がスマホに向いているときだけ見る（正面を向いていると、前側・後ろ側の値は当てにならない）。
+        // 測れない間は内側の印を外す（また入るときは yawIn 度から）
+        const wasIn = yawIn
+        yawDeg = full && sideDeg <= 20 && yawHist.length ? yawOffDeg(yawHist.reduce((a, x) => a + x.v, 0) / yawHist.length) : null
+        yawIn = yawDeg !== null && yawInside(yawDeg, yawIn)
+        // 真横の案内のあとで真横に入ったら、そう言う（そのまま動かさないでほしいので）。全身が入ったと言うのと同じく、置き方がそろう前に言う
+        if (yawIn && !wasIn && yawGuided && setupAt !== null && t - setupAt >= SETUP.talkAfter) {
+          say(PHRASES.guideSideOk, t)
+          lastGuide = t
+          lastSaid = PHRASES.guideSideOk
+          yawGuided = false
+        }
         // 全身が入るまでは、何が足りないか（体が映っていない・頭・足・両方が切れている・体の一部が見えていない）を言い分ける。
         // 直近1秒でならした映り方が全身なら、確かめ終わるまで（FRAME_SAY.okHold 秒）黙って待つ
         const cut = shown.current()
         const checking = placed && lastLight && !full && cut === 'ok'
-        const hint = !placed ? null : !lastLight ? PHRASES.guideDark : full ? guide(frame!, w, h, sideDeg, yaw) : cut === 'ok' ? null : SETUP_PHRASE[cut]
+        const hint = !placed ? null : !lastLight ? PHRASES.guideDark : full ? guide(frame!, w, h, sideDeg, yawDeg) : cut === 'ok' ? null : SETUP_PHRASE[cut]
         // 真横に向ける・前後に寄る案内は、声で言うだけで進むのを止めない（真横は sideMax で見る）
         const blocking = hint !== null && hint !== PHRASES.guideSide && hint !== PHRASES.guideForward && hint !== PHRASES.guideBack
         const ready = full && lastLight && sideDeg <= SETUP.sideMax && !blocking
@@ -543,18 +565,19 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           }
           let msg = lastProblem ?? PHRASES.guideNone
           if (!placed || (!firstSaid && msg === PHRASES.guideNone)) msg = PHRASES.placeStart
-          if (msg !== hintMsg) {
-            hintMsg = msg
-            hintSince = t
-          }
-          // 同じ案内が1.2秒続いてから言う。変わったら言い直し、同じなら6秒ごとに繰り返す
+          // 真横の案内は、向きが同じなら「大きく／少し／あと少し」が変わっても同じ案内として扱う（線の際で言葉が替わるたびに言い直さない）
+          const side = yawSideOf(msg)
+          if (msg !== hintMsg && !(side && side === yawSideOf(hintMsg))) hintSince = t
+          hintMsg = msg
+          // 同じ案内が1.2秒続いてから言う。変わったら言い直し、同じなら6秒ごとに繰り返す（言うときは、いまの大きさの言葉で）
           // 「置いてください」のあとの「まだ体が映っていません」は、同じ案内として扱う。全身を確かめている間は言わない
-          const same = msg === lastSaid || (msg === PHRASES.guideNone && lastSaid === PHRASES.placeStart)
+          const same = msg === lastSaid || (msg === PHRASES.guideNone && lastSaid === PHRASES.placeStart) || (!!side && side === yawSideOf(lastSaid))
           if (talk && msg !== CHECKING && t - hintSince >= SETUP.hintStable && t - lastGuide > (same ? SETUP.hintRepeat : 1.5)) {
             say(msg, t)
             lastGuide = t
             lastSaid = msg
             firstSaid = true
+            if (side) yawGuided = true
             // 映り方の案内なら、映り方の見張りにも言ったと知らせる（次の場面で、また全身が入ったと言うため）
             const said = (Object.keys(SETUP_PHRASE) as Exclude<Framing, 'ok'>[]).find((k) => SETUP_PHRASE[k] === msg)
             if (said) framer.said(said, t)
@@ -742,6 +765,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           framing: shown.current(),
           fps: Math.round(waitWin.fps * 10) / 10,
           slow: phase === 'run' && coach?.state === 'waiting' && waitWin.fps < WAIT.slowFps,
+          yawDeg: phase === 'setup' && yawDeg !== null ? Math.round(yawDeg) : null,
+          yawOk: yawIn,
         }))
       }
     }
@@ -824,6 +849,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
               {status.text}
             </div>
           </div>
+          {hud.phase === 'setup' && hud.framing === 'ok' && hud.yawDeg !== null && <YawMeter deg={hud.yawDeg} ok={hud.yawOk} />}
           {hud.phase === 'setup' && !file && (
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
               <span style={{ flexGrow: 1 }}>ベルトの速さ</span>
@@ -963,6 +989,33 @@ function framePhaseOf(phase: Phase, state?: CoachState): FramePhase {
 // 全コマ記録のときの小さな印（画面が暗いときも見える色で）
 function FullBadge() {
   return <div style={{ padding: '2px 8px', borderRadius: 10, border: '1px solid #4A525B', fontSize: 11, color: '#8A939C' }}>全コマ記録</div>
+}
+
+// 置く間の、真横からのずれのメーター（yawGuide.ts）。真ん中が真横、右へ行くほど前側から、左へ行くほど後ろ側から撮っている。
+// 緑の帯が真横の線（SETUP.yawIn 度以内）。数字は目安（人により約3°ちがう。params.ts の SETUP）
+const YAW_SPAN = 20
+function YawMeter({ deg, ok }: { deg: number; ok: boolean }) {
+  const pos = (d: number) => 50 + (Math.max(-YAW_SPAN, Math.min(YAW_SPAN, d)) / YAW_SPAN) * 50
+  const color = ok ? 'var(--accent)' : 'var(--warn)'
+  const a = Math.abs(deg)
+  const text = ok ? '真横です' : `${deg > 0 ? '前側' : '後ろ側'}から約${a}°${deg > 0 ? '（スマホを後ろへ）' : '（スマホを前へ）'}`
+  return (
+    <div aria-label={`真横からのずれ：${text}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ color, fontWeight: 700, fontSize: 13 }}>
+        {text}
+      </div>
+      <div style={{ position: 'relative', height: 14, borderRadius: 7, background: 'rgba(255,255,255,0.08)', border: '1px solid var(--line)' }}>
+        <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${pos(-SETUP.yawIn)}%`, width: `${pos(SETUP.yawIn) - pos(-SETUP.yawIn)}%`, background: 'rgba(200,240,60,0.22)' }} />
+        <div style={{ position: 'absolute', top: -2, bottom: -2, left: '50%', width: 1, background: 'var(--accent)' }} />
+        <div style={{ position: 'absolute', top: 1, width: 10, height: 10, marginLeft: -5, borderRadius: 5, left: `${pos(deg)}%`, background: color, transition: 'left 0.25s' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }} className="muted">
+        <span>後ろ側から</span>
+        <span>真横</span>
+        <span>前側から</span>
+      </div>
+    </div>
+  )
 }
 
 function Chip({ ok, label }: { ok: boolean; label: string }) {
