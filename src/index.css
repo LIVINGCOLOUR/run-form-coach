@@ -265,6 +265,58 @@ a {
   }
 }
 
+/* カメラ版の置く間の、スマホを動かす向きの大きな矢印（Live.tsx の YawArrow）。映像の真ん中に重ね、押せない。
+   幅は映像の欄の約36%（縦置き・横置きとも）、高さは欄の半分まで。ゆっくり点滅（動きを減らす設定なら点滅しない） */
+.yaw-arrow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 36%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 2;
+  animation: yaw-blink 1.4s ease-in-out infinite;
+}
+.yaw-arrow svg {
+  width: 100%;
+  height: auto;
+  max-height: 30vh;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+}
+.yaw-arrow.done {
+  width: 22%;
+  max-width: 140px;
+  animation: none;
+}
+.yaw-arrow-label {
+  white-space: nowrap;
+  padding: 4px 12px;
+  border-radius: 16px;
+  background: rgba(10, 12, 14, 0.82);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 900;
+}
+@keyframes yaw-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yaw-arrow {
+    animation: none;
+  }
+}
+
 .pill {
   display: inline-flex;
   align-items: center;

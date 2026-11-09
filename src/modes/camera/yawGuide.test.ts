@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SETUP } from './params'
 import { PHRASES } from '../../core/phrases'
-import { YAW_PHRASE, yawHint, yawInside, yawOffDeg, yawSideOf } from './yawGuide'
+import { YAW_PHRASE, faceOf, yawArrowDir, yawHint, yawInside, yawOffDeg, yawSideOf } from './yawGuide'
 
 // 立った姿勢の仮想実験の値（sim/result-head-yaw.md）を、度に直して確かめる
 const at = (deg: number) => SETUP.yawCenter + deg * SETUP.yawPerDeg
@@ -46,5 +46,32 @@ describe('真横からのずれの案内', () => {
 
   it('結果の画面の「頭が大きく出ているかも」の線は、前の置き方の線（前側に約8°）のまま', () => {
     expect(Math.abs(SETUP.frontMax - at(SETUP.yawOut))).toBeLessThan(0.001)
+  })
+})
+
+describe('スマホを動かす向きの矢印', () => {
+  it('前すぎるなら顔の向きと反対、後ろすぎるなら顔の向きと同じ（画面の左右）', () => {
+    expect(yawArrowDir('front', 1)).toBe('left')
+    expect(yawArrowDir('front', -1)).toBe('right')
+    expect(yawArrowDir('behind', 1)).toBe('right')
+    expect(yawArrowDir('behind', -1)).toBe('left')
+  })
+
+  it('走る人の向きが分からなければ矢印を出さない', () => {
+    expect(yawArrowDir('front', null)).toBeNull()
+    expect(yawArrowDir('behind', null, true)).toBeNull()
+  })
+
+  it('前面カメラ（映像を鏡のように反転して見せる）では逆向き', () => {
+    expect(yawArrowDir('front', 1, true)).toBe('right')
+    expect(yawArrowDir('behind', 1, true)).toBe('left')
+  })
+
+  it('顔の向きは、直近のコマの8割以上がそろったときだけ決める', () => {
+    expect(faceOf([1, 1, 1, 1, -1])).toBe(1)
+    expect(faceOf([-1, -1, -1, -1, 1])).toBe(-1)
+    expect(faceOf([1, 1, 1, -1, -1])).toBeNull()
+    expect(faceOf([1, 1])).toBeNull()
+    expect(faceOf([])).toBeNull()
   })
 })

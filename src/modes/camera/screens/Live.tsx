@@ -28,7 +28,7 @@ import { sensors } from '../../sensor/ble'
 import { POSE, SPEED_FIT } from '../../sensor/params'
 import { fitSpeedA, saveSpeedFit } from '../../sensor/speedFit'
 import { loadBeltText, parseKmh, runSpeedOf, saveBeltText } from '../belt'
-import { YAW_PHRASE, yawHint, yawInside, yawOffDeg, yawSideOf } from '../yawGuide'
+import { YAW_PHRASE, faceOf, yawArrowDir, yawHint, yawInside, yawOffDeg, yawSideOf, type ArrowDir, type YawLevel } from '../yawGuide'
 
 type Phase = 'loading' | 'setup' | 'baseline' | 'run' | 'error'
 
@@ -50,6 +50,8 @@ interface Hud {
   slow: boolean // 走り出すのを待つ間に、骨格のコマが少なくて走りを数えにくい（WAIT.slowFps）
   yawDeg: number | null // 置く間の、真横からのずれの目安（度。前側が正。yawGuide.ts）。測れないときは null
   yawOk: boolean // 真横の線の内側か（入るときと出るときで線が違う）
+  yawArrow: { dir: ArrowDir; level: YawLevel } | null // 置く間に、真横の案内を出しているとき、スマホを動かす向き（画面の左右。yawGuide.ts の yawArrowDir）
+  yawDone: boolean // 矢印や真横の案内のあとで真横に入った直後（緑の印を短く出す）
 }
 
 // 頭から足までが画面の高さの何割か。超広角で 1m 前後なら約6割、3m だと約2割
@@ -119,7 +121,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
   const mirror = !file && loadSettings().camera === 'front'
   // 検証用の「全コマ記録」（URL に ?full=1）。走っている間も間引かず毎コマ骨格を取る。動画で試すときはもともと毎コマ取る
   const full = !file && fullFrames()
-  const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true }, framing: 'none', fps: 0, slow: false, yawDeg: null, yawOk: false })
+  const [hud, setHud] = useState<Hud>({ phase: 'loading', state: 'waiting', caption: '', elapsed: 0, quiet: false, scores: [], checks: { body: false, side: false, sideDeg: 90, light: true }, framing: 'none', fps: 0, slow: false, yawDeg: null, yawOk: false, yawArrow: null, yawDone: false })
   // ベルトの速さ（時速 km。走る前に入れる。前回の値を覚えている。空欄なら使わない）。belt.ts
   const [beltText, setBeltText] = useState<string>(() => (file ? '' : loadBeltText()))
   const beltRef = useRef<number | undefined>(undefined)
@@ -171,10 +173,14 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let setupAt: number | null = null
     let hintMsg = ''
     let hintSince = 0
-    let yawHist: { t: number; v: number }[] = []
+    // v：前側・後ろ側の値（yawSign）。f：顔の向き（元の映像で右 +1・左 −1。鼻と耳が見えないコマは 0）
+    let yawHist: { t: number; v: number; f: number }[] = []
     let yawIn = false // 真横の線の内側か（yawGuide.ts の yawInside。入る線と出る線が違う）
     let yawDeg: number | null = null // 真横からのずれの目安（度、前側が正）。測れないときは null
     let yawGuided = false // 真横の案内を言ったあと、まだ真横に入っていない（入ったら「真横になりました」と言う）
+    let yawArrow: Hud['yawArrow'] = null // 画面に出す、スマホを動かす向きの矢印（置く間だけ）
+    let yawArrowShown = false // 矢印を出したあと、まだ真横に入っていない
+    let yawDoneAt = -Infinity // 真横に入ったと画面に出した時刻
     let firstSaid = false
     let lastPresent = true
     let lastMoving = false
@@ -515,7 +521,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         // 全身が入っている（full）：いまのコマまで、全身が入って人の体の形らしいのが FRAME_SAY.okHold 秒続いた（framing.ts の FramingVoice）。
         // 一瞬の見間違い・人が画面から消えたコマ・頭や足が画面のふちから出ているコマでは、全身が入ったとしない
         const full = placed && framer.okNow
-        if (frame && visible) yawHist.push({ t, v: yawSign(frame) })
+        if (frame && visible) {
+          const seeFace = frame[L.nose].v > 0.5 && Math.max(frame[L.leftEar].v, frame[L.rightEar].v) > 0.5
+          yawHist.push({ t, v: yawSign(frame), f: seeFace ? facing(frame) : 0 })
+        }
         yawHist = yawHist.filter((x) => t - x.t <= SETUP.yawSmooth)
         // 真横からのずれは、全身が入って体の横がスマホに向いているときだけ見る（正面を向いていると、前側・後ろ側の値は当てにならない）。
         // 測れない間は内側の印を外す（また入るときは yawIn 度から）
@@ -523,6 +532,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         yawDeg = full && sideDeg <= 20 && yawHist.length ? yawOffDeg(yawHist.reduce((a, x) => a + x.v, 0) / yawHist.length) : null
         yawIn = yawDeg !== null && yawInside(yawDeg, yawIn)
         // 真横の案内のあとで真横に入ったら、そう言う（そのまま動かさないでほしいので）。全身が入ったと言うのと同じく、置き方がそろう前に言う
+        if (yawIn && !wasIn && (yawGuided || yawArrowShown)) {
+          yawDoneAt = t
+          yawArrowShown = false
+        }
         if (yawIn && !wasIn && yawGuided && setupAt !== null && t - setupAt >= SETUP.talkAfter) {
           say(PHRASES.guideSideOk, t)
           lastGuide = t
@@ -534,6 +547,12 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
         const cut = shown.current()
         const checking = placed && lastLight && !full && cut === 'ok'
         const hint = !placed ? null : !lastLight ? PHRASES.guideDark : full ? guide(frame!, w, h, sideDeg, yawDeg) : cut === 'ok' ? null : SETUP_PHRASE[cut]
+        // 真横の案内を出しているときは、画面にもスマホを動かす向きを大きな矢印で出す（声と同じ向き・大きさ）。
+        // 走る人の顔の向きがそろって分からないときは出さない（逆を指すと外れた案内になる。声とメーターだけ）
+        const yh = yawSideOf(hint) && yawDeg !== null ? yawHint(yawDeg, yawIn) : null
+        const arrowDir = yh ? yawArrowDir(yh.side, faceOf(yawHist.filter((x) => x.f !== 0).map((x) => x.f)), mirror) : null
+        yawArrow = yh && arrowDir ? { dir: arrowDir, level: yh.level } : null
+        if (yawArrow) yawArrowShown = true
         // 真横に向ける・前後に寄る案内は、声で言うだけで進むのを止めない（真横は sideMax で見る）
         const blocking = hint !== null && hint !== PHRASES.guideSide && hint !== PHRASES.guideForward && hint !== PHRASES.guideBack
         const ready = full && lastLight && sideDeg <= SETUP.sideMax && !blocking
@@ -770,6 +789,8 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           slow: phase === 'run' && coach?.state === 'waiting' && waitWin.fps < WAIT.slowFps,
           yawDeg: phase === 'setup' && yawDeg !== null ? Math.round(yawDeg) : null,
           yawOk: yawIn,
+          yawArrow: phase === 'setup' ? yawArrow : null,
+          yawDone: phase === 'setup' && t - yawDoneAt < 1.5,
         }))
       }
     }
@@ -840,6 +861,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
       <div className="live-stage">
         <video ref={videoRef} playsInline muted style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
         <canvas ref={canvasRef} style={{ opacity: dark ? 0 : 1, transform: mirror ? 'scaleX(-1)' : undefined }} />
+        {hud.phase === 'setup' && hud.framing === 'ok' && (hud.yawArrow ? <YawArrow dir={hud.yawArrow.dir} level={hud.yawArrow.level} /> : hud.yawDone ? <YawDone /> : null)}
       </div>
 
       {preview && (
@@ -1017,6 +1039,47 @@ function YawMeter({ deg, ok }: { deg: number; ok: boolean }) {
         <span>真横</span>
         <span>スマホが前</span>
       </div>
+    </div>
+  )
+}
+
+// 置く間の、スマホを動かす向きの大きな矢印（映像の上に重ねる。押せない）。向きは画面の左右（yawGuide.ts の yawArrowDir）。
+// 大きさは声と同じ3段：大きく（far）は矢じりを2つ、少し（mid）は長い矢印、あと少し（near）は短い矢印。ゆっくり点滅（動きを減らす設定なら点滅しない。index.css の .yaw-arrow）
+function YawArrow({ dir, level }: { dir: ArrowDir; level: YawLevel }) {
+  // viewBox は 横 0〜200・縦 0〜100。右向きに描いて、左は裏返す。1つの矢印は真ん中にそろえる（長さ：少し 180、あと少し 120）
+  const len = level === 'near' ? 120 : 180
+  const tail = (200 - len) / 2
+  const tip = tail + len
+  const head = (x: number) => `M${x - 50} 10 L${x} 50 L${x - 50} 90 L${x - 50} 72 L${x - 22} 50 L${x - 50} 28 Z`
+  return (
+    <div className="yaw-arrow" aria-label={`スマホを画面の${dir === 'left' ? '左' : '右'}へ動かす`}>
+      <svg viewBox="0 0 200 100" style={{ transform: dir === 'left' ? 'scaleX(-1)' : undefined }} aria-hidden="true">
+        <g fill="#FF8A3D" stroke="#0A0C0E" strokeWidth="4" strokeLinejoin="round">
+          {level === 'far' ? (
+            <>
+              <path d={`M10 38 H100 V62 H10 Z`} />
+              <path d={head(140)} />
+              <path d={head(190)} />
+            </>
+          ) : (
+            <path d={`M${tail} 36 H${tip - 40} V10 L${tip} 50 L${tip - 40} 90 V64 H${tail} Z`} />
+          )}
+        </g>
+      </svg>
+      <div className="yaw-arrow-label">{dir === 'left' ? '← ' : ''}スマホをこちらへ{dir === 'right' ? ' →' : ''}</div>
+    </div>
+  )
+}
+
+// 矢印や真横の案内のあとで真横に入った直後に、短く出す緑の印
+function YawDone() {
+  return (
+    <div className="yaw-arrow done" role="status">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="44" fill="#C8F03C" stroke="#0A0C0E" strokeWidth="4" />
+        <path d="M28 52 L44 68 L74 36" fill="none" stroke="#0A0C0E" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <div className="yaw-arrow-label">真横です</div>
     </div>
   )
 }

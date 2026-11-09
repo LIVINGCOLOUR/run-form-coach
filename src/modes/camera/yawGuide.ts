@@ -32,3 +32,25 @@ export function yawSideOf(msg: string | null | undefined): YawSide | null {
   for (const side of ['front', 'behind'] as const) if (Object.values(YAW_PHRASE[side]).includes(msg ?? '')) return side
   return null
 }
+
+// 置く間に画面に出す、スマホを動かす向きの矢印（Live.tsx の YawArrow）。画面を見ている人が、スマホを画面の左右どちらへ動かすか。
+// 背面カメラの映像は左右を反転せずに出している（Live.tsx の mirror は前面カメラのときだけ）ので、画面の左右は、スマホの後ろから見た実際の左右と同じ。
+// 骨格の点（frame の x）も反転しない元の映像のもの。前面カメラは映像を鏡のように反転して見せるので、走る人の向きも画面では逆になる。
+//   face：走る人の顔が、元の映像で右（+1）・左（−1）のどちらを向いているか（geometry の facing を FACE_SURE の割合でそろえたもの）。分からなければ null
+//   front（スマホが前すぎる）＝スマホを走る人の背中の側へ＝画面では顔の向きと反対。behind＝顔の向きと同じ
+export type ArrowDir = 'left' | 'right'
+export function yawArrowDir(side: YawSide, face: 1 | -1 | null, mirror = false): ArrowDir | null {
+  if (face === null) return null
+  const shown = mirror ? -face : face // 画面で顔が向いている向き
+  const dir = side === 'front' ? -shown : shown
+  return dir > 0 ? 'right' : 'left'
+}
+
+// 1コマずつの顔の向き（+1・−1。鼻と耳が見えないコマは入れない）を、直近でそろえる。FACE_SURE 以上の割合で同じ向きなら、その向き。
+// 骨格の推定は、横向きの顔の鼻と耳の前後をときどき取り違えるので、1コマだけでは決めない（取り違えると矢印が逆を指し、外れた案内になる）
+export const FACE_SURE = 0.8
+export function faceOf(signs: number[]): 1 | -1 | null {
+  if (signs.length < 3) return null
+  const n = signs.length
+  return signs.filter((s) => s > 0).length >= FACE_SURE * n ? 1 : signs.filter((s) => s < 0).length >= FACE_SURE * n ? -1 : null
+}
