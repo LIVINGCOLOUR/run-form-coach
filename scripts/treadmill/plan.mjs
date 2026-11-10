@@ -15,6 +15,10 @@ export const STEPS = {
   armstill: { name: '腕を振らない', say: '腕を振らないで', camera: [], phone: [] },
   armcross: { name: '腕を横に振る', say: '腕を体の前で、横に振って', camera: [], phone: [] },
   sit: { name: '腰を落とす', say: '腰を落として。ひざを曲げて', camera: ['hip'], phone: ['contact'] },
+  // 腰を落とす量を3段に分ける（npm run drill:hip）。腰落ちの新しい候補（カメラ版の記録の hipComb）が、落とした量に沿って増えるかを見る
+  sitlight: { name: '腰を少し落とす', say: 'ひざを少しやわらかく、腰を少しだけ落として', camera: ['hip'], phone: ['contact'], sec: 30 },
+  sitmid: { name: '腰を落とす（中）', say: 'ひざを曲げて、腰をはっきり落として', camera: ['hip'], phone: ['contact'], sec: 30 },
+  sitdeep: { name: '腰を深く落とす', say: 'ひざを深く曲げて、腰を大きく落として', camera: ['hip'], phone: ['contact'], sec: 30 },
   // 同じ速さでピッチを約1割下げる。仮想実験（sim/result-landing.md）で、着地の基準からの増えの声が出たのは 56%（本当の増え +0.025）。
   // 前回（2026-10-19）は言葉だけで、歩いたり脚の山が出なかったりして使えなかったので、メトロノームに合わせてもらう
   slow: { name: 'ピッチを落とす', say: 'ピッチを約1割落とします。速さはそのまま、走ったまま、メトロノームの音に足音を合わせて、大またで', camera: ['landing'], phone: ['cadence'], sec: 60, metronome: 0.9 },
@@ -55,6 +59,12 @@ export const DEFAULTS = {
   // 速さを段階的に変える（時速 km。最後にジョグの速さへ戻す）。着地の値が速さでどれだけ変わるかと、速さが変わったときに誤った声が出ないかを見る
   speeds: [9.0, 10.0],
   speedSec: 60, // 速さごとの長さ（戻したあとも同じ長さ走る）
+  // 崩しのあと、ベルトの速さを thenKmh に変えて thenFirst 秒ふつうに走り、その速さで thenSteps の崩しをする（戻しは gap）。
+  // 残りのふつうも、その速さのまま。thenSteps が空なら入れない。thenFirst は、カメラ版が新しい速さで姿勢の基準を作り直す間
+  // （速さの外れを見つけて止めるまで LANDING.postureAfter 5秒、そのあと LANDING.rebuild 60秒ためる）より長くとる
+  thenSteps: [],
+  thenKmh: 10.0,
+  thenFirst: 90,
   // ジョグのあと、ベルトを止めてスマホを走る向きと反対へ約30cm動かし、この長さ走る（0 で入れない）。
   // 走っている間の前側・後ろ側の値（yawSign）が +0.07 前後だったのが、置き方のずれ（動かすと約 −0.06）か点の取り方かを見分ける
   moved: 120,
@@ -111,15 +121,18 @@ export const metronomeBpm = (o, k) => Math.round((o.cadence ?? DEFAULTS.cadence)
 export function buildPlan(o = {}) {
   const opt = { ...DEFAULTS, ...o }
   const steps = opt.steps ?? DEFAULT_STEPS
-  for (const k of steps) if (!STEPS[k]) throw new Error(`区間の名前が分かりません: ${k}（使えるもの: ${Object.keys(STEPS).join(', ')}）`)
+  const thenSteps = opt.thenSteps ?? []
+  for (const k of [...steps, ...thenSteps]) if (!STEPS[k]) throw new Error(`区間の名前が分かりません: ${k}（使えるもの: ${Object.keys(STEPS).join(', ')}）`)
   const speeds = opt.speeds ?? []
   const warnings = []
   const secOf = (k) => STEPS[k].sec ?? opt.sec
   const drills = steps.reduce((a, k) => a + secOf(k) + opt.gap, 0)
   const speedTotal = speeds.length ? (speeds.length + 1) * opt.speedSec : 0
-  const last = opt.jog - opt.upright - opt.first - drills - speedTotal
+  const thenTotal = thenSteps.length ? opt.thenFirst + thenSteps.reduce((a, k) => a + secOf(k) + opt.gap, 0) : 0
+  const last = opt.jog - opt.upright - opt.first - drills - speedTotal - thenTotal
   if (last < 0) warnings.push(`ジョグ ${len(opt.jog)} に、走り出し・最初のふつう・崩しと戻し・速さを変える区間が入りきりません（${len(-last)} はみ出る）。ジョグを ${len(opt.jog - last)} にします`)
   if (opt.first < 240) warnings.push('最初のふつうが4分より短いと、カメラ版の走り始めの自分の基準ができる前に崩しが始まり、崩した姿勢が基準に入ります')
+  if (thenSteps.length && opt.thenFirst < 70) warnings.push('速さを変えてからの崩しまでが70秒より短いと、カメラ版が新しい速さの基準を作り直す前に崩しが始まります')
   if (opt.moved > 0 && opt.moveSec > 28) warnings.push('スマホを動かす間が長いと、画面から30秒外れたところでカメラ版が走りを終えます')
   const sections = []
   const cues = []
@@ -153,16 +166,22 @@ export function buildPlan(o = {}) {
     section('normal1', 'normal', 'ふつう', opt.first, 'スタート。', { kmh: opt.jogKmh })
     cues.push({ at: jogStart + 1.5, say: SAY.normal1(opt.first) })
   }
-  for (const k of steps) {
+  const drill = (k, v) => {
     const st = STEPS[k]
     const sec = secOf(k)
     const metronome = st.metronome ? metronomeBpm(opt, k) : undefined
-    section(k, 'drill', st.name, sec, `次は、${st.say}。${len(sec)}。`, { kmh: opt.jogKmh, ...(metronome ? { metronome } : {}) })
-    if (opt.gap > 0) section('gap', 'gap', 'ふつうに戻す', opt.gap, SAY.gap(opt.gap), { kmh: opt.jogKmh, after: k })
+    section(k, 'drill', st.name, sec, `次は、${st.say}。${len(sec)}。`, { kmh: v, ...(metronome ? { metronome } : {}) })
+    if (opt.gap > 0) section('gap', 'gap', 'ふつうに戻す', opt.gap, SAY.gap(opt.gap), { kmh: v, after: k })
   }
+  for (const k of steps) drill(k, opt.jogKmh)
   speeds.forEach((v) => section(`speed${kmh(v)}`, 'speed', `時速${kmh(v)}`, opt.speedSec, SAY.speed(v, opt.speedSec), { kmh: v }))
   if (speeds.length) section(`speed${kmh(opt.jogKmh)}`, 'speed', `時速${kmh(opt.jogKmh)}に戻す`, opt.speedSec, SAY.speedBack(opt.jogKmh, opt.speedSec), { kmh: opt.jogKmh })
-  if (last > 0) section('normal2', 'normal', 'ふつう（残り）', last, SAY.normal2(last), { kmh: opt.jogKmh })
+  const endKmh = thenSteps.length ? opt.thenKmh : opt.jogKmh
+  if (thenSteps.length) {
+    section(`speed${kmh(opt.thenKmh)}`, 'speed', `時速${kmh(opt.thenKmh)}`, opt.thenFirst, SAY.speed(opt.thenKmh, opt.thenFirst), { kmh: opt.thenKmh })
+    for (const k of thenSteps) drill(k, opt.thenKmh)
+  }
+  if (last > 0) section('normal2', 'normal', 'ふつう（残り）', last, SAY.normal2(last), { kmh: endKmh })
   const jogEnd = t
   if (opt.moved > 0) {
     section('stop2', 'stop', '止める', 12, SAY.stop, { kmh: 0 })
@@ -189,7 +208,7 @@ export function buildPlan(o = {}) {
     }
   }
   cues.sort((a, b) => a.at - b.at)
-  return { options: { ...opt, steps }, sections, cues, total: t, warnings }
+  return { options: { ...opt, steps, thenSteps }, sections, cues, total: t, warnings }
 }
 
 // メトロノームの音（WAV、16bit・1チャンネル）：bpm のテンポで sec 秒。1拍ごとに短い高い音（スマホ版のメトロノームと同じ 1600Hz・0.05秒）

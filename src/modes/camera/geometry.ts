@@ -115,6 +115,8 @@ export function measure(frame: Frame): Measure {
   const m: Measure = { neck: neckLean - trunkNear, headLean: neckLean, chin, yaw: yawSign(frame), trunk, body, hipRatio, dir }
   const ms = midstance(frame)
   if (ms) m.mid = ms
+  const k = stanceKnee(frame)
+  if (k !== null) m.kst = k
   return m
 }
 
@@ -147,4 +149,16 @@ export function midstance(frame: Frame): { hip: number; knee: number } | null {
   if (Math.abs(A.x - hipC.x) / leg >= HIP_MID.dx) return null
   if (Math.abs(la.y - ra.y) / leg <= HIP_MID.sep) return null
   return { hip: (A.y - hipC.y) / stanceLeg, knee: bend(H, K, A) }
+}
+
+// 片足のコマ（両足首の高さの差が脚の長さの HIP_MID.sep より大きい）なら、低いほう（接地している側）の脚の膝の曲がり（度）。そうでなければ null。
+// 立脚中期（midstance）と違い、足首が腰の真下になくてもよい。
+// 腰落ちの新しい候補（params.ts の HIP_COMB）に使う。記録するだけ
+export function stanceKnee(frame: Frame): number | null {
+  const la = frame[L.leftAnkle]
+  const ra = frame[L.rightAnkle]
+  const left = la.y >= ra.y
+  const leg = legLength(frame)
+  if (!(leg > 0) || Math.abs(la.y - ra.y) / leg <= HIP_MID.sep) return null
+  return left ? bend(frame[L.leftHip], frame[L.leftKnee], la) : bend(frame[L.rightHip], frame[L.rightKnee], ra)
 }

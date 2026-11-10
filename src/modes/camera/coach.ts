@@ -1,10 +1,10 @@
 import { ITEM_KEYS, type Category, type FormGroup, type Frame, type ItemKey, type Sample, type Session, type Stride } from '../../core/types'
-import type { Measure } from './types'
+import type { HipComb, Measure } from './types'
 import { category } from '../../core/scoring'
 import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
-import { applySpeed, applyStrictness, CAM_YAW, FORM, HIP_MID, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
+import { applySpeed, applyStrictness, CAM_YAW, FORM, HIP_COMB, HIP_MID, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
 import type { Level } from '../../core/level'
 import { CUE as CUE_P } from '../../core/params'
 import { RunningGate } from './motion'
@@ -52,9 +52,11 @@ const REF_KEYS = ['neck', 'trunk', 'body', 'headLean', 'yaw', 'chin'] as const
 type Steps = { peaks: Peak[]; sv: number[]; secs: number }
 // 腰：立脚中期のコマの、腰の高さ ÷ 立脚側の脚の長さ（hip）と立脚側の膝の曲がり（knee、度）の1秒の平均
 type Hip = { hip: number; knee: number }
-type Pool = { in: Record<FormGroup, FormValues[]>; all: FormValues[]; hipIn: Hip[]; hipAll: Hip[]; yaw: number[]; chin: number[]; landIn: Steps; landAll: Steps }
+// 腰落ちの新しい候補（記録だけ。params.ts の HIP_COMB）：全部のコマの腰の高さ（low）と、片足のコマの膝の曲がり（kst、度）の1秒の平均
+type Comb = { low: number; kst?: number }
+type Pool = { in: Record<FormGroup, FormValues[]>; all: FormValues[]; hipIn: Hip[]; hipAll: Hip[]; combIn: Comb[]; combAll: Comb[]; yaw: number[]; chin: number[]; landIn: Steps; landAll: Steps }
 const emptySteps = (): Steps => ({ peaks: [], sv: [], secs: 0 })
-const emptyPool = (): Pool => ({ in: { body: [], landing: [], trunk: [], head: [] }, all: [], hipIn: [], hipAll: [], yaw: [], chin: [], landIn: emptySteps(), landAll: emptySteps() })
+const emptyPool = (): Pool => ({ in: { body: [], landing: [], trunk: [], head: [] }, all: [], hipIn: [], hipAll: [], combIn: [], combAll: [], yaw: [], chin: [], landIn: emptySteps(), landAll: emptySteps() })
 const addSteps = (p: Steps, s: { peaks: Peak[]; sv: number[] }) => {
   p.peaks.push(...s.peaks)
   p.sv.push(...s.sv)
@@ -88,12 +90,47 @@ export function hipDropOf(ref: Hip, now: Hip): number {
   return HIP_MID.kneePct > 0 ? Math.max(h, (now.knee - ref.knee) * HIP_MID.kneePct) : h
 }
 
+// 腰落ちの新しい候補の1秒（params.ts の HIP_COMB。記録だけ）：その秒の全部のコマの hipRatio の平均と、片足のコマの膝の曲がり（Measure の kst）の平均。
+// 見積もったスマホの向きが真横から HIP_MID.yawMax（度）よりずれた秒は、いまの腰（hipOf）と同じく測らない（null）
+export function hipCombOf(b: Measure[]): HipComb | null {
+  if (!b.length || Math.abs(mean(b.map((m) => m.yaw)) / CAM_YAW.perDeg) > HIP_MID.yawMax) return null
+  const lows = b.flatMap((m) => (m.hipRatio > 0 ? [m.hipRatio] : []))
+  if (!lows.length) return null
+  const ks = b.flatMap((m) => (m.kst === undefined ? [] : [m.kst]))
+  return { low: mean(lows), n: lows.length, ...(ks.length ? { kst: mean(ks) } : {}), nK: ks.length }
+}
+
+// 今日の基準からの、腰の下がり（%、下がると正）・膝の曲がりの増え（度）と、その2つを合わせた値 (drop + knee × kneeW) ÷ 2。測れない値は無い
+export function hipCombRel(ref: Comb, now: Comb): Pick<HipComb, 'drop' | 'knee' | 'comb'> {
+  const drop = ((ref.low - now.low) / ref.low) * 100
+  if (ref.kst === undefined || now.kst === undefined) return { drop }
+  const knee = now.kst - ref.kst
+  return { drop, knee, comb: (drop + knee * HIP_COMB.kneeW) / 2 }
+}
+
+const meanComb = (xs: Comb[]): Comb | null => {
+  if (!xs.length) return null
+  const ks = xs.flatMap((x) => (x.kst === undefined ? [] : [x.kst]))
+  return { low: mean(xs.map((x) => x.low)), ...(ks.length ? { kst: mean(ks) } : {}) }
+}
+
+const rnd = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d
+const roundComb = (c: HipComb): HipComb => {
+  const o: HipComb = { low: rnd(c.low, 3), n: c.n, nK: c.nK }
+  if (c.kst !== undefined) o.kst = rnd(c.kst, 1)
+  if (c.drop !== undefined) o.drop = rnd(c.drop, 2)
+  if (c.knee !== undefined) o.knee = rnd(c.knee, 1)
+  if (c.comb !== undefined) o.comb = rnd(c.comb, 2)
+  return o
+}
+
 const meanOf = (xs: FormValues[]): FormValues => ({ trunk: mean(xs.map((x) => x.trunk)), body: mean(xs.map((x) => x.body)), neck: mean(xs.map((x) => x.neck)), headLean: mean(xs.map((x) => x.headLean)) })
 
 // 今日の基準にためる1秒（走り出しに作るときと、速さが変わって作り直すときに使う）
-function addSecond(p: Pool, form: FormStage, t: number, v: FormValues, hip: Hip | null, yaw: number, chin: number, steps: { peaks: Peak[]; sv: number[] }) {
+function addSecond(p: Pool, form: FormStage, t: number, v: FormValues, hip: Hip | null, comb: Comb | null, yaw: number, chin: number, steps: { peaks: Peak[]; sv: number[] }) {
   p.all.push(v)
   if (hip) p.hipAll.push(hip)
+  if (comb) p.combAll.push(comb)
   p.yaw.push(yaw)
   p.chin.push(chin)
   addSteps(p.landAll, steps)
@@ -101,6 +138,7 @@ function addSecond(p: Pool, form: FormStage, t: number, v: FormValues, hip: Hip 
   if (ins) {
     for (const g of FORM_ORDER) if (ins[g] && !form.waiting(g)) p.in[g].push(v)
     if (ins.body && ins.trunk && hip) p.hipIn.push(hip)
+    if (ins.body && ins.trunk && comb) p.combIn.push(comb)
     if (ins.landing && !form.waiting('landing')) addSteps(p.landIn, steps)
   }
 }
@@ -112,7 +150,9 @@ function postureRefOf(p: Pool, form: FormStage) {
   const typical = { ...meanOf(p.all), yaw: mean(p.yaw) }
   const at = (g: FormGroup) => (!form.judged(g) ? typical : p.in[g].length >= FORM.refMin ? meanOf(p.in[g]) : clampInside(g, typical))
   const head = at('head')
-  return { lean: { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body }, hip: p.hipIn.length >= FORM.refMin ? meanHip(p.hipIn) : meanHip(p.hipAll) }
+  return { lean: { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body }, hip: p.hipIn.length >= FORM.refMin ? meanHip(p.hipIn) : meanHip(p.hipAll),
+    comb: p.combIn.length >= FORM.refMin ? meanComb(p.combIn) : meanComb(p.combAll),
+  }
 }
 
 class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
@@ -120,6 +160,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
 
   // 腰の今日の基準（立脚中期の腰の高さと膝の曲がり）。立脚中期のコマで測れた秒がなければ null（腰は判定しない）
   private hipRef: Hip | null = null
+  // 腰落ちの新しい候補の今日の基準（記録だけ。params.ts の HIP_COMB）。いまの腰と同じ秒で作る
+  private combRef: Comb | null = null
   // 今日の基準：首の角度・上体・体全体の傾き、頭の位置そのもの、スマホの向き、顎。整えたあとの形（正しいフォームの線の内側にいた秒）の平均
   private pool = emptyPool()
   leanRef: Ref | null = null
@@ -217,6 +259,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const v: FormValues = { trunk, body, neck, headLean, yaw }
     // 腰：立脚中期のコマだけで測る（測れない秒は null。hipOf）
     const hip = hipOf(b)
+    // 腰落ちの新しい候補（記録だけ）：全部のコマの腰の高さと、片足のコマの膝の曲がり（hipCombOf）
+    const comb = hipCombOf(b)
     const rt = this.runFrom === null ? null : t - this.runFrom
 
     // 速さの見張り（landing.ts の SpeedGuard、着地と同じもの）：基準ができたあとは、先に着地を比べて、この秒に速さが外れているかを決める。
@@ -254,7 +298,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
       } else if (c === 'same') {
         // 仮の基準から崩れている間（直近 CUE.window 秒の平均が線を越えた）は、ためない
         if (this.earlyRef) this.noteRecent(t, relValues(v, this.earlyRef, true))
-        if (!this.earlyRef || !this.recentOver(REL_KEYS)) addSecond(this.pool, this.form, t, v, hip, yaw, now.chin, steps)
+        if (!this.earlyRef || !this.recentOver(REL_KEYS)) addSecond(this.pool, this.form, t, v, hip, comb, yaw, now.chin, steps)
         if (!this.earlyRef && this.pool.all.length >= FORM.early) this.earlyRef = postureRefOf(this.pool, this.form).lean
       }
     }
@@ -271,6 +315,7 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
         const r = postureRefOf(p, this.form)
         this.leanRef = { ...r.lean, yaw: mean(p.yaw), chin: mean(p.chin) }
         this.hipRef = r.hip
+        this.combRef = r.comb
         // 着地の基準：着地の線の内側にいた秒の山。足りなければ、走っていた秒すべての山（線の内側に寄せない：着地の線は速さの当てはめが
         // 仮想のスマホのもので、まだ確かめていない。寄せると、線の外の人ほど基準からの増えの線が実際より近くなり、ふつうに走るだけで声が出る）。
         // 山が足りなければ（足が映りにくい）、このあと走りながらためて作る
@@ -279,11 +324,12 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     }
     // 速さが変わったあとの姿勢の基準：新しい速さで、速さが外れていない、歩数で走っていた秒をためる（スマホの向きと顎の基準はそのまま）
     if (this.repool && stepping && !away) {
-      addSecond(this.repool, this.form, t, v, hip, yaw, now.chin, steps)
+      addSecond(this.repool, this.form, t, v, hip, comb, yaw, now.chin, steps)
       if (this.repool.all.length >= LANDING.rebuild) {
         const r = postureRefOf(this.repool, this.form)
         this.leanRef = { ...this.leanRef!, ...r.lean }
         this.hipRef = r.hip
+        this.combRef = r.comb
         this.repool = null
       }
     }
@@ -353,6 +399,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const sample: Sample = { t, head, trunk, body, hipDrop, score: score ?? 100, quiet: ctx.quiet, judge, back, headLean, neck, yaw, form, chin }
     if (hunch !== undefined) sample.hunch = hunch
     if (hip) sample.hipMid = { hip: Math.round(hip.hip * 1000) / 1000, knee: Math.round(hip.knee * 10) / 10, n: hip.n }
+    // 腰落ちの新しい候補（記録だけ。声・判定・点数には使わない。params.ts の HIP_COMB）
+    if (comb) (sample as Sample & { hipComb?: HipComb }).hipComb = roundComb({ ...comb, ...(this.combRef ? hipCombRel(this.combRef, comb) : {}) })
     if (paused) sample.paused = true
     if (noRoll) sample.noRoll = true
     if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }

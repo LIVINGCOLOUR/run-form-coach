@@ -128,4 +128,31 @@ describe('確かめ走（npm run drill:pose）', () => {
     // 入れないとき（既定）は、前と同じ
     expect(buildPlan().sections.some((s) => s.kind === 'poses')).toBe(false)
   })
+
+  it('腰落ちの段階（npm run drill:hip）：時速8kmで少し・中・深く 30秒 ×2 と弾む ×2 → 時速10kmにしてふつう90秒 → 少し・中・深く ×1 → 残りも時速10km。25分以内', () => {
+    const steps = ['sitlight', 'sitlight', 'sitmid', 'sitmid', 'sitdeep', 'sitdeep', 'bouncy', 'bouncy']
+    const thenSteps = ['sitlight', 'sitmid', 'sitdeep']
+    const p = buildPlan({ poses: 0, walk: 0, upright: 0, jogKmh: 8, first: 240, steps, sec: 30, gap: 40, speeds: [], thenKmh: 10, thenFirst: 90, thenSteps, jog: 1160, moved: 0, cool: 120, hr: 0 })
+    expect(p.warnings).toEqual([])
+    const drills = p.sections.filter((s) => s.kind === 'drill')
+    expect(drills.map((s) => s.key)).toEqual([...steps, ...thenSteps])
+    expect(drills.map((s) => s.kmh)).toEqual([...steps.map(() => 8), ...thenSteps.map(() => 10)])
+    expect(drills.every((s) => s.plannedSec === 30)).toBe(true)
+    const sp = p.sections.filter((s) => s.kind === 'speed')
+    expect(sp).toMatchObject([{ kmh: 10, plannedSec: 90 }])
+    // 速さを変える区間は、8km/h の崩しと戻しのあと、10km/h の崩しの前
+    const i = p.sections.indexOf(sp[0])
+    expect(p.sections[i - 1]).toMatchObject({ kind: 'gap', after: 'bouncy', kmh: 8 })
+    expect(p.sections[i + 1]).toMatchObject({ key: 'sitlight', kmh: 10 })
+    expect(p.sections.find((s) => s.key === 'normal2')).toMatchObject({ kmh: 10, plannedSec: 60 })
+    const jog = p.sections.filter((s) => RUN.includes(s.kind)).reduce((a, s) => a + s.plannedSec, 0)
+    expect(jog).toBe(1160)
+    expect(p.cues.find((c) => c.begin === i).say).toContain('時速10.0')
+    expect(p.cues.find((c) => c.begin === p.sections.indexOf(drills[0])).say).toContain('ひざを少しやわらかく、腰を少しだけ落として')
+    expect(p.total / 60).toBeLessThan(25)
+    // 速さを変えてすぐ崩すと、カメラ版が新しい速さの基準を作り直す前に崩しが始まる
+    expect(buildPlan({ thenSteps, thenFirst: 30, jog: 2000 }).warnings.some((w) => w.includes('70秒'))).toBe(true)
+    // 入れないとき（既定）は、前と同じ
+    expect(buildPlan().sections.filter((s) => s.kind === 'speed').map((s) => s.kmh)).toEqual([9, 10, 8])
+  })
 })

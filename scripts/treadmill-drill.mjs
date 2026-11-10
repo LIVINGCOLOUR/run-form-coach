@@ -11,6 +11,9 @@
 //   区間の時刻（Mac の時計）が drill-….json に、知らせた時刻がアプリの記録（events の sensor:hunch・sensor:head、sensors.cues）に残るので、
 //   アプリの記録の clock（perfMs・epochMs）で Mac の時計にそろえて、区間ごとに知らせた回数を数える（猫背の区間は胸、頭の区間は頭が震えたか。
 //   胸を開く・ふつうの区間は震えないのが正しい）。センサーの記録の pose（2つの立ち方の差・見方）もいっしょに見る
+// 腰落ちの段階の確かめ走（約22分）: npm run drill:hip
+//   ジャンプ → 時速8km：ふつう4分 → 腰を少し・中・深く落とす 30秒 ×2ずつ → 弾む30秒 ×2（それぞれ40秒の戻し）→
+//   時速10km：ふつう90秒 → 少し・中・深く 30秒 ×1ずつ → ふつう1分 → 歩き2分。カメラ版の記録の hipComb（腰落ちの新しい候補）を区間ごとに見る
 //   --walk 秒 / --walk-kmh 5.0   最初の歩き（0 で歩かない）と速さ
 //   --jog 秒 / --jog-kmh 8.0     ジョグ全体と速さ
 //   --poses 秒             最初に、アプリの声に従って2つの立ち方（いつもの楽な立ち方・胸を開いた立ち方）を測る間（既定 0。確かめ走は 60）
@@ -18,6 +21,8 @@
 //   --first 秒 / --sec 秒 / --gap 秒   最初のふつう・崩し・崩しのあとの戻し（0 で戻しなし）
 //   --cadence 歩/分        いつものピッチ（既定 165。2026-10-19 の時速8km のふつうの区間）。ピッチを落とす区間のメトロノームは、この 0.9 倍
 //   --speeds 9,10 / --speed-sec 60   速さを段階的に変える区間（時速。最後にジョグの速さへ戻す。none で入れない）と、1段の長さ
+//   --then-steps a,b,… / --then-kmh 10 / --then-first 90   崩しのあと、ベルトを時速 then-kmh にして then-first 秒ふつうに走り、
+//                          その速さで then-steps の崩しをする（残りのふつうもその速さ。既定は入れない）
 //   --moved 秒 / --move-sec 秒       ジョグのあと、スマホを走る向きと反対へ約30cm動かして走る長さ（既定 120。0 で入れない）と、動かす間
 //   --cool 秒              最後の歩き
 //   --prep 秒              歩き始めるまで（ベルトの上に立つ間）
@@ -70,6 +75,7 @@ const note = opt('--note')
 const outOpt = opt('--out')
 const stepsOpt = opt('--steps')
 const speedsOpt = opt('--speeds')
+const thenStepsOpt = opt('--then-steps')
 let o = {
   steps: stepsOpt ? stepsOpt.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
   speeds: speedsOpt === undefined ? DEFAULTS.speeds : speedsOpt === 'none' ? [] : speedsOpt.split(',').map(Number),
@@ -77,6 +83,9 @@ let o = {
   poses: num('--poses', DEFAULTS.poses),
   cadence: num('--cadence', DEFAULTS.cadence),
   speedSec: num('--speed-sec', DEFAULTS.speedSec),
+  thenSteps: thenStepsOpt ? thenStepsOpt.split(',').map((s) => s.trim()).filter(Boolean) : [],
+  thenKmh: num('--then-kmh', DEFAULTS.thenKmh),
+  thenFirst: num('--then-first', DEFAULTS.thenFirst),
   moved: num('--moved', DEFAULTS.moved),
   moveSec: num('--move-sec', DEFAULTS.moveSec),
   prep: num('--prep', DEFAULTS.prep),
@@ -92,13 +101,13 @@ let o = {
   hrEvery: num('--hr-every', DEFAULTS.hrEvery) || DEFAULTS.hrEvery,
   jump: !noJump,
 }
-if (args.length || o.speeds.some((v) => !(v > 0 && v <= 12))) {
+if (args.length || [...o.speeds, o.thenKmh].some((v) => !(v > 0 && v <= 12))) {
   console.error(`分からないオプション: ${args.join(' ') || `--speeds ${speedsOpt}`}（使い方は scripts/treadmill-drill.mjs の先頭。トレッドミルは時速12kmまで）`)
   process.exit(1)
 }
 if (tryOne) {
   // 崩しの最初の区間だけを16秒：「次は、…。16秒。」→「あと5秒。」→ おわり
-  o = { ...o, steps: [(o.steps ?? ['head'])[0]], prep: 0, walk: 0, jump: false, speedup: 0, upright: 0, first: 0, sec: 16, gap: 0, jog: 16, speeds: [], moved: 0, cool: 0, hr: 0 }
+  o = { ...o, steps: [(o.steps ?? ['head'])[0]], thenSteps: [], prep: 0, walk: 0, jump: false, speedup: 0, upright: 0, first: 0, sec: 16, gap: 0, jog: 16, speeds: [], moved: 0, cool: 0, hr: 0 }
 }
 
 let plan

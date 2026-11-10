@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { levelFrame, measure, midstance, rotateFrame, sideOffDeg } from './geometry'
+import { levelFrame, measure, midstance, rotateFrame, sideOffDeg, stanceKnee } from './geometry'
 import { itemScore, postureScore } from './scoring'
-import { Coach, headForward, hipDropOf, hipOf, hunchOf, toScale } from './coach'
-import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, goodAt, HEAD_OPEN, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
+import { Coach, headForward, hipCombOf, hipCombRel, hipDropOf, hipOf, hunchOf, toScale } from './coach'
+import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, goodAt, HEAD_OPEN, HIP_COMB, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
 import { formOver, formScale, FormStage, yawDeg, yawFixed } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, mainStride, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
@@ -15,8 +15,8 @@ import { MotionDetector, RunningGate, bodyVisible } from './motion'
 import { CUE, HIP_REF, RUNNING } from '../../core/params'
 import { FOCUS, PHRASES, phraseId } from '../../core/phrases'
 import { correctFrames, demoStride, frameAngles, strideStats, DEMO_FRAMES, DEMO_SPM, REFERENCE } from './ui/figure'
-import type { FormGroup, FormResult, Frame, Session, Stride } from '../../core/types'
-import type { Measure } from './types'
+import type { FormGroup, FormResult, Frame, Sample, Session, Stride } from '../../core/types'
+import type { HipComb, Measure } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
 
@@ -603,6 +603,55 @@ describe('腰落ち：立脚中期のコマだけで測る（geometry の midsta
     feedSparse(k, 0, 200, good)
     expect(feedSparse(k, 200, 20, { ...good, mid: { hip: 0.9, knee: 50 } }).speak).not.toContain(PHRASES.cueHip)
     expect(k.samples[k.samples.length - 1].hipMid?.knee).toBe(50)
+  })
+
+  it('腰落ちの新しい候補（記録だけ）：片足のコマなら、足首が腰の真下になくても、低いほうの脚の膝の曲がりを測る', () => {
+    const f = legFrame()
+    expect(stanceKnee(f)).toBeCloseTo(midstance(f)!.knee, 6)
+    // 足首が腰より前でも測る（立脚中期ではない）
+    const fwd = legFrame({ sx: 300 + 200 * HIP_MID.dx + 5 })
+    expect(midstance(fwd)).toBeNull()
+    expect(stanceKnee(fwd)).toBeGreaterThan(0)
+    // 両足がほぼ同じ高さ（片足でない）なら測らない
+    expect(stanceKnee(legFrame({ lift: 5 }))).toBeNull()
+    expect(measure(f).kst).toBeCloseTo(stanceKnee(f)!, 6)
+    expect(measure(legFrame({ lift: 5 })).kst).toBeUndefined()
+  })
+
+  it('腰落ちの新しい候補の1秒：全部のコマの腰の高さと、片足のコマの膝の曲がりの平均。今日の基準からの下がり・増えと、(下がり% + 膝° × kneeW) ÷ 2', () => {
+    const at = (hipRatio: number, kst?: number, yaw = 0): Measure => ({ ...good, hipRatio, yaw, ...(kst === undefined ? {} : { kst }) })
+    expect(hipCombOf([at(0.9, 30), at(0.92), at(0.94, 34)])).toEqual({ low: expect.closeTo(0.92, 9), n: 3, kst: 32, nK: 2 })
+    expect(hipCombOf([at(0.9), at(0.92)])).toEqual({ low: expect.closeTo(0.91, 9), n: 2, nK: 0 })
+    expect(hipCombOf([at(0.9, 30, (HIP_MID.yawMax + 1) * CAM_YAW.perDeg)])).toBeNull()
+    expect(hipCombOf([at(0)])).toBeNull()
+    expect(HIP_COMB.kneeW).toBe(0.25)
+    const r = hipCombRel({ low: 0.95, kst: 27 }, { low: 0.95 * 0.98, kst: 31 })
+    expect(r.drop).toBeCloseTo(2, 6)
+    expect(r.knee).toBeCloseTo(4, 6)
+    expect(r.comb).toBeCloseTo((2 + 4 * 0.25) / 2, 6)
+    // 膝の曲がりが測れない秒は、腰の下がりだけ（合わせた値は無い）
+    expect(hipCombRel({ low: 0.95, kst: 27 }, { low: 0.95 })).toEqual({ drop: expect.closeTo(0, 6) })
+  })
+
+  it('腰落ちの新しい候補は、記録（hipComb）に残すだけで、いまの腰落ちの値・声は変えない', () => {
+    const base: Measure = { ...good, hipRatio: 0.95, kst: 27 }
+    const sat: Measure = { ...good, hipRatio: 0.95 * 0.96, kst: 37 } // 腰の高さ 4% 下・膝 +10°（合わせた値 (4 + 2.5) ÷ 2 = 3.25）
+    const c = new Coach()
+    feedSparse(c, 0, 200, base)
+    const before = c.samples.length
+    const said = feedSparse(c, 200, 30, sat).speak
+    expect(said).not.toContain(PHRASES.cueHip)
+    const last = c.samples.slice(before) as (Sample & { hipComb?: HipComb })[]
+    const x = last.filter((s) => s.hipComb?.comb !== undefined).pop()!.hipComb!
+    expect(x).toMatchObject({ low: 0.912, kst: 37 })
+    expect(x.drop).toBeCloseTo(4, 1)
+    expect(x.knee).toBeCloseTo(10, 1)
+    expect(x.comb).toBeCloseTo(3.25, 1)
+    // いまの腰（立脚中期）は同じ値のままなので、下がりは 0
+    expect(last.every((s) => !s.hipMid || Math.abs(s.hipDrop) < 1e-9)).toBe(true)
+    // 基準ができるまでは、生の値だけ
+    expect((c.samples[0] as Sample & { hipComb?: HipComb }).hipComb).toMatchObject({ low: 0.95, kst: 27 })
+    expect((c.samples[0] as Sample & { hipComb?: HipComb }).hipComb?.comb).toBeUndefined()
   })
 
   it('立脚中期のコマがない秒は腰を判定しない（記録の hipMid も無い）', () => {

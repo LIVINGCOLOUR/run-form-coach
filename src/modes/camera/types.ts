@@ -19,6 +19,24 @@ export interface Measure {
   // 立脚中期のコマだけ（geometry の midstance）：腰の中心から立脚側の足首までの高さ ÷ 立脚側の脚の長さ（hip）と、立脚側の膝の曲がり（knee、度）。
   // 腰落ちの判定に使う。立脚中期でないコマには無い
   mid?: { hip: number; knee: number }
+  // 片足のコマ（両足首の高さの差が脚の長さの HIP_MID.sep より大きい）だけ：低いほう（接地している側）の脚の膝の曲がり（度）。
+  // 腰落ちの新しい候補（params.ts の HIP_COMB）に使う。記録するだけ
+  kst?: number
   // 進む向き（右へ走っていれば 1、左なら -1）
   dir: 1 | -1
+}
+
+// 腰落ちの新しい候補（params.ts の HIP_COMB）の1秒の値。記録（Sample の hipComb）に残すだけで、声・判定・点数には使わない
+//   low：その秒の全部のコマの、腰の中心 → 低いほうの足首の高さ ÷ 脚の長さ（hipRatio）の平均（n コマ）
+//   kst：その秒の片足のコマの、低いほうの脚の膝の曲がり（度）の平均（nK コマ。片足のコマがなければ無い）
+//   drop：今日の基準からの low の下がり（%、下がると正）。knee：今日の基準からの kst の増え（度）。
+//   comb：(drop + knee × HIP_COMB.kneeW) ÷ 2。基準ができるまでと、測れなかった値は無い
+export interface HipComb {
+  low: number
+  n: number
+  kst?: number
+  nK: number
+  drop?: number
+  knee?: number
+  comb?: number
 }
