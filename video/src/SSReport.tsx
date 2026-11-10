@@ -41,7 +41,7 @@ const S2_TAIL = 60
 const PARTS = 120 // 使っているセンサーの写真の一枚（4秒）
 const T0 = INTRO + PARTS // センサーランの録画が始まるコマ
 const S2 = T0 + PRE + CLIP + S2_TAIL
-const END = 75
+const END = 210
 export const SS_TOTAL = TITLE + VIEWS + S1 + S2 + END
 const AT = { views: TITLE, s1: TITLE + VIEWS, s2: TITLE + VIEWS + S1, end: TITLE + VIEWS + S1 + S2 }
 
@@ -938,14 +938,29 @@ function Scene2({ d, track }: { d: SSData; track: Track }) {
 
 function End() {
   const f = useCurrentFrame()
+  // 4段を順に出す（0.5秒ずつ）
+  const rows: [string, string][] = [
+    ['測る', '骨格（体の各部）の位置を測る'],
+    ['比べる', '骨格の角度を、今日の基準と比べる'],
+    ['決める', '線の外が3秒続いたら、フォームの崩れと判断する'],
+    ['知らせる', 'その場で本人に知らせる'],
+  ]
   return (
     <Bg>
-      <div style={{ position: 'absolute', left: 160, top: 340, opacity: interpolate(f, [0, 8], [0, 1], clamp) }}>
-        <div style={{ fontWeight: 900, fontSize: 64, lineHeight: 1.5 }}>測る → 比べる（今日の基準）→ 決める（3秒続いたら）→ 知らせる</div>
-        <div style={{ fontWeight: 700, fontSize: 44, lineHeight: 1.6, marginTop: 30, color: C.muted }}>
-          トレッドミルはカメラ（声）、外はセンサー（振動）。
-          <br />
-          センサーランの値はイメージです（録画はトレッドミル）。
+      <div style={{ position: 'absolute', left: 160, top: 170, right: 160 }}>
+        <div style={{ fontWeight: 900, fontSize: 60, lineHeight: 1.4, opacity: interpolate(f, [0, 8], [0, 1], clamp) }}>
+          このアプリが、フォームの崩れを見つけるしくみ
+        </div>
+        <div style={{ marginTop: 40 }}>
+          {rows.map(([k, v], i) => (
+            <div key={k} style={{ display: 'flex', alignItems: 'baseline', gap: 36, marginTop: 22, opacity: interpolate(f, [12 + i * 15, 20 + i * 15], [0, 1], clamp) }}>
+              <div style={{ width: 230, fontWeight: 900, fontSize: 56, color: C.accent, whiteSpace: 'nowrap' }}>{k}</div>
+              <div style={{ fontWeight: 700, fontSize: 48 }}>{v}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 44, lineHeight: 1.6, marginTop: 56, color: C.muted, opacity: interpolate(f, [80, 90], [0, 1], clamp) }}>
+          トレッドミルモードは声、外でのランニングモードは振動で知らせます。
         </div>
       </div>
     </Bg>
