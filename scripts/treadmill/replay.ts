@@ -14,14 +14,15 @@
 //   骨格の点（記録の19点）があるコマは、撮ったときと同じくコマとしてコーチに渡す（着地の位置は点から測る。src/modes/camera/landing.ts）
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
-import { LIMITS, REL_LIMITS, FORM, LANDING, GOOD, HIP_ABS, BASE_SETTLE } from '../../src/modes/camera/params'
-export { applyStrictness } from '../../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, FORM, LANDING, GOOD, HIP_ABS, BASE_SETTLE, BASELINE } from '../../src/modes/camera/params'
+export { applyStrictness, STAND_REF } from '../../src/modes/camera/params'
 import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
 import { CUE, RECOVER, SAY, PHRASES, FORM_SAY, phraseId } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'
 import { ITEM_KEYS, type Frame, type ItemKey, type RunLog, type Session } from '../../src/core/types'
-import type { HipAbs, Measure } from '../../src/modes/camera/types'
-import { midstance, stanceKnee } from '../../src/modes/camera/geometry'
+import type { HipAbs, Measure, StandA, StandRel } from '../../src/modes/camera/types'
+import { hipEarLean, midstance, stanceKnee } from '../../src/modes/camera/geometry'
+import { median } from '../../src/modes/camera/landing'
 import { PHONE_MEASURED, PHONE_VOICED, PhoneRun } from '../../src/modes/phone/session'
 import { PHONE_CUE } from '../../src/modes/phone/analyzer'
 import { MOUNT, PHONE_LIMITS } from '../../src/modes/phone/params'
@@ -154,7 +155,10 @@ export interface ReplayOut {
   // カメラ版の1秒ごとの記録（ふつうの時刻）：前側・後ろ側の値（yawSign）と、着地の窓の値（Sample.land。窓の山が足りない秒は無い）。
   // あわせて、着地の今日の基準と、速さが変わって作り直した回数
   // hipAbs：腰の決まった線の値（記録だけ。params.ts の HIP_ABS）。hipMid：その秒の立脚中期の腰の高さ。paused：姿勢を基準と比べなかった秒
-  secs?: { T: number; yaw?: number; land?: NonNullable<Session['samples'][number]['land']>; hipAbs?: HipAbs; hipMid?: number; paused?: boolean }[]
+  // stand：立った姿勢 a を基準にした値と、猫背の決まった線の候補（記録だけ。params.ts の STAND_REF）
+  secs?: { T: number; yaw?: number; land?: NonNullable<Session['samples'][number]['land']>; hipAbs?: HipAbs; hipMid?: number; paused?: boolean; stand?: StandRel }[]
+  // 立った姿勢 a（記録のイベント pose:a。無ければ null）。hipFrom：腰の高さを、イベントから取ったか（event）、a を測った3秒の記録の行から出したか（rows。腰を記録する前の記録）
+  standA?: (StandA & { hipFrom?: 'event' | 'rows' }) | null
   // 落ち着いてからの基準（params.ts の BASE_SETTLE）を作った時刻（ふつうの時刻）。作らずにあきらめたら -1、走りが短くて作らなかったら null
   settledT?: number | null
   landRef?: { heel: number; speed: number; near: string; n: number } | null
@@ -191,7 +195,9 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   if (opts.items !== 'all' && s?.focus) items = activeItems(s.focus.step)
   else if (opts.items !== 'all') warnings.push('結果（session）に「注意した項目」（focus）がないので、すべての項目で声をかけるとして通しました')
   const open = opts.setup === 'logged' ? loggedSetup(log, s).open : undefined
-  const coach = new Coach({ pause: RUNNING.pauseEnabled, items, ...(open ? { open } : {}) })
+  // 立った姿勢 a は、いつも撮ったときと同じに渡す（そこからの差を記録するだけで、声・判定は変わらない）
+  const standA = loggedStand(log)
+  const coach = new Coach({ pause: RUNNING.pauseEnabled, items, ...(open ? { open } : {}), stand: standA })
   const events: Ev[] = []
   // 骨格の点（記録の19点）からコマを作る（撮ったときにコーチに渡していたもの。なめらかにして傾きを直したあとの点）
   const off = log.columns.length - 1
@@ -226,7 +232,8 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     for (; seen < coach.samples.length; seen++) {
       const x = coach.samples[seen]
       const ha = (x as typeof x & { hipAbs?: HipAbs }).hipAbs
-      secs.push({ T: toT(t), yaw: x.yaw, ...(x.land ? { land: x.land } : {}), ...(ha ? { hipAbs: ha } : {}), ...(x.hipMid ? { hipMid: x.hipMid.hip } : {}), ...(x.paused ? { paused: true } : {}) })
+      const st = (x as typeof x & { stand?: StandRel }).stand
+      secs.push({ T: toT(t), yaw: x.yaw, ...(x.land ? { land: x.land } : {}), ...(ha ? { hipAbs: ha } : {}), ...(x.hipMid ? { hipMid: x.hipMid.hip } : {}), ...(x.paused ? { paused: true } : {}), ...(st ? { stand: st } : {}) })
     }
     const n = coach.refSeconds
     if (n < refCount || n === 0) refFrom = null
@@ -271,6 +278,7 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
       if (mid) m.mid = mid
       const k = stanceKnee(frame)
       if (k !== null) m.kst = k
+      m.hipEar = hipEarLean(frame)
     }
     handle(coach.update({ t, present: visible, moving, m, frame }), t)
     lastT = t
@@ -281,7 +289,7 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   const analyzer = (coach as unknown as { analyzer: { hipRef: { hip: number; knee: number } | null; settledAt: number | null; drift: { ref: ReplayOut['landRef']; rebuilds: number } } }).analyzer
   const hipRef = analyzer.hipRef?.hip ?? null
   const ref = lr && refFrom !== null && refTo !== null ? { from: refFrom, to: refTo, neck: lr.neck, trunk: lr.trunk, body: lr.body, headLean: lr.headLean, hipRatio: hipRef } : null
-  return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref, secs, settledT, landRef: analyzer.drift.ref, landRebuilds: analyzer.drift.rebuilds, form: coach.finish().form }
+  return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref, secs, settledT, standA, landRef: analyzer.drift.ref, landRebuilds: analyzer.drift.rebuilds, form: coach.finish().form }
 }
 
 // 撮ったときのベルトの速さと、胸を開いた立ち方（b）の首・頭の位置（Live.tsx が Coach に渡したもの）
@@ -292,6 +300,41 @@ export function loggedSetup(log: RunLog, s: Session | undefined): { kmh?: number
   const m = b && /neck (-?[\d.]+) headLean (-?[\d.]+)/.exec(b[1])
   if (m) out.open = { neck: Number(m[1]), headLean: Number(m[2]) }
   return out
+}
+
+// 撮ったときの立った姿勢 a（イベント pose:a の頭の位置・首・腰の高さ。Live.tsx が Coach に渡したもの）。無ければ null。
+// 腰の高さを記録する前の記録（イベントに hip が無い）は、a を測った BASELINE.collect 秒（イベントの直前）の、見えていた行の hipRatio の真ん中で代える
+export function loggedStand(log: RunLog): (StandA & { hipFrom?: 'event' | 'rows' }) | null {
+  const a = [...(log.events ?? [])].reverse().find((e) => typeof e[1] === 'string' && e[1].startsWith('pose:a '))
+  if (!a) return null
+  const num = (k: string) => {
+    const m = new RegExp(`(?:^| )${k} (-?[\\d.]+)`).exec(a[1])
+    return m ? Number(m[1]) : undefined
+  }
+  const headLean = num('headLean')
+  const neck = num('neck')
+  if (headLean === undefined || neck === undefined) return null
+  const hip = num('hip')
+  if (hip !== undefined) return { headLean, neck, hip, hipFrom: 'event' }
+  const [it, iv, ihip] = ['t', 'visible', 'hipRatio'].map((n) => log.columns.indexOf(n))
+  const hs = it < 0 || iv < 0 || ihip < 0 ? [] : log.rows.filter((r) => r[it] <= a[0] && r[it] >= a[0] - BASELINE.collect && r[iv] === 1 && r[ihip] > 0).map((r) => r[ihip])
+  return hs.length ? { headLean, neck, hip: median(hs), hipFrom: 'rows' } : { headLean, neck }
+}
+
+// 区間（ふつうの時刻 from〜to）の、立った姿勢 a を基準にした値の真ん中（params.ts の STAND_REF。記録だけ）。
+// hunch は猫背の決まった線の候補を越えた秒の割合、n は値のあった秒の数。値が無ければ undefined
+export function standStats(secs: NonNullable<ReplayOut['secs']>, from: number, to: number) {
+  const xs = secs.filter((x) => x.T >= from && x.T < to && x.stand).map((x) => x.stand!)
+  const med = (k: keyof StandRel) => {
+    const v = xs.map((x) => x[k]).filter((y): y is number => typeof y === 'number')
+    return v.length ? median(v) : undefined
+  }
+  const h = xs.filter((x) => x.hunchAbs !== undefined)
+  return {
+    n: xs.length,
+    headVsA: med('headVsA'), neckVsA: med('neckVsA'), hipVsA: med('hipVsA'), hipVsAAll: med('hipVsAAll'), hipEar: med('hipEar'), trunk: med('trunk'), headLean: med('headLean'),
+    hunch: h.length ? h.filter((x) => x.hunchAbs === 1).length / h.length : undefined,
+  }
 }
 
 // ---- スマホ版：生の値を PhoneRun にもう一度通す ----

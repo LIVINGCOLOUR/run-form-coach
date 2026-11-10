@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { makeCameraSample, type SampleSection } from './sample'
-import { classify, inventory, replayCamera, type Ev } from './replay'
+import { classify, inventory, loggedStand, replayCamera, type Ev } from './replay'
 import { CUE as CUE_P } from '../../src/core/params'
 
 // ふつう3分 → 頭を前に30秒 → 戻し30秒 → 体ごと前に30秒 → 戻し30秒（区間の始まりは 17:00 から1分後）
@@ -92,5 +92,21 @@ describe('トレッドミルの採点：走り始めの基準と「走ってい�
     // 走り始めは、直近10秒のコマの8割が走っているになってから、さらに2秒（約10秒）
     expect((a.runStartT! - from) / 1000).toBeLessThan(13)
     expect((b.runStartT! - from) / 1000).toBeGreaterThan(60)
+  })
+})
+
+describe('トレッドミルの採点：立った姿勢 a（イベント pose:a）', () => {
+  const log = (events: [number, string][], rows: number[][] = []) => ({ columns: ['t', 'phase', 'visible', 'hipRatio'], rows, events }) as unknown as Parameters<typeof loggedStand>[0]
+
+  it('イベントの頭の位置・首・腰の高さを読む。無ければ null', () => {
+    expect(loggedStand(log([[10, 'pose:a head 24.1 trunk -4.6 neck 28.4 headLean 22.5 yaw 0.028 hip 1.012']]))).toEqual({ headLean: 22.5, neck: 28.4, hip: 1.012, hipFrom: 'event' })
+    expect(loggedStand(log([[10, 'pose:b head 24.5 trunk -7.0 neck 31.5 headLean 21.9 yaw 0.115']]))).toBeNull()
+    // 測り直したら、あとの a
+    expect(loggedStand(log([[10, 'pose:a head 1 trunk 0 neck 2 headLean 3 yaw 0'], [20, 'pose:a head 1 trunk 0 neck 5 headLean 6 yaw 0']]))).toMatchObject({ neck: 5, headLean: 6 })
+  })
+
+  it('腰の高さが無い前の記録は、a を測った3秒（イベントの直前）の、見えていた行の腰の高さの真ん中で代える', () => {
+    const rows = [[5, 1, 1, 0.5], [8, 1, 1, 1.0], [9, 1, 1, 1.04], [9.5, 1, 0, 0.2], [10, 1, 1, 1.02], [11, 1, 1, 0.7]]
+    expect(loggedStand(log([[10, 'pose:a head 24.1 trunk -4.6 neck 28.4 headLean 22.5 yaw 0.028']], rows))).toEqual({ headLean: 22.5, neck: 28.4, hip: 1.02, hipFrom: 'rows' })
   })
 })

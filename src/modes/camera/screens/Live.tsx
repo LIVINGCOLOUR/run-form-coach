@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { RUNNING } from '../../../core/params'
 import { BASELINE, CORRECT, FRAME_SAY, SETUP, WAIT } from '../params'
 import { ITEM_KEYS, type Baseline, type Frame, type ItemKey, type Sample, type Session } from '../../../core/types'
-import type { Measure } from '../types'
+import type { Measure, StandA } from '../types'
 import { Coach, judged, type CoachEvent, type CoachState } from '../coach'
 import { facing, levelFrame, measure, nearSide, rotateFrame, sideOffDeg, yawSign } from '../geometry'
 import { worldAngles, type P3 } from '../world'
@@ -159,6 +159,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
     let poseStage: 'a' | 'b' = 'a'
     let poseRepeats = 0 // いまの立ち方を言い直した回数（BASELINE.forceAfter 回で、揺れを見ずに測る）
     let poseA: Standing | undefined // a のときのカメラの頭の位置と上体（記録と結果の画面用）
+    let standA: StandA | null = null // a のときの頭の位置・首・腰の高さ（Coach に渡す。そこからの差を記録するだけ。params.ts の STAND_REF）
     let standing: { head: number; trunk: number; issue: StandingIssue | null; hip?: number; habit?: Standing } | undefined
     let provisional: number[] = []
     let lastHud = 0
@@ -640,7 +641,10 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             // カメラの立ち姿勢の線（standing.ts）では、いつもの猫背とまっすぐを分けられなかったので、「まっすぐです」とは言わない
             const st = { head: median(baseStands.map((x) => x.head)), trunk: median(baseStands.map((x) => x.trunk)) }
             const cam = { trunk: st.trunk, head: st.head }
-            rec.event(t, `pose:${poseStage} head ${st.head.toFixed(1)} trunk ${st.trunk.toFixed(1)} neck ${median(baseNecks).toFixed(1)} headLean ${median(baseLeans).toFixed(1)} yaw ${median(baseYaws).toFixed(3)}`)
+            // 腰の高さ（hip）：腰の中心 → 低いほうの足首の高さ ÷ 脚の長さ（hipRatio）の真ん中。立った姿勢 a からの腰の下がりを記録するため（STAND_REF）
+            const hips = baseHips.filter((x) => x > 0)
+            const hipSt = hips.length ? median(hips) : undefined
+            rec.event(t, `pose:${poseStage} head ${st.head.toFixed(1)} trunk ${st.trunk.toFixed(1)} neck ${median(baseNecks).toFixed(1)} headLean ${median(baseLeans).toFixed(1)} yaw ${median(baseYaws).toFixed(3)}${hipSt !== undefined ? ` hip ${hipSt.toFixed(3)}` : ''}`)
             sensorRun?.pose(poseStage, t, BASELINE.collect, cam)
             const restart = () => {
               poseRepeats = 0
@@ -654,6 +658,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
             }
             if (poseStage === 'a') {
               poseA = st
+              standA = { headLean: median(baseLeans), neck: median(baseNecks), ...(hipSt !== undefined ? { hip: hipSt } : {}) }
               poseStage = 'b'
               setHud((hh) => ({ ...hh, pose: 'b' }))
               say(PHRASES.poseOpen, t)
@@ -719,7 +724,7 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
           }
         }
         // 検証中は一時停止を切っている（params.ts）。kmh：ベルトの速さ（入れたときだけ。速さで動く線をその速さにする）
-        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step), level: progress.level, kmh: beltRef.current, open: openPose })
+        if (baseline && !coachRef.current) coachRef.current = new Coach({ pause: RUNNING.pauseEnabled, items: activeItems(progress.step), level: progress.level, kmh: beltRef.current, open: openPose, stand: standA })
         const coach = coachRef.current
         // 走り出すのを待っている間は、黙ったままにしない。
         // 走りの始まりは、全身が見えたコマだけで歩数を数える（coach.ts の RunningGate）ので、体が入っていない・頭や足が切れているなら、

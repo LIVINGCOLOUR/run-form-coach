@@ -22,6 +22,8 @@ export interface Measure {
   // 片足のコマ（両足首の高さの差が脚の長さの HIP_MID.sep より大きい）だけ：低いほう（接地している側）の脚の膝の曲がり（度）。
   // 腰落ちの新しい候補（params.ts の HIP_COMB）に使う。記録するだけ
   kst?: number
+  // 腰の中心 → 両耳の真ん中の線の、鉛直からの前傾（度）。立った姿勢を基準にした値（params.ts の STAND_REF）と並べて記録するだけ
+  hipEar?: number
   // 進む向き（右へ走っていれば 1、左なら -1）
   dir: 1 | -1
 }
@@ -47,4 +49,29 @@ export interface HipComb {
   drop?: number
   knee?: number
   comb?: number
+}
+
+// その日の立った姿勢 a（2つの立ち方の、いつもの楽な立ち方）で測った値（Live.tsx のイベント pose:a）。
+//   headLean：頭の位置（肩 → 耳の線の傾き、度）・neck：首の角度（度）・hip：腰の中心 → 低いほうの足首の高さ ÷ 脚の長さ（hipRatio。測っていなければ無い）
+export interface StandA {
+  headLean: number
+  neck: number
+  hip?: number
+}
+
+// 立った姿勢 a を基準にした値と、猫背の決まった線の候補（params.ts の STAND_REF）の1秒の値。記録（Sample の stand）に残すだけで、声・判定・点数には使わない。
+// どれも直近 STAND_REF.window 秒の、測れた1秒の平均から作る。測れなかった値は無い。a を測っていないときは、a を引く値を null にする
+//   headVsA：頭の位置 − a（度）。neckVsA：首の角度 − a（度）
+//   hipVsA：a の腰の高さからの、立脚中期の腰の高さの下がり（%、下がると正）。hipVsAAll：同じく、全部のコマの腰の高さの下がり（%）
+//   hipEar：腰 → 耳の線の傾き（度、a を引かない）。hunchAbs：上体 ≥ STAND_REF.hunchTrunk かつ 頭の位置 ≥ STAND_REF.hunchHead なら 1（そうでなければ 0）
+//   trunk・headLean：hunchAbs を決めた上体と頭の位置の窓の平均（度）
+export interface StandRel {
+  headVsA?: number | null
+  neckVsA?: number | null
+  hipVsA?: number | null
+  hipVsAAll?: number | null
+  hipEar?: number
+  hunchAbs?: 0 | 1
+  trunk?: number
+  headLean?: number
 }

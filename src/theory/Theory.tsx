@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
 import { demoStride, REFERENCE } from '../modes/camera/ui/figure'
-import { FORM, GAIT, HIP_ABS, LANDING, LIMITS, REL_LIMITS } from '../modes/camera/params'
+import { FORM, GAIT, HIP_ABS, LANDING, LIMITS, REL_LIMITS, STAND_REF } from '../modes/camera/params'
 import { PHRASES } from '../core/phrases'
 import { Logic } from './Logic'
 
@@ -168,7 +168,7 @@ const POINTS: Point[] = [
     title: '上体の傾き',
     base: '腰から肩にかけて、わずかに前に傾く（見本は7°）。5000mのレースで測ると、接地のときの上体の前傾は日本の一流選手で約8.6°、ケニアの選手で約12.4°だった（筑波大学）。',
     off: '97人のランナーを調べた研究では、上体がまっすぐに近い人ほど記録が良かった（関係は弱く、エネルギーの消費とは関係がなかった）。一方で、上体を7°ほど前に倒して走ってもらうと、膝の負担が約6%減った。もともと前傾が大きい人は、膝の代わりにお尻（股関節）の筋肉が多く働いていた。倒れすぎず、反りすぎずが目安。',
-    how: `走り出しに、腰から肩の線が${FORM.trunk.min}〜${FORM.trunk.max}°、足首から肩の線が${FORM.body.min}〜${FORM.body.max}°（正しいフォームの範囲）に入っているかを見て、外れていれば1つずつ直してもらう。そのあとは、整えた形より腰から肩の線が${REL_LIMITS.trunk.cue}°以上、足首から肩の線が${REL_LIMITS.body.cue}°以上、前に倒れたり後ろに起きたりした状態が続いたら声をかける。背中が丸まった形（猫背）は、腰から肩の線の前傾と首の角度が、整えた形からいっしょに増えたとき（小さいほうが${LIMITS.hunch.cue}°を越えたとき）に、前かがみとは別に「${PHRASES.cueHunch}」と言う（横からの骨格の点では背中の曲がりそのものは測れないので、丸まると一緒に動く上体の線と頭で見る）。線の高さはランナーのレベルで変わる（上級ほどきびしい）。`,
+    how: `走り出しに、腰から肩の線が${FORM.trunk.min}〜${FORM.trunk.max}°、足首から肩の線が${FORM.body.min}〜${FORM.body.max}°（正しいフォームの範囲）に入っているかを見て、外れていれば1つずつ直してもらう。そのあとは、整えた形より腰から肩の線が${REL_LIMITS.trunk.cue}°以上、足首から肩の線が${REL_LIMITS.body.cue}°以上、前に倒れたり後ろに起きたりした状態が続いたら声をかける。背中が丸まった形（猫背）は、腰から肩の線の前傾と首の角度が、整えた形からいっしょに増えたとき（小さいほうが${LIMITS.hunch.cue}°を越えたとき）に、前かがみとは別に「${PHRASES.cueHunch}」と言う（横からの骨格の点では背中の曲がりそのものは測れないので、丸まると一緒に動く上体の線と頭で見る）。線の高さはランナーのレベルで変わる（上級ほどきびしい）。走る前のいつもの立ち方（a）からの頭の位置の差と、上体${STAND_REF.hunchTrunk}°以上かつ頭の位置${STAND_REF.hunchHead}°以上という決まった線（本人の記録だけで合わせた候補）は、記録するだけで声にはしない。`,
     status: 'coach',
     refs: ['enomoto', 'folland', 'teng', 'teng2015'],
     demo: { lean: 17, head: 3, drop: 0 },
@@ -219,7 +219,7 @@ const POINTS: Point[] = [
     title: '腰の高さ',
     base: `接地中に膝が曲がるのは${stanceMax(ideal.knee[0], ideal.stancePct)}°まで（研究データの平均は${stanceMax(normal.knee[0], normal.stancePct)}°）。腰が落ちずに、地面を真下に押して腰を高く運ぶ。`,
     off: '接地中に膝が伸びている人ほど、エネルギーの消費が少なかった。膝を深く曲げて腰を落として走ると、酸素の消費が最大50%増えた。日本でも、5000mのレースを横から撮った研究で、接地の中ほどで膝が伸びている人ほど力の使い方が良かった（筑波大学、32人、相関 r=0.362）。トレッドミルを真横から撮った研究では、接地から膝が曲がる量（膝のつぶれ）は平均21.6°だった（環太平洋大学ほか、7人）。',
-    how: `今日の基準（走り出しに整えた形）の腰の高さ（脚の長さに対する割合）から、${LIMITS.hip.cue}%以上下がった状態が続いたら声をかける。走り終わったら、腰の高さを立った姿勢と比べた割合を、研究データのふつうの走り（${pct1(GAIT.typical.hip.min)}〜${pct1(GAIT.typical.hip.max)}%）と並べて出す。カメラでは人どうしの比べの誤差がこの範囲の幅と同じくらいあるので、「腰が低い」とは声にしない。走っている間の腰の高さそのもの（立脚中期）も、決まった線（${HIP_ABS.line}）と比べて記録するが、腰落ちの例とよい例が重なり、まだ確かめていないので声にはしない。今日の基準の腰は、この線より下にしない。`,
+    how: `今日の基準（走り出しに整えた形）の腰の高さ（脚の長さに対する割合）から、${LIMITS.hip.cue}%以上下がった状態が続いたら声をかける。走り終わったら、腰の高さを立った姿勢と比べた割合を、研究データのふつうの走り（${pct1(GAIT.typical.hip.min)}〜${pct1(GAIT.typical.hip.max)}%）と並べて出す。カメラでは人どうしの比べの誤差がこの範囲の幅と同じくらいあるので、「腰が低い」とは声にしない。走っている間の腰の高さそのもの（立脚中期）も、決まった線（${HIP_ABS.line}）と比べて記録するが、腰落ちの例とよい例が重なり、まだ確かめていないので声にはしない。今日の基準の腰は、この線より下にしない。走る前のいつもの立ち方（a）の腰の高さから、走っている腰がどれだけ下がったかも記録する（声にはしない）。`,
     status: 'coach',
     refs: ['enomoto1999', 'tanaka2025', 'folland', 'mcmahon'],
     demo: { lean: 7, head: 0, drop: 16 },

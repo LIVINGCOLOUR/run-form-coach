@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { levelFrame, measure, midstance, rotateFrame, sideOffDeg, stanceKnee } from './geometry'
+import { hipEarLean, levelFrame, measure, midstance, rotateFrame, sideOffDeg, stanceKnee } from './geometry'
 import { itemScore, postureScore } from './scoring'
-import { clampHip, Coach, headForward, hipCombOf, hipCombRel, hipDropOf, hipOf, hunchOf, toScale } from './coach'
-import { applyStrictness, BASE_SETTLE, BASELINE, CAM_YAW, FORM, GOOD, goodAt, HEAD_OPEN, HIP_ABS, HIP_COMB, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
+import { clampHip, Coach, headForward, hipCombOf, hipCombRel, hipDropOf, hipOf, hunchOf, StandWatch, toScale } from './coach'
+import { applyStrictness, BASE_SETTLE, BASELINE, CAM_YAW, FORM, GOOD, goodAt, HEAD_OPEN, HIP_ABS, HIP_COMB, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STAND_REF, STRICT } from './params'
 import { formOver, formScale, FormStage, yawDeg, yawFixed } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, mainStride, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
@@ -16,7 +16,7 @@ import { CUE, HIP_REF, RUNNING } from '../../core/params'
 import { FOCUS, PHRASES, phraseId } from '../../core/phrases'
 import { correctFrames, demoStride, frameAngles, strideStats, DEMO_FRAMES, DEMO_SPM, REFERENCE } from './ui/figure'
 import type { FormGroup, FormResult, Frame, Sample, Session, Stride } from '../../core/types'
-import type { HipAbs, HipComb, Measure } from './types'
+import type { HipAbs, HipComb, Measure, StandRel } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
 
@@ -652,6 +652,97 @@ describe('腰落ち：立脚中期のコマだけで測る（geometry の midsta
     // 基準ができるまでは、生の値だけ
     expect((c.samples[0] as Sample & { hipComb?: HipComb }).hipComb).toMatchObject({ low: 0.95, kst: 27 })
     expect((c.samples[0] as Sample & { hipComb?: HipComb }).hipComb?.comb).toBeUndefined()
+  })
+
+  it('立った姿勢 a からの差：頭の位置・首は a を引いた値、腰は a の腰の高さからの下がり（%）。直近 STAND_REF.window 秒の平均で、minSecs 秒たまるまでは出さない', () => {
+    expect(STAND_REF).toMatchObject({ window: 6, hunchTrunk: 5, hunchHead: 45 })
+    const w = new StandWatch({ headLean: 22, neck: 28, hip: 1.0 })
+    const m: Measure = { ...good, headLean: 36, neck: 33, trunk: 4, hipEar: 10 }
+    const sec = (t: number, x: Measure, ok = true, hip: number | null = 0.93, low: number | null = 0.92, noRoll = false) => w.second(t, [x, x, x], ok, hip, low, noRoll)
+    for (let t = 1; t < STAND_REF.minSecs; t++) expect(sec(t, m)).toBeUndefined()
+    const r = sec(STAND_REF.minSecs, m)!
+    expect(r.headVsA).toBeCloseTo(14, 6)
+    expect(r.neckVsA).toBeCloseTo(5, 6)
+    expect(r.hipVsA).toBeCloseTo(7, 6)
+    expect(r.hipVsAAll).toBeCloseTo(8, 6)
+    expect(r).toMatchObject({ hipEar: 10, trunk: 4, headLean: 36, hunchAbs: 0 })
+    // 猫背の決まった線の候補：上体 ≥ 5° かつ 頭の位置 ≥ 45° の6秒平均で 1。窓が入れ替わるまでは平均が線に届かない
+    const hunch: Measure = { ...m, trunk: 8, headLean: 50 }
+    const after: StandRel[] = []
+    for (let t = STAND_REF.minSecs + 1; t <= STAND_REF.minSecs + STAND_REF.window; t++) after.push(sec(t, hunch)!)
+    expect(after[0].hunchAbs).toBe(0)
+    expect(after[after.length - 1]).toMatchObject({ hunchAbs: 1, trunk: 8, headLean: 50, headVsA: 28 })
+    // 上体だけ・頭だけでは 0
+    const w2 = new StandWatch(null)
+    for (let t = 1; t <= 6; t++) w2.second(t, [{ ...m, trunk: 8, headLean: 40 }], true, null, null, false)
+    expect(w2.second(7, [{ ...m, trunk: 8, headLean: 40 }], true, null, null, false)!.hunchAbs).toBe(0)
+  })
+
+  it('立った姿勢 a が無ければ a を引く値は null。a に腰が無ければ腰だけ null。走っていない・向きが斜めの秒は入れず、傾きの分からない秒は a を引かない値に入れない', () => {
+    const m: Measure = { ...good, headLean: 36, neck: 33, trunk: 4, hipEar: 10 }
+    const run = (f: (t: number) => StandRel | undefined) => {
+      let r: StandRel | undefined
+      for (let t = 1; t <= 6; t++) r = f(t)
+      return r
+    }
+    const w = new StandWatch(null)
+    const r = run((t) => w.second(t, [m], true, 0.93, 0.92, false))!
+    expect(r).toMatchObject({ headVsA: null, neckVsA: null, hipVsA: null, hipVsAAll: null, hipEar: 10, hunchAbs: 0 })
+    const noHip = new StandWatch({ headLean: 30, neck: 30 })
+    const r2 = run((t) => noHip.second(t, [m], true, 0.93, 0.92, false))!
+    expect(r2.headVsA).toBeCloseTo(6, 6)
+    expect(r2.hipVsA).toBeNull()
+    // 歩数で走っていない秒（ok でない）と、向きが真横から STAND_REF.yawMax より離れた秒は入れない
+    const skip = new StandWatch({ headLean: 30, neck: 30, hip: 1 })
+    const far: Measure = { ...m, yaw: (STAND_REF.yawMax + 1) * CAM_YAW.perDeg }
+    expect(run((t) => skip.second(t, [m], false, 0.93, 0.92, false))).toBeUndefined()
+    expect(run((t) => skip.second(10 + t, [far], true, 0.93, 0.92, false))).toBeUndefined()
+    // 傾きの分からない秒：a を引く値は出し、腰→耳・猫背の候補（a を引かない値）は出さない
+    const nr = new StandWatch({ headLean: 30, neck: 30, hip: 1 })
+    const r3 = run((t) => nr.second(t, [m], true, 0.93, null, true))!
+    expect(r3.headVsA).toBeCloseTo(6, 6)
+    expect(r3.hipVsA).toBeCloseTo(7, 6)
+    expect(r3.hipVsAAll).toBeUndefined()
+    expect(r3.hipEar).toBeUndefined()
+    expect(r3.hunchAbs).toBeUndefined()
+  })
+
+  it('腰 → 耳の線の傾き：腰の中心から両耳の真ん中への線の、鉛直からの前傾（進む向きが正）。measure の hipEar と同じ', () => {
+    const f: Frame = Array.from({ length: 33 }, () => ({ x: 0, y: 0, v: 1 }))
+    const put = (i: number, x: number, y: number) => (f[i] = { x, y, v: 1 })
+    put(23, 98, 300)
+    put(24, 102, 300)
+    const dx = 200 * Math.tan((10 * Math.PI) / 180)
+    put(7, 100 + dx - 3, 100)
+    put(8, 100 + dx + 3, 100)
+    expect(hipEarLean(f, 1)).toBeCloseTo(10, 6)
+    expect(hipEarLean(f, -1)).toBeCloseTo(-10, 6)
+    const d = demoStride()[0]
+    expect(measure(d).hipEar).toBeCloseTo(hipEarLean(d), 6)
+  })
+
+  it('立った姿勢 a からの差は記録（stand）に残すだけで、声・点数・ほかの値は変えない', () => {
+    const a = { headLean: 4, neck: 0, hip: 1 }
+    const run = (stand: typeof a | null) => {
+      const c = new Coach(stand ? { stand } : {})
+      const said = [...feedSparse(c, 0, 200, { ...good, hipEar: 8 }).speak, ...feedSparse(c, 200, 40, { ...headDown, trunk: 9, hipEar: 14 }).speak, ...feedSparse(c, 240, 40, { ...good, hipEar: 8 }).speak]
+      return { said, c }
+    }
+    const x = run(a)
+    const y = run(null)
+    expect(x.said).toEqual(y.said)
+    const strip = (s: Sample) => {
+      const o = { ...s } as Sample & { stand?: StandRel }
+      delete o.stand
+      return o
+    }
+    expect(x.c.samples.map(strip)).toEqual(y.c.samples.map(strip))
+    const st = (x.c.samples as (Sample & { stand?: StandRel })[]).filter((s) => s.stand?.headVsA != null)
+    expect(st.length).toBeGreaterThan(0)
+    // ふつうの走りの間は 頭の位置 12 − a の 4 = 8
+    expect(st[0].stand!.headVsA).toBeCloseTo(8, 6)
+    expect(st[0].stand!.hipVsA).toBeCloseTo(10, 6) // 立脚中期の腰 0.9 は a の 1.0 から 10% 下
+    expect((y.c.samples as (Sample & { stand?: StandRel })[]).every((s) => !s.stand || s.stand.headVsA === null)).toBe(true)
   })
 
   it('立脚中期のコマがない秒は腰を判定しない（記録の hipMid も無い）', () => {

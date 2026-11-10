@@ -46,7 +46,7 @@ const entry = join(tmp, 'treadmill-merge-entry.ts')
 writeFileSync(
   entry,
   [
-    `export { findJump, classify } from '${join(root, 'scripts/treadmill/replay.ts')}'`,
+    `export { findJump, classify, replayCamera, standStats, STAND_REF } from '${join(root, 'scripts/treadmill/replay.ts')}'`,
     `export { decodeBlock } from '${join(root, 'src/modes/sensor/log.ts')}'`,
     `export { expectedChest } from '${join(root, 'src/modes/sensor/expect.ts')}'`,
     `export { CHEST_EXPECT, HUNCH } from '${join(root, 'src/modes/sensor/params.ts')}'`,
@@ -215,6 +215,30 @@ for (const r of rows) {
   p(`| ${nameOf(s)} | ${KIND[s.kind] ?? s.kind} | ${clock(s.start)} | ${f1((s.end - s.start) / 1000, 0)}秒 | ${r.camN} | ${f1(r.trunk)} | ${f1(r.neck)} | ${f1(r.headLean)} | ${f1(r.body)} | ${f1(r.chest)} | ${f1(r.chestRef)} | ${f1(exp)} | ${r.pairN ? `${f1(r.pair)}（${r.pairN}秒）` : '—'} | ${f1(r.head)} | ${f1(r.waist)} | ${r.cwN ? `${f1(r.cw)}（${r.cwN}秒）` : '—'} | ${r.waistShare ? `${pc(r.waistShare)}・${f1(r.wHz, 0)}` : '—'} | ${f1(r.v)} | ${list(r.voices)} | ${list(r.buzz)} |`)
 }
 p()
+
+// ---- カメラ：立った姿勢 a からの差（記録だけ）----
+// 記録をいまのカメラ版の判定（撮ったときの項目）に通し直して、1秒ごとの値（params.ts の STAND_REF。直近6秒の平均）を区間ごとの真ん中にする
+if (camFile && (camLog.points ?? []).length) {
+  const rc = R.replayCamera(camFile.data, { items: 'logged' })
+  const a = rc.standA
+  const S = R.STAND_REF
+  const sg = (x, d = 1) => (M.finite(x) ? `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(d)}` : '—')
+  p('## カメラ：立った姿勢 a からの差と、猫背の決まった線の候補（記録だけ。声にしない）')
+  p()
+  p(`立った姿勢 a（いつもの楽な立ち方）：${a ? `頭の位置 ${f1(a.headLean)}°・首 ${f1(a.neck)}°・腰の高さ ${M.finite(a.hip) ? `${f1(a.hip, 3)}${a.hipFrom === 'rows' ? '（イベントに無いので、a を測った3秒の記録の行から出した）' : ''}` : 'なし'}` : '記録になし（a を引く値は出ない）'}。` +
+    `記録をいまの判定に通し直した1秒の値（直近 ${S.window}秒の平均）の、区間の中の真ん中。窓が区間の値に入れ替わるよう、区間の始めの ${S.window}秒（区間の半分より長ければ半分）は除く。` +
+    `頭 − a・首 − a は度。腰 − a は a の腰の高さからの下がり（%、下がると正）。腰→耳は腰の中心 → 両耳の真ん中の線の傾き（度）。猫背の候補は 上体 ≥ ${S.hunchTrunk}° かつ 頭の位置 ≥ ${S.hunchHead}° の秒の割合`)
+  p()
+  p('| 区間 | 種類 | 秒 | 頭 − a | 首 − a | 腰 − a（立脚中期） | 腰 − a（全部のコマ） | 腰→耳 | 上体 | 頭の位置 | 猫背の候補 |')
+  p('|---|---|---|---|---|---|---|---|---|---|---|')
+  for (const s of sections) {
+    if (!['normal', 'drill', 'gap', 'speed', 'moved'].includes(s.kind)) continue
+    const from = s.start + Math.min(S.window * 1000, (s.end - s.start) / 2)
+    const st = R.standStats(rc.secs ?? [], from + camOff.off, s.end + camOff.off)
+    p(`| ${nameOf(s)} | ${KIND[s.kind] ?? s.kind} | ${st.n} | ${sg(st.headVsA)} | ${sg(st.neckVsA)} | ${sg(st.hipVsA)}% | ${sg(st.hipVsAAll)}% | ${f1(st.hipEar)} | ${f1(st.trunk)} | ${f1(st.headLean)} | ${st.hunch === undefined ? '—' : pc(st.hunch)} |`)
+  }
+  p()
+}
 
 // ---- 胸の直し方（CHEST_EXPECT.k）----
 p('## 胸の正しい前傾の直し方（params.ts の CHEST_EXPECT.k）')

@@ -117,7 +117,13 @@ export function measure(frame: Frame): Measure {
   if (ms) m.mid = ms
   const k = stanceKnee(frame)
   if (k !== null) m.kst = k
+  m.hipEar = hipEarLean(frame, dir)
   return m
+}
+
+// 腰の中心 → 両耳の真ん中の線の、鉛直からの前傾（度。dir の向きが正）。立った姿勢を基準にした値（params.ts の STAND_REF）と並べて記録するだけ
+export function hipEarLean(frame: Frame, dir: 1 | -1 = facing(frame)): number {
+  return leanFromVertical(mid(frame[L.leftHip], frame[L.rightHip]), mid(frame[L.leftEar], frame[L.rightEar]), dir)
 }
 
 // 3点 a-b-c の b での曲がり（度）。まっすぐで 0

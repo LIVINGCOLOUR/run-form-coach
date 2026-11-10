@@ -320,6 +320,29 @@ function landingTable(d, r, name) {
   if (lr) p(`結果の画面の着地：速さで補正 ${pct(lr.value)}（かかとの前 ${pct(lr.heel)}・速さの目安 ${fmt(lr.speed, 2)}）、試しの線の内側だった窓 ${Math.round(lr.inside * 100)}%`)
   p()
 }
+// 立った姿勢 a を基準にした値（カメラ版。記録だけ。params.ts の STAND_REF）：区間ごとの、1秒の値（直近 STAND_REF.window 秒の平均）の真ん中。
+// 窓が区間の値に入れ替わるよう、区間のはじめ（窓の長さか、区間の半分の短いほう）は除く
+function standTable(d, r, name) {
+  if (!r?.secs?.some((x) => x.stand)) return
+  const S = R.STAND_REF
+  const a = r.standA
+  p(`### 立った姿勢 a からの差と、猫背の決まった線の候補（${name}。記録だけ）`)
+  p()
+  p(`立った姿勢 a（いつもの楽な立ち方）：${a ? `頭の位置 ${fmt(a.headLean)}°・首 ${fmt(a.neck)}°・腰の高さ ${a.hip !== undefined ? `${fmt(a.hip, 3)}${a.hipFrom === 'rows' ? '（イベントに無いので、a を測った3秒の記録の行から出した）' : ''}` : 'なし'}` : '記録になし（a を引く値は出ない）'}。` +
+    `頭 − a・首 − a は度。腰 − a は a の腰の高さからの下がり（%、下がると正。立脚中期のコマと、全部のコマ）。腰→耳は腰の中心 → 両耳の真ん中の線の傾き（度、a を引かない）。` +
+    `猫背の候補は、上体 ≥ ${S.hunchTrunk}° かつ 頭の位置 ≥ ${S.hunchHead}°（どちらも a を引かない6秒平均）を越えた秒の割合。値は区間の中の1秒の値の真ん中`)
+  p()
+  p('| 区間 | 種類 | 長さ | 秒 | 頭 − a | 首 − a | 腰 − a（立脚中期） | 腰 − a（全部のコマ） | 腰→耳 | 上体 | 頭の位置 | 猫背の候補 |')
+  p('|---|---|---|---|---|---|---|---|---|---|---|---|')
+  for (const s of sections.filter((x) => ['normal', 'drill', 'gap', 'speed', 'moved', 'speedup'].includes(x.kind))) {
+    const skip = Math.min(S.window, sec(s.end - s.start) / 2) * 1000
+    const st = R.standStats(r.secs, s.start + skip + d.off, s.end + d.off)
+    const nm = s.kind === 'gap' ? `戻し（${STEPS[s.after]?.name ?? s.after ?? ''}のあと）` : s.name
+    const sg = (x, k = 1) => (x === undefined || x === null || !Number.isFinite(x) ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(k)}`)
+    p(`| ${nm} | ${KIND_NAME[s.kind] ?? s.kind} | ${fmt(sec(s.end - s.start), 0)}秒 | ${st.n} | ${sg(st.headVsA)} | ${sg(st.neckVsA)} | ${sg(st.hipVsA)}% | ${sg(st.hipVsAAll)}% | ${fmt(st.hipEar)} | ${fmt(st.trunk)} | ${fmt(st.headLean)} | ${st.hunch === undefined ? '—' : `${Math.round(st.hunch * 100)}%`} |`)
+  }
+  p()
+}
 for (const d of devices) {
   const name = d.kind === 'camera' ? 'カメラ版' : 'スマホ版'
   const graded = d.sources.map((src) => ({ src, ...grade(src.cues, d.kind) }))
@@ -367,6 +390,7 @@ for (const d of devices) {
     startVoices(d)
     landingTable(d, d.now, 'いまの線')
     if (d.over) landingTable(d, d.over, '上書き')
+    standTable(d, d.now, 'いまの線')
   }
   // 今日の基準（整えたあとの形）を、どの区間で作ったか（カメラ版）。歩きや崩しの区間が混ざっていると、ふつうに走っても声が出る・崩しを見逃す
   if (d.kind === 'camera') {

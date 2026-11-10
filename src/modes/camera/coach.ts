@@ -1,10 +1,10 @@
 import { ITEM_KEYS, type Category, type FormGroup, type Frame, type ItemKey, type Sample, type Session, type Stride } from '../../core/types'
-import type { HipAbs, HipComb, Measure } from './types'
+import type { HipAbs, HipComb, Measure, StandA, StandRel } from './types'
 import { category } from '../../core/scoring'
 import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
-import { applySpeed, applyStrictness, BASE_SETTLE, CAM_YAW, FORM, HIP_ABS, HIP_COMB, HIP_MID, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
+import { applySpeed, applyStrictness, BASE_SETTLE, CAM_YAW, FORM, HIP_ABS, HIP_COMB, HIP_MID, HUNCH, LANDING, REL_LIMITS, STAND_REF, STRIDE } from './params'
 import type { Level } from '../../core/level'
 import { CUE as CUE_P } from '../../core/params'
 import { RunningGate } from './motion'
@@ -129,6 +129,58 @@ const roundComb = (c: HipComb): HipComb => {
   return o
 }
 
+// 立った姿勢 a を基準にした値と、猫背の決まった線の候補（params.ts の STAND_REF。記録だけ。声・判定・点数には使わない）。
+// 1秒ごとに、測れた値をためて、直近 STAND_REF.window 秒の平均から作る。a が無ければ、a を引く値は null
+type StandSec = { t: number; headLean: number; neck: number; roll: boolean; trunk: number; hipEar?: number; hip?: number; low?: number }
+export class StandWatch {
+  private win: StandSec[] = []
+  readonly a: StandA | null
+  constructor(a: StandA | null) {
+    this.a = a
+  }
+
+  // 1秒分：b はその秒のコマ、ok は歩数で走っていて速さが外れていない秒か、hip はその秒の立脚中期の腰の高さ（hipOf）、low は全部のコマの腰の高さ（hipCombOf）、
+  // noRoll はスマホの左右の傾きが分からなかったコマがあった秒か。向きが真横から STAND_REF.yawMax（度）よりずれた秒は入れない
+  second(t: number, b: Measure[], ok: boolean, hip: number | null, lowNow: number | null, noRoll: boolean): StandRel | undefined {
+    const w = this.win
+    if (ok && b.length && Math.abs(mean(b.map((m) => m.yaw)) / CAM_YAW.perDeg) <= STAND_REF.yawMax) {
+      const he = b.flatMap((m) => (m.hipEar === undefined ? [] : [m.hipEar]))
+      w.push({
+        t, headLean: mean(b.map((m) => m.headLean)), neck: mean(b.map((m) => m.neck)), trunk: mean(b.map((m) => m.trunk)), roll: !noRoll,
+        ...(he.length ? { hipEar: mean(he) } : {}), ...(hip !== null ? { hip } : {}), ...(lowNow !== null ? { low: lowNow } : {}),
+      })
+    }
+    while (w.length && w[0].t <= t - STAND_REF.window) w.shift()
+    const avg = (xs: (number | undefined)[]) => {
+      const v = xs.filter((x): x is number => x !== undefined)
+      return v.length >= STAND_REF.minSecs ? mean(v) : undefined
+    }
+    const a = this.a
+    const o: StandRel = {}
+    const head = avg(w.map((x) => x.headLean))
+    const neck = avg(w.map((x) => x.neck))
+    const hipMid = avg(w.map((x) => x.hip))
+    const low = avg(w.map((x) => x.low))
+    const drop = (v: number) => (a?.hip ? rnd(((a.hip - v) / a.hip) * 100, 2) : null)
+    if (head !== undefined) o.headVsA = a ? rnd(head - a.headLean, 1) : null
+    if (neck !== undefined) o.neckVsA = a ? rnd(neck - a.neck, 1) : null
+    if (hipMid !== undefined) o.hipVsA = drop(hipMid)
+    if (low !== undefined) o.hipVsAAll = drop(low)
+    // a を引かない値は、スマホの左右の傾きが分かった秒だけ
+    const rolled = w.filter((x) => x.roll)
+    const ear = avg(rolled.map((x) => x.hipEar))
+    if (ear !== undefined) o.hipEar = rnd(ear, 1)
+    const trunk = avg(rolled.map((x) => x.trunk))
+    const headAbs = avg(rolled.map((x) => x.headLean))
+    if (trunk !== undefined && headAbs !== undefined) {
+      o.trunk = rnd(trunk, 1)
+      o.headLean = rnd(headAbs, 1)
+      o.hunchAbs = trunk >= STAND_REF.hunchTrunk && headAbs >= STAND_REF.hunchHead ? 1 : 0
+    }
+    return Object.keys(o).length ? o : undefined
+  }
+}
+
 const meanOf = (xs: FormValues[]): FormValues => ({ trunk: mean(xs.map((x) => x.trunk)), body: mean(xs.map((x) => x.body)), neck: mean(xs.map((x) => x.neck)), headLean: mean(xs.map((x) => x.headLean)) })
 
 // 今日の基準にためる1秒（走り出しに作るときと、速さが変わって作り直すときに使う）
@@ -197,6 +249,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   settledAt: number | null = null
   // 腰の決まった線（記録だけ。params.ts の HIP_ABS）：腰を測れた1秒の値（直近 HIP_ABS.window 個まで）
   private hipAbsWin: { t: number; hip: number }[] = []
+  // 立った姿勢 a を基準にした値（記録だけ。params.ts の STAND_REF）。a は Coach を作るときに入れる
+  stand = new StandWatch(null)
   // 頭の声を待たせ始めた秒（待たせていなければ null）と、頭の声を猫背の声に替えた秒（defer。猫背を先に）
   private headHold: number | null = null
   private headTaken = -1e9
@@ -370,6 +424,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     const hipDrop = this.hipRef && hip ? hipDropOf(this.hipRef, hip) : 0
     // 腰の決まった線（記録だけ）：歩数で走っていて、速さが外れていない、腰を測れた秒をためる
     const hipAbs = this.hipAbsOf(t, stepping && !away && rt !== null ? hip : null)
+    // 立った姿勢 a を基準にした値（記録だけ）：歩数で走っていて、速さが外れていない秒をためる
+    const stand = this.stand.second(t, b, stepping && !away && rt !== null, hip ? hip.hip : null, comb ? comb.low : null, noRoll)
     // 頭は、今日の基準との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
     const head = ref ? headForward(neck - ref.neck, headLean - ref.headLean) : 0
     // 着地：窓（細かく見ていれば16秒、間引いて見ている間は30秒）の、基準と同じ脚の山の中央値と基準の差。歩数で走っていた秒だけ。
@@ -435,6 +491,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (comb) (sample as Sample & { hipComb?: HipComb }).hipComb = roundComb({ ...comb, ...(this.combRef ? hipCombRel(this.combRef, comb) : {}) })
     // 腰の決まった線（記録だけ。声・判定・点数には使わない。params.ts の HIP_ABS）
     if (hipAbs) (sample as Sample & { hipAbs?: HipAbs }).hipAbs = hipAbs
+    // 立った姿勢 a を基準にした値と、猫背の決まった線の候補（記録だけ。声・判定・点数には使わない。params.ts の STAND_REF）
+    if (stand) (sample as Sample & { stand?: StandRel }).stand = stand
     if (paused) sample.paused = true
     if (noRoll) sample.noRoll = true
     if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }
@@ -586,11 +644,13 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   //   その速さにする。無ければ講師の速さの線（今までの線）。カメラの速さの目安では動かさない（走り出しには分からず、置き方でずれるため）
   // open：胸を開いた立ち方（2つの立ち方の b）で測った首・頭の位置。頭の正しいフォームの線を、そこからの差でも見る（form.ts の headOver）。
   //   無ければ（動画で試す）線そのものだけ。コーチを作るたびに入れ替える
-  constructor(opts: { pause?: boolean; items?: ItemKey[]; level?: Level; kmh?: number; open?: { neck: number; headLean: number } } = {}) {
+  // stand：いつもの楽な立ち方（2つの立ち方の a）で測った頭の位置・首・腰の高さ。そこからの差を記録するだけ（params.ts の STAND_REF。声・判定には使わない）
+  constructor(opts: { pause?: boolean; items?: ItemKey[]; level?: Level; kmh?: number; open?: { neck: number; headLean: number }; stand?: StandA | null } = {}) {
     FORM.head.open = opts.open ?? null
     if (opts.level) applyStrictness(opts.level, opts.kmh)
     else if (opts.kmh !== undefined) applySpeed(opts.kmh) // 速さだけ渡されたときだけ入れ替える（採点の道具が書き換えた線を戻さないため）
     super(new CameraAnalyzer(), { holdUnjudged: true, sustain: CUE_P.sustain, ...opts })
+    this.camera.stand = new StandWatch(opts.stand ?? null)
   }
 
   private get camera() {
