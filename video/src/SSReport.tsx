@@ -31,7 +31,7 @@ export type SSData = {
 
 // ---- 長さ（フレーム） ----
 const TITLE = 75
-const VIEWS = 180 // 見る項目の一覧（6秒）
+const VIEWS = 240 // 見る項目の一覧（8秒）
 const CLIP = 630 // 録画の区間 21秒
 const S1_LEAD = 60
 const S1_TAIL = 45
@@ -165,7 +165,9 @@ function Title() {
 //   姿勢・腰・着地：src/modes/camera/params.ts の LIMITS・REL_LIMITS・FORM（着地の FORM.landing.say は true）、言葉は src/core/phrases.ts の cue…
 //   センサー：胸＝猫背、頭＝頭が前（lean.ts）、足首＝接地が長い・左右差と、大またでピッチが落ちた（contactCoach.ts）。腰落ちはセンサーランの腰のスマホで記録だけ（開発中。waistSit.ts）。上体の前傾・体ごとは測らない（docs/sensor-mode.md の表）
 //   カメラのピッチ：gait.ts で測って結果に出すだけ（docs/camera-mode.md の「見る項目」）
-//   腰のスマホ：声はピッチだけ。接地・上下動は記録だけ（src/modes/phone/params.ts、session.ts の PHONE_VOICED）
+//   腰のスマホ：声はピッチだけ。接地・上下動は仮の線で記録だけ、ブレーキは測り方を確かめ中、腰落ちは接地の割合と上下の山で見分ける形をセンサーランで試し中
+//     （src/modes/phone/params.ts、session.ts の PHONE_VOICED、docs/phone-spec.md の 6）。どれも「開発中」として出す。左右差は腰では取り違えが多く入れない
+//   上下動：カメラは gait.ts で測って結果に出すだけ
 type Mark = 'on' | 'rec' | 'dev' | null
 const VIEW_GROUPS: { name: string; rows: { item: string; sub: string; m: [Mark, Mark, Mark] }[] }[] = [
   {
@@ -177,13 +179,21 @@ const VIEW_GROUPS: { name: string; rows: { item: string; sub: string; m: [Mark, 
       { item: '体ごとの前傾', sub: '倒れすぎ・後ろに残る', m: ['on', null, null] },
     ],
   },
-  { name: '腰の高さ', rows: [{ item: '腰落ち', sub: '腰が落ちる', m: ['on', 'dev', null] }] },
+  {
+    name: '腰の高さ',
+    rows: [
+      { item: '腰落ち', sub: '腰が落ちる', m: ['on', 'dev', 'dev'] },
+      { item: '上下動', sub: '上に弾みすぎる', m: ['rec', null, 'dev'] },
+    ],
+  },
   {
     name: '足の運び',
     rows: [
       { item: '着地の位置', sub: '足が体より前に着く', m: ['on', null, null] },
       { item: 'ピッチ', sub: '1分の歩数が下がる（大また）', m: ['rec', 'on', 'on'] },
-      { item: '接地時間・左右差', sub: '接地が長い・左右でちがう', m: [null, 'on', 'rec'] },
+      { item: '接地時間', sub: '足が地面に長く着く', m: [null, 'on', 'dev'] },
+      { item: '左右差', sub: '接地が左右でちがう', m: [null, 'on', null] },
+      { item: 'ブレーキ', sub: '着地で前へ進む力が止まる', m: [null, null, 'dev'] },
     ],
   },
 ]
@@ -194,6 +204,7 @@ function Views() {
   const f = useCurrentFrame()
   const COL0 = 160
   const COLX = [1200, 1470, 1740] // 機器の列の中心
+  const RH = 58 // 1行の高さ
   let row = 0
   return (
     <Bg>
@@ -203,37 +214,43 @@ function Views() {
       <div style={{ position: 'absolute', inset: 0, opacity: interpolate(f, [VIEWS - 8, VIEWS], [1, 0], clamp) }}>
         {/* 機器の見出し */}
         {VIEW_DEV.map((t, i) => (
-          <div key={t} style={{ position: 'absolute', left: COLX[i] - 140, width: 280, top: 180, textAlign: 'center', ...fadeUp(f, 6) }}>
+          <div key={t} style={{ position: 'absolute', left: COLX[i] - 140, width: 280, top: 160, textAlign: 'center', ...fadeUp(f, 6) }}>
             <div style={{ fontWeight: 900, fontSize: 40 }}>{t}</div>
             <div style={{ fontWeight: 700, fontSize: 26, color: C.muted }}>（{VIEW_HOW[i]}）</div>
           </div>
         ))}
         {VIEW_GROUPS.map((g, gi) => {
-          const top0 = 290 + row * 76 + gi * 26
+          const top0 = 270 + row * RH + gi * 16
           const els = g.rows.map((r, ri) => {
-            const y = top0 + ri * 76
+            const y = top0 + ri * RH
             const at = 10 + (row + ri) * 3
             return (
-              <div key={r.item} style={{ position: 'absolute', left: 0, right: 0, top: y, height: 76, ...fadeUp(f, at) }}>
-                <div style={{ position: 'absolute', left: COL0 + 240, top: 10, fontWeight: 900, fontSize: 44, whiteSpace: 'nowrap' }}>
+              <div key={r.item} style={{ position: 'absolute', left: 0, right: 0, top: y, height: RH, ...fadeUp(f, at) }}>
+                <div style={{ position: 'absolute', left: COL0 + 240, top: 0, height: RH, display: 'flex', alignItems: 'center', fontWeight: 900, fontSize: 40, whiteSpace: 'nowrap' }}>
                   {r.item}
                   <span style={{ fontSize: 28, fontWeight: 700, color: C.muted, marginLeft: 20 }}>{r.sub}</span>
                 </div>
                 {r.m.map((m, i) =>
                   m === null ? null : m === 'on' ? (
-                    <div key={i} style={{ position: 'absolute', left: COLX[i] - 22, top: 16, width: 44, height: 44, borderRadius: 22, background: C.accent }} />
+                    <div key={i} style={{ position: 'absolute', left: COLX[i] - 22, top: (RH - 44) / 2, width: 44, height: 44, borderRadius: 22, background: C.accent }} />
+                  ) : m === 'dev' ? (
+                    // 開発中：薄い丸の上に「開発中」
+                    <div key={i} style={{ position: 'absolute', left: COLX[i] - 100, width: 200, top: 0, height: RH }}>
+                      <div style={{ position: 'absolute', left: 100 - 27, top: (RH - 54) / 2, width: 54, height: 54, borderRadius: 27, background: C.accent, opacity: 0.45 }} />
+                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, fontWeight: 900, color: C.text, textShadow: `0 0 6px ${C.bg}, 0 0 3px ${C.bg}` }}>開発中</div>
+                    </div>
                   ) : (
-                    <div key={i} style={{ position: 'absolute', left: COLX[i] - 100, width: 200, top: 22, textAlign: 'center', fontSize: 28, fontWeight: 700, color: C.faint }}>
-                      {m === 'dev' ? '開発中' : '記録のみ'}
+                    <div key={i} style={{ position: 'absolute', left: COLX[i] - 100, width: 200, top: 0, height: RH, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: C.faint }}>
+                      記録のみ
                     </div>
                   ),
                 )}
               </div>
             )
           })
-          const h = g.rows.length * 76
+          const h = g.rows.length * RH
           const gEl = (
-            <div key={`g${g.name}`} style={{ position: 'absolute', left: COL0, top: top0, height: h, width: 240, borderLeft: `6px solid ${C.accent}`, paddingLeft: 18, display: 'flex', alignItems: 'center', fontWeight: 900, fontSize: 40, color: C.accent, ...fadeUp(f, 10 + row * 3) }}>
+            <div key={`g${g.name}`} style={{ position: 'absolute', left: COL0, top: top0, height: h, width: 240, borderLeft: `6px solid ${C.accent}`, paddingLeft: 18, display: 'flex', alignItems: 'center', fontWeight: 900, fontSize: 38, color: C.accent, ...fadeUp(f, 10 + row * 3) }}>
               {g.name}
             </div>
           )
@@ -245,9 +262,14 @@ function Views() {
             </React.Fragment>
           )
         })}
-        <div style={{ position: 'absolute', left: COL0, top: 985, fontSize: 28, fontWeight: 700, color: C.muted, ...fadeUp(f, 40) }}>
+        <div style={{ position: 'absolute', left: COL0, top: 1005, fontSize: 28, fontWeight: 700, color: C.muted, ...fadeUp(f, 40) }}>
           <span style={{ display: 'inline-block', width: 26, height: 26, borderRadius: 13, background: C.accent, verticalAlign: 'middle', marginRight: 10 }} />
-          崩れが続いたら知らせる　　記録のみ：測って残すだけ（まだ知らせない）　　開発中：作っているところ
+          崩れが続いたら知らせる　　記録のみ：測って残すだけ（まだ知らせない）　　
+          <span style={{ position: 'relative', display: 'inline-block', width: 96, height: 30, verticalAlign: 'middle', marginRight: 10 }}>
+            <span style={{ position: 'absolute', left: 28, top: -5, width: 40, height: 40, borderRadius: 20, background: C.accent, opacity: 0.45 }} />
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, fontWeight: 900, color: C.text, textShadow: `0 0 5px ${C.bg}` }}>開発中</span>
+          </span>
+          作っているところ
         </div>
       </div>
     </Bg>
