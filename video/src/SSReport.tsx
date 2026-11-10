@@ -8,6 +8,7 @@ import { C, FPS, jp, num } from './theme'
 //   タイトル → 見る項目の一覧 → 1. カメラ版（本人の走りの録画に、アプリと同じ骨格の推定の点と角度を重ねる）
 //   → 2. センサーラン（はじめの一枚と、使っているセンサーの写真〔private/ss-sensor-*.jpg、本人の写真を切り抜いたもの〕のあと、同じ録画の上で、付ける場所を骨格の点に合わせて照準で示し、頭・胸・腰の線の傾きを出す）→ 締め
 // 録画と点の数字は本人だけのもの。node scripts/ss-prep.mjs で video/public/private/ に作る（git に入れない）。
+// 録画は、人とトレッドミルだけ残して背景を濃くぼかしたもの（*-bg.mp4、scripts/ss-personmask.swift で作る）を使う。
 // 角度・線・声の時刻は ss-data.json の値（アプリの測り方 geometry.ts の measure と、上級の猫背の線・CUE の決まりで出したもの）。
 // センサーランの値は実際のセンサーの記録ではない（録画は本物）。胸の傾きは、録画で測った猫背の増えを胸のセンサーの大きさに直した作り物（SIM_GAIN）
 
@@ -424,7 +425,7 @@ function Scene1({ d }: { d: SSData }) {
   const warn = f >= S1_LEAD && t >= d.baseSec && v > d.line
   const cueAt = d.cue !== null ? S1_LEAD + d.cue * FPS : null
   const recAt = d.recover !== null ? S1_LEAD + d.recover * FPS : null
-  const video = <OffthreadVideo src={staticFile('private/ss-clip.mp4')} muted style={{ width: VW, height: SS_H }} />
+  const video = <OffthreadVideo src={staticFile('private/ss-clip-bg.mp4')} muted style={{ width: VW, height: SS_H }} />
   // 線をこえた最初の秒の頭（決める段の始まり）
   const firstOver = d.secs.findIndex((x, i) => i >= d.baseSec && x !== null && x.hunch > d.line)
   const overAt = firstOver >= 0 ? S1_LEAD + firstOver * FPS : (cueAt ?? S1)
@@ -806,7 +807,7 @@ function Scene2({ d, track }: { d: SSData; track: Track }) {
   const u2 = Math.max(0, lineK * 2 - 1)
   const p1 = drawTo(waist, chest, u1)
   const p2 = drawTo(chest, head, u2)
-  const video = <OffthreadVideo src={staticFile('private/ss-clip2.mp4')} muted style={{ width: VW, height: SS_H }} />
+  const video = <OffthreadVideo src={staticFile('private/ss-clip2-bg.mp4')} muted style={{ width: VW, height: SS_H }} />
   const flash = buzzAt !== null ? interpolate(f, [buzzAt, buzzAt + 4, buzzAt + 30], [0, 0.9, 0], clamp) : 0
   // 値の札（体の前、胸と頭のあいだ）
   const tagX = Math.min(head.x, chest.x) - 70
