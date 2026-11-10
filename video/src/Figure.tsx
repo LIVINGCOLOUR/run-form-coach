@@ -22,6 +22,7 @@ export function Figure({
   over = 0,
   arm,
   overlay,
+  slowLabel = true,
 }: {
   frame: number
   lean: number
@@ -35,6 +36,7 @@ export function Figure({
   over?: number
   arm?: number // 腕振りの大きさ（1 = 見本）。2本目の動画のセンサーの場面で使う
   overlay?: (fr: Frame) => ReactNode // 骨格の上に描き足すもの（腰のスマホ、センサーなど）。座標は骨格と同じ
+  slowLabel?: boolean // 「スロー再生（1/2）」を出すか（SS の報告のイメージの絵では出さない）
 }) {
   const strides = useMemo(() => demoStride({ lean, head, drop: drop ?? (lean > 12 ? 6 : 0), over, arm }), [lean, head, drop, over, arm])
   const ghostStrides = useMemo(() => (ghost ? demoStride({ lean: ghost.lean, head: ghost.head, drop: 0 }) : null), [ghost])
@@ -48,9 +50,11 @@ export function Figure({
   return (
     <g transform={transform}>
       <path d="M20 434H340" stroke={C.line} strokeWidth={3} />
-      <text x={340} y={462} textAnchor="end" fill={C.faint} fontSize={15} fontFamily={jp} fontWeight={700}>
-        スロー再生（1/2）
-      </text>
+      {slowLabel && (
+        <text x={340} y={462} textAnchor="end" fill={C.faint} fontSize={15} fontFamily={jp} fontWeight={700}>
+          スロー再生（1/2）
+        </text>
+      )}
       <g stroke={C.limbBack} strokeLinecap="round" strokeLinejoin="round" fill="none">
         <path d={p.legBack} strokeWidth={20} />
         <path d={p.armBack} strokeWidth={16} />
