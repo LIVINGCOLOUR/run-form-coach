@@ -5,9 +5,9 @@ import type { Packet, Vec3 } from './parse'
 import { sensors } from './ble'
 import { SensorRunner } from './runner'
 import { expectedChest } from './expect'
-import { WaistPhone } from './waist'
+import { WaistPhone, WAIST_RAW_COLUMNS, type WaistRawLog } from './waist'
 import type { MotionLike } from '../phone/sensor'
-import { sensorRunCounts } from './runLog'
+import { SENSOR_LOG_PATHS, sensorRunCounts } from './runLog'
 import { PHRASES } from '../../core/phrases'
 import type { RunLog } from '../../core/types'
 
@@ -485,6 +485,13 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     const last = log.sec!.filter((row) => row[iw] !== null).pop()!
     expect(last[iw]!).toBeCloseTo(4, 0)
     expect(last[ih]!).toBeGreaterThan(0)
+    // 腰落ち（記録だけ）の欄と、腰のスマホの生の値（テスト期間。sensors.waistRaw は60秒ごとに端末へ書き出す）
+    for (const c of ['wCad', 'wDuty', 'wPeak', 'wSitIdx', 'wSit', 'wSkip']) expect(log.secCols).toContain(c)
+    const raw = (log as typeof log & WaistRawLog).waistRaw!
+    expect((log as typeof log & WaistRawLog).waistRawCols).toEqual(WAIST_RAW_COLUMNS)
+    expect(raw.length).toBeGreaterThan(100)
+    expect(raw[raw.length - 1]).toHaveLength(WAIST_RAW_COLUMNS.length)
+    expect(SENSOR_LOG_PATHS).toContain('sensors.waistRaw')
   })
 
   it('頭だけ：いつもの頭（前へ15°）と顎を引いた頭で測り、前に出たまま走り出すと走る前傾を覚える前から震わせ、直すとほめる（声は出さない）', () => {

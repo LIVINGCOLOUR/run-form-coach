@@ -153,20 +153,34 @@ if (camLog) {
 const sec = []
 const buzz = []
 let waistEv = []
+const sitEv = []
+// 腰落ち（センサーランの腰のスマホ。記録だけ。src/modes/sensor/waistSit.ts）の1秒ごとの欄
+const WSIT = [
+  { key: 'wCad', name: 'ピッチ', d: 0 },
+  { key: 'wBounce', name: '上下動 cm', d: 1 },
+  { key: 'wCt', name: '有効接地 ms', d: 0 },
+  { key: 'wDuty', name: '接地の割合', d: 3 },
+  { key: 'wPeak', name: '山 g', d: 2 },
+  { key: 'wDutyPct', name: '割合の増え %', d: 1 },
+  { key: 'wPeakPct', name: '山の変わり %', d: 1 },
+  { key: 'wSitIdx', name: '見分けの値', d: 2 },
+]
 let belt
 if (senLog) {
   const toT = epoch(senLog)
   const sc = senLog.sensors?.secCols ?? []
   const col = (n) => sc.indexOf(n)
-  const ix = Object.fromEntries(['run', 'chest', 'chestRef', 'head', 'waist', 'wHz', 'v'].map((n) => [n, col(n)]))
+  const ix = Object.fromEntries(['run', 'chest', 'chestRef', 'head', 'waist', 'wHz', 'v', 'wSit', 'wSkip', ...WSIT.map((c) => c.key)].map((n) => [n, col(n)]))
   for (const r of senLog.sensors?.sec ?? []) {
     const g = (n) => (ix[n] < 0 ? null : r[ix[n]])
-    sec.push({ T: toT(r[0]) - senOff.off, run: g('run') === 1, chest: g('chest'), chestRef: g('chestRef'), head: g('head'), waist: g('waist'), wHz: g('wHz'), v: g('v') })
+    sec.push({ T: toT(r[0]) - senOff.off, run: g('run') === 1, chest: g('chest'), chestRef: g('chestRef'), head: g('head'), waist: g('waist'), wHz: g('wHz'), v: g('v'), wSit: g('wSit'), wSkip: g('wSkip'), ...Object.fromEntries(WSIT.map((c) => [c.key, g(c.key)])) })
   }
   for (const [t, text] of senLog.events) {
     const item = M.buzzItem(text)
     if (item) buzz.push({ T: toT(t) - senOff.off, item })
-    if (/^waist[: ]/.test(text)) waistEv.push(`${clock(toT(t) - senOff.off)} ${text}`)
+    // 腰落ちの出来事（waist:ref・waist:sit・waist:sitOk）は、下の腰落ちの表に区間ごとに出す
+    if (/^waist:(sit|ref)/.test(text)) sitEv.push({ T: toT(t) - senOff.off, text })
+    else if (/^waist[: ]/.test(text)) waistEv.push(`${clock(toT(t) - senOff.off)} ${text}`)
   }
   const b = [...senLog.events, ...(camLog?.events ?? [])].find((e) => /^belt:kmh /.test(e[1]))
   if (b) belt = Number(b[1].split(' ')[1])
@@ -232,6 +246,27 @@ if (senFile) {
   p(`- 胸 − 腰（区間の種類ごとの真ん中）：ふつう ${fmt(normal)}・猫背 ${fmt(hunch)}・胸を開く ${fmt(open)}。猫背とふつうの差が、速さや付け直しでも保たれるかを走るたびに見る`)
   p(`- 走っていた ${runSecs.length} 秒のうち、腰の値があった秒 ${runSecs.filter((q) => M.finite(q.waist)).length}（画面が消えた・裏に回った間は値が来ない。埋めていない）`)
   p()
+  if (sec.some((q) => M.finite(q.wDuty))) {
+    p('### 腰落ち（腰のスマホ。記録だけ・開発中）')
+    p()
+    p('1秒ごとの値は直近6秒の窓から出すので、崩しの区間は始め6秒を除いた秒の真ん中（崩しの区間の「見分けの値」の最大も同じ秒から）。' +
+      '割合の増え・山の変わりは、同じ速さのふつうの走り（基準。events の waist:ref）から。見分けの値 =（接地の割合の z − 山の z）÷ ふつうの走りでのそのばらつき。' +
+      '「決まり」の秒：見分けの値 ≥ 3、または 割合 +8% 以上かつ山 −9% 以下（params.ts の WAIST_SIT）。胸が猫背の線を越えた秒は判定しない')
+    p()
+    p(`| 区間 | 種類 | 秒 | ${WSIT.map((c) => c.name).join(' | ')} | 見分けの値の最大 | 決まりの秒 | 胸で止めた秒 | 出来事 |`)
+    p(`|---|---|---|${WSIT.map(() => '---').join('|')}|---|---|---|---|`)
+    for (const s of sections) {
+      if (!['normal', 'drill', 'gap', 'speed'].includes(s.kind)) continue
+      const from = s.start + (s.kind === 'drill' ? 6000 : 0)
+      const qs = sec.filter((q) => q.T >= from && q.T < s.end && q.run)
+      const ev = sitEv.filter((e) => e.T >= s.start && e.T < s.end + 6000).map((e) => e.text.replace(/ duty .*$/, '')).join('・')
+      const idx = qs.map((q) => q.wSitIdx).filter(M.finite)
+      p(`| ${nameOf(s)} | ${KIND[s.kind] ?? s.kind} | ${qs.length} | ${WSIT.map((c) => f1(M.median(qs.map((q) => q[c.key]).filter(M.finite)), c.d)).join(' | ')} | ${idx.length ? f1(Math.max(...idx), 2) : '—'} | ${qs.filter((q) => q.wSit === 1).length} | ${qs.filter((q) => q.wSkip === 5).length} | ${ev || '—'} |`)
+    }
+    p()
+    p(`基準：${sitEv.filter((e) => e.text.startsWith('waist:ref')).map((e) => `${clock(e.T)} ${e.text.replace('waist:ref ', '')}`).join('／') || 'まだない'}`)
+    p()
+  }
 }
 
 const md = out.join('\n')

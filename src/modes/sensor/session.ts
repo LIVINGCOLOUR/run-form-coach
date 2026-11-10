@@ -10,7 +10,8 @@ import { angleDeg, HeadYield, LeanDetector, type CamValues } from './lean'
 import type { Vec3 } from './parse'
 import { SensorRecorder } from './log'
 import { ANKLES, CONTACT, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
-import type { WaistPhone } from './waist'
+import { WAIST_RAW_COLUMNS, type WaistPhone, type WaistRawLog } from './waist'
+import { WAIST_SKIP } from './waistSit'
 
 // 1回の走りの間、つないだセンサーの値を記録し、胸で猫背を、頭で頭が前に出たのを見て、その場所を震わせる（runner.ts の SensorRunner から使う）。
 // 区切りは外から渡す：立った姿勢を取った時刻（stand）と、走っているか（tick）。カメラ版はカメラの直立の基準と歩数で決めた「走っている」、
@@ -36,6 +37,7 @@ export type PoseResult = { retry: boolean; parts: { key: Key; place: string; deg
 
 const r2 = (x: number) => Math.round(x * 100) / 100
 const r4v = (v: Vec3) => v.map((x) => Math.round(x * 1e4) / 1e4) as [number, number, number]
+const r2n = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? null : Math.round(x * 100) / 100)
 const r1n = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? null : Math.round(x * 10) / 10)
 const r3n = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000)
 
@@ -43,7 +45,12 @@ const r3n = (x: number | null | undefined) => (x === null || x === undefined || 
 // 接地の割合・左右の接地時間（ms）・見積もった速さ（km/h）・ピッチ（歩/分）・胸と頭の猫背の割合（2つの立ち方で見たとき。b ＝ 0、a ＝ 1）・
 // GPS（センサーランだけ。gps.ts）の速さ（km/h）と横の誤差（m）・高さ（m）と高さの誤差（m）・
 // 腰のスマホ（センサーランだけ。waist.ts）の傾き（度。b から。2つの立ち方の差が小さければ向きによらない角度）と、ならした重力の向き（スマホの軸、長さ1）・その1秒に届いた値の数。値がなければ null
-export const SEC_COLS = ['t', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx', 'gpsV', 'gpsAcc', 'alt', 'altAcc', 'waist', 'wgx', 'wgy', 'wgz', 'wHz']
+// 腰落ち（センサーランの腰のスマホ。記録だけ。waistSit.ts）：直近6秒の窓のピッチ（歩/分）・上下動（cm）・有効接地時間（ms）・接地の割合・上下の加速度の山（g）、
+//   同じ速さのふつうの走り（基準）からの接地の割合と山の変わり（%）・見分けの値 wSitIdx・その秒が決まりを満たしたか wSit（1/0）・判定しなかったわけ wSkip（WAIST_SKIP の番号。0 は判定した）
+export const SEC_COLS = [
+  't', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx', 'gpsV', 'gpsAcc', 'alt', 'altAcc', 'waist', 'wgx', 'wgy', 'wgz', 'wHz',
+  'wCad', 'wBounce', 'wCt', 'wDuty', 'wPeak', 'wDutyPct', 'wPeakPct', 'wSitIdx', 'wSit', 'wSkip',
+]
 
 const zeroCounts = (): SensorCounts => ({ chest: 0, head: 0, sit: 0, longL: 0, longR: 0, stride: 0 })
 
@@ -269,6 +276,13 @@ export class SensorSession {
     this.tickContact(t, running)
     this.waist?.tick(t)
     this.tickLog(t, running, gps)
+    // 腰のスマホの生の値（テスト期間）を記録へ移す。記録がまだない（センサーの値が届く前）ぶんは捨てる
+    const raw = this.waist?.takeRaw()
+    if (raw?.length && this.rec) {
+      const log: SensorLog & WaistRawLog = this.rec.log
+      log.waistRawCols ??= WAIST_RAW_COLUMNS
+      ;(log.waistRaw ??= []).push(...raw)
+    }
   }
 
   // 崩れを知らせる：その場所を震わせ、記録と events に残す。capped：この知らせで1時間の上限に達した
@@ -311,12 +325,19 @@ export class SensorSession {
       const h = this.lastLean.head
       const m = this.contact.last
       const idx = (key: Key) => r3n(this.parts.find((y) => y.key === key)?.d.index(this.lastLean[key].tilt))
-      const w = this.waist?.second(t) ?? null
+      // 腰落ちの速さ：足首のセンサーの見積もり（走っている間）、なければ GPS。ベルトの速さは使わない（1回入れるだけで、途中で速さを変えると合わなくなる）
+      const v = this.contact.last?.v
+      const speed = v !== undefined && Number.isFinite(v) ? v : (gps?.v ?? null)
+      const chestOver = !!this.parts.find((y) => y.key === 'chest')?.d.over
+      const w = this.waist?.second(t, { running, chestOver, v: speed }) ?? null
+      const wg = w?.gait
+      const ws = w?.sit
       this.rec.second(SEC_COLS, [
         r2(t), running ? 1 : 0, r1n(c.tilt), r1n(c.ref), r1n(h.tilt), r1n(h.ref), c.bent || h.bent ? 1 : 0,
         r3n(m?.df), r1n(m ? m.ctL * 1000 : null), r1n(m ? m.ctR * 1000 : null), r1n(m?.v), r1n(m?.cad), idx('chest'), idx('head'),
         r1n(gps?.v), r1n(gps?.acc), r1n(gps?.alt), r1n(gps?.altAcc),
         r1n(w?.tilt), r3n(w?.g?.[0]), r3n(w?.g?.[1]), r3n(w?.g?.[2]), w ? w.n : null,
+        r1n(wg?.cad), r1n(wg?.bounceCm), r1n(wg?.contactMs), r3n(wg?.duty), r3n(wg?.peakG), r1n(ws?.dutyPct), r1n(ws?.peakPct), r2n(ws?.index), ws ? ws.sit : null, ws ? WAIST_SKIP.indexOf(ws.skip) : null,
       ])
     }
     if (t >= this.nextBat) {

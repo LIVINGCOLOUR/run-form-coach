@@ -7,7 +7,7 @@ import type { SensorRunner } from './runner'
 // カメラなしで使ったセンサーの記録（センサーラン、腰スマホといっしょ）。形はカメラ版と同じ RunLog（rows は空、mode: 'sensor'）で、
 // センサーの値（sensors.blocks）と1秒ごとのまとめ（sensors.sec）を、走っている間 60秒ごとに端末へ少しずつ書き出す（core/logChunks.ts。7時間でも残す）。
 // 入れ物は SENSOR_LOGS。Mac へは runs/sensor/rfc-sensor-年月日-時分_<id>.json で送る（2時間より長ければ分けて送り、npm run logs がつなぐ）
-export const SENSOR_LOG_PATHS = ['sensors.blocks', 'sensors.sec']
+export const SENSOR_LOG_PATHS = ['sensors.blocks', 'sensors.sec', 'sensors.waistRaw']
 
 export class SensorRunLog {
   readonly log: RunLog
