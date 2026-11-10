@@ -30,7 +30,7 @@ export type SSData = {
 }
 
 // ---- 長さ（フレーム） ----
-const TITLE = 75
+const TITLE = 180
 const VIEWS = 240 // 見る項目の一覧（8秒）
 const CLIP = 630 // 録画の区間 21秒
 const S1_LEAD = 60
@@ -148,12 +148,30 @@ function VoiceCap({ text, from, to, warn, top }: { text: string; from: number; t
 
 function Title() {
   const f = useCurrentFrame()
+  // モードは3つ（見る項目の一覧の列と同じ名前・同じ知らせ方）
+  const modes: [string, string, string][] = [
+    ['カメラ', 'トレッドミルの横にスマホ1台', '声'],
+    ['センサー', '体に付けて外を走る（自作）', '振動'],
+    ['腰のスマホ', 'スマホ1台を腰に付けて外を走る', '声'],
+  ]
   return (
     <Bg>
-      <div style={{ position: 'absolute', left: 160, top: 360, opacity: interpolate(f, [0, 8], [0, 1], clamp) }}>
+      <div style={{ position: 'absolute', left: 160, top: 170, opacity: interpolate(f, [0, 8], [0, 1], clamp) }}>
         <div style={{ fontWeight: 900, fontSize: 110, lineHeight: 1.2 }}>ランフォームコーチ</div>
         <div style={{ fontWeight: 700, fontSize: 52, marginTop: 20 }}>走りながら、フォームを直すアプリ</div>
         <div style={{ fontSize: 32, fontWeight: 700, color: C.muted, marginTop: 30 }}>Singularity Society 活動報告　2026年11月　しくみの説明</div>
+      </div>
+      <div style={{ position: 'absolute', left: 160, right: 160, top: 610 }}>
+        <div style={{ fontWeight: 900, fontSize: 44, color: C.accent, ...fadeUp(f, 30) }}>モードは3つ</div>
+        <div style={{ display: 'flex', gap: 32, marginTop: 24 }}>
+          {modes.map(([name, how, tell], i) => (
+            <div key={name} style={{ flex: 1, border: `2px solid ${C.line}`, borderRadius: 16, padding: '26px 30px', ...fadeUp(f, 40 + i * 10) }}>
+              <div style={{ fontWeight: 900, fontSize: 52 }}>{name}</div>
+              <div style={{ fontWeight: 700, fontSize: 28, color: C.muted, marginTop: 12 }}>{how}</div>
+              <div style={{ fontWeight: 900, fontSize: 30, color: C.accent, marginTop: 16 }}>{tell}で知らせる</div>
+            </div>
+          ))}
+        </div>
       </div>
     </Bg>
   )
