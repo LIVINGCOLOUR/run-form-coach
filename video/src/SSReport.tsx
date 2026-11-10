@@ -165,8 +165,9 @@ function Title() {
 //   姿勢・腰・着地：src/modes/camera/params.ts の LIMITS・REL_LIMITS・FORM（着地の FORM.landing.say は true）、言葉は src/core/phrases.ts の cue…
 //   センサー：胸＝猫背、頭＝頭が前（lean.ts）、足首＝接地が長い・左右差と、大またでピッチが落ちた（contactCoach.ts）。腰落ちはセンサーランの腰のスマホで記録だけ（開発中。waistSit.ts）。上体の前傾・体ごとは測らない（docs/sensor-mode.md の表）
 //   カメラのピッチ：gait.ts で測って結果に出すだけ（docs/camera-mode.md の「見る項目」）
-//   腰のスマホ：声はピッチだけ。接地・上下動は仮の線で記録だけ、ブレーキは測り方を確かめ中、腰落ちは接地の割合と上下の山で見分ける形をセンサーランで試し中
-//     （src/modes/phone/params.ts、session.ts の PHONE_VOICED、docs/phone-spec.md の 6）。どれも「開発中」として出す。左右差は腰では取り違えが多く入れない
+//   腰のスマホ：声はピッチだけ。接地・上下動は仮の線で記録だけ、腰落ちは接地の割合と上下の山で見分ける形をセンサーランで試し中
+//     （src/modes/phone/params.ts、session.ts の PHONE_VOICED、docs/phone-spec.md の 6）。どれも「開発中」として出す。左右差は腰では取り違えが多く入れない。
+//     ブレーキも測ってはいるが、腰だけで確かめた方法がないので出さない
 //   上下動：カメラは gait.ts で測って結果に出すだけ
 type Mark = 'on' | 'rec' | 'dev' | null
 const VIEW_GROUPS: { name: string; rows: { item: string; sub: string; m: [Mark, Mark, Mark] }[] }[] = [
@@ -175,8 +176,8 @@ const VIEW_GROUPS: { name: string; rows: { item: string; sub: string; m: [Mark, 
     rows: [
       { item: '猫背', sub: '背中が丸まる', m: ['on', 'on', null] },
       { item: '頭が前', sub: '頭が前に出る', m: ['on', 'on', null] },
-      { item: '上体の前傾', sub: '前かがみ・起きすぎ', m: ['on', null, null] },
-      { item: '体ごとの前傾', sub: '倒れすぎ・後ろに残る', m: ['on', null, null] },
+      // カメラの上体（腰→肩）と体全体（足首→肩）の前傾を1行に（見る人には違いが分かりにくいので）
+      { item: '前傾', sub: '前かがみ・倒れすぎ・起きすぎ', m: ['on', null, null] },
     ],
   },
   {
@@ -189,11 +190,13 @@ const VIEW_GROUPS: { name: string; rows: { item: string; sub: string; m: [Mark, 
   {
     name: '足の運び',
     rows: [
-      { item: '着地の位置', sub: '足が体より前に着く', m: ['on', null, null] },
+      // 足を体より前に着くほどブレーキが大きい（脚の角度でブレーキの山のばらつきの8〜9割、Baker 2024）ので1行に。
+      // センサーは足首の着地の角度で見られる見込み（開発中）。腰のスマホのブレーキは確かめ方がなく出さない（本人の決め 2026-11-10）
+      { item: '着地の位置・ブレーキ', sub: '足を前に着きすぎる', m: ['on', 'dev', null] },
       { item: 'ピッチ', sub: '1分の歩数が下がる（大また）', m: ['rec', 'on', 'on'] },
-      { item: '接地時間', sub: '足が地面に長く着く', m: [null, 'on', 'dev'] },
+      // カメラの接地時間は、1秒に約12コマを多くの歩でまとめて出す形で作る予定（開発中）
+      { item: '接地時間', sub: '足が地面に長く着く', m: ['dev', 'on', 'dev'] },
       { item: '左右差', sub: '接地が左右でちがう', m: [null, 'on', null] },
-      { item: 'ブレーキ', sub: '着地で前へ進む力が止まる', m: [null, null, 'dev'] },
     ],
   },
 ]
@@ -204,7 +207,7 @@ function Views() {
   const f = useCurrentFrame()
   const COL0 = 160
   const COLX = [1200, 1470, 1740] // 機器の列の中心
-  const RH = 58 // 1行の高さ
+  const RH = 64 // 1行の高さ
   let row = 0
   return (
     <Bg>
@@ -220,7 +223,7 @@ function Views() {
           </div>
         ))}
         {VIEW_GROUPS.map((g, gi) => {
-          const top0 = 270 + row * RH + gi * 16
+          const top0 = 280 + row * RH + gi * 24
           const els = g.rows.map((r, ri) => {
             const y = top0 + ri * RH
             const at = 10 + (row + ri) * 3
