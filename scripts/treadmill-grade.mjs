@@ -22,6 +22,8 @@
 //   --running steps        カメラ版で、1コマずつの「走っている」を歩数（ピッチ）だけで決め直す。その場で走るフリの見分け
 //                          （RUNNING.inPlaceForTesting、いまは切っている）を入れて撮った記録を、いまの判定で通すときに付ける。
 //                          走り始め・止まりは、どちらでも今のコードと同じく直近のコマの割合で決める。--replay-from start と合わせて、歩きで始まらないかを確かめる
+//   --level 初心者|中級|上級   カメラ版を、そのレベルの線（beginner・intermediate・advanced）と、記録のベルトの速さ・胸を開いた立ち方（b）で通し直す
+//                          （撮ったときと同じ条件。無ければ今までどおり、読み込んだときの線＝中級で、速さも b も入れない）。--set はそのあとに効く
 //   --out ファイル         Markdown をファイルにも書く
 //
 // 判定に通し直すところ（scripts/treadmill/replay.ts）は src/ の判定のコードをそのまま使う（rolldown で1つにまとめて読む）
@@ -55,6 +57,9 @@ const noReplay = flag('--no-replay')
 const thin = flag('--thin')
 const replayFrom = opt('--replay-from') ?? 'jog'
 const running = opt('--running') ?? 'logged'
+const LEVEL_NAME = { 初心者: 'beginner', 中級: 'intermediate', 上級: 'advanced' }
+const levelOpt = opt('--level')
+const level = levelOpt ? LEVEL_NAME[levelOpt] ?? levelOpt : undefined
 const outFile = opt('--out')
 const [drillPath, ...logPaths] = args
 if (!drillPath || !logPaths.length || logPaths.length > 2) {
@@ -93,6 +98,13 @@ if (!['jog', 'start'].includes(replayFrom)) {
   console.error('--replay-from は jog か start です')
   process.exit(1)
 }
+if (level && !['beginner', 'intermediate', 'advanced'].includes(level)) {
+  console.error('--level は 初心者・中級・上級（beginner・intermediate・advanced）です')
+  process.exit(1)
+}
+// レベルの線とベルトの速さの線を、通し直す前に入れる（--set はこのあとに効く）
+const setupKmh = level && cam ? R.loggedSetup(cam.data.log ?? cam.data, cam.data.session).kmh : undefined
+if (level) R.applyStrictness(level, setupKmh)
 if (!['logged', 'steps'].includes(running)) {
   console.error('--running は steps だけです（付けなければ、撮ったときの「走っている」のまま）')
   process.exit(1)
@@ -109,6 +121,7 @@ p(`- 区間の記録: \`${drillPath}\`${drill.done ? '' : '（途中で止めた
 if (cam) p(`- カメラ版: \`${cam.path}\``)
 if (phone) p(`- スマホ版: \`${phone.path}\``)
 p(`- 崩しの区間が終わってから ${grace} 秒までに出た声は、その崩しを見つけたと数える（\`--grace\`）`)
+if (level) p(`- カメラ版は ${levelOpt} の線${setupKmh !== undefined ? `・ベルトの速さ 時速${setupKmh}km` : ''}・記録の胸を開いた立ち方（b）で通し直した（\`--level\`）`)
 if (sets.length) p(`- 線の上書き: ${sets.map((s) => `\`${s}\``).join('、')}`)
 if (!noReplay && running === 'steps') p('- カメラ版の1コマずつの「走っている」は、歩数（ピッチ）だけで決め直した（`--running steps`。その場で走るフリの見分けを入れて撮った記録を、いまの判定で通すとき）')
 if (!noReplay) p(replayFrom === 'jog' && jogFrom !== null ? `- 通し直しは、ジョグの前の「速さを上げる」（${clock(jogFrom)}）から（歩いている間の値は通さず、整える・今日の基準をジョグで作る）。記録の始めから通すときは \`--replay-from start\`` : '- 通し直しは、記録の始めから')
@@ -134,7 +147,7 @@ function prepare(f, kind) {
   const sources = [{ name: 'そのとき', cues: cuesOf(R.loggedEvents(f.data).events, off) }]
   const warnings = []
   const fromMs = replayFrom === 'jog' && jogFrom !== null ? jogFrom + off : undefined
-  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs, thin, running }) : (d) => R.replayPhone(d, { fromMs, items: itemsAll ? 'all' : 'app' })
+  const replay = kind === 'camera' ? (d) => R.replayCamera(d, { items: itemsAll ? 'all' : 'logged', fromMs, thin, running, ...(level ? { setup: 'logged' } : {}) }) : (d) => R.replayPhone(d, { fromMs, items: itemsAll ? 'all' : 'app' })
   const canReplay = kind === 'camera' ? inv.measures > 0 : inv.frames > 0
   let faithful = null
   let now = null
@@ -370,10 +383,11 @@ for (const d of devices) {
         if (!r) continue
         const run = r.runStartT === null ? '—' : `${clock(r.runStartT - d.off)}（${where(r.runStartT - d.off)}）`
         const ref = r.ref
-        p(`| ${nm} | ${run} | ${ref ? `${clock(ref.from - d.off)}〜${clock(ref.to - d.off)}（${span(ref.from - d.off, ref.to - d.off)}）` : 'できなかった'} | ${ref ? fmt(ref.neck) : '—'}° | ${ref ? fmt(ref.trunk) : '—'}° | ${ref ? fmt(ref.body) : '—'}° | ${ref && ref.hipRatio !== null ? fmt(ref.hipRatio, 3) : '—'} |`)
+        const settled = r.settledT > 0 ? `。${clock(r.settledT - d.off)} に落ち着いてからの基準に作り直した` : ''
+        p(`| ${nm} | ${run} | ${ref ? `${clock(ref.from - d.off)}〜${clock(ref.to - d.off)}（${span(ref.from - d.off, ref.to - d.off)}）${settled}` : 'できなかった'} | ${ref ? fmt(ref.neck) : '—'}° | ${ref ? fmt(ref.trunk) : '—'}° | ${ref ? fmt(ref.body) : '—'}° | ${ref && ref.hipRatio !== null ? fmt(ref.hipRatio, 3) : '—'} |`)
       }
       p()
-      p('基準を作った間に「歩く」や崩しの区間が入っていたら、その基準はジョグのふつうの姿勢ではない（歩きは上体も体全体も立っているので、ふつうに走るだけで「倒れすぎ」になる）')
+      p('基準を作った間に「歩く」や崩しの区間が入っていたら、その基準はジョグのふつうの姿勢ではない（歩きは上体も体全体も立っているので、ふつうに走るだけで「倒れすぎ」になる）。首・上体・体全体・腰の高さは走り終わりの基準（落ち着いてからの基準に作り直したり、速さが変わって作り直したりしたあとの値）')
       p()
     }
   }

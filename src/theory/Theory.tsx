@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Mannequin } from '../modes/camera/ui/Mannequin'
 import { demoStride, REFERENCE } from '../modes/camera/ui/figure'
-import { FORM, GAIT, LANDING, LIMITS, REL_LIMITS } from '../modes/camera/params'
+import { FORM, GAIT, HIP_ABS, LANDING, LIMITS, REL_LIMITS } from '../modes/camera/params'
 import { PHRASES } from '../core/phrases'
 import { Logic } from './Logic'
 
@@ -219,7 +219,7 @@ const POINTS: Point[] = [
     title: '腰の高さ',
     base: `接地中に膝が曲がるのは${stanceMax(ideal.knee[0], ideal.stancePct)}°まで（研究データの平均は${stanceMax(normal.knee[0], normal.stancePct)}°）。腰が落ちずに、地面を真下に押して腰を高く運ぶ。`,
     off: '接地中に膝が伸びている人ほど、エネルギーの消費が少なかった。膝を深く曲げて腰を落として走ると、酸素の消費が最大50%増えた。日本でも、5000mのレースを横から撮った研究で、接地の中ほどで膝が伸びている人ほど力の使い方が良かった（筑波大学、32人、相関 r=0.362）。トレッドミルを真横から撮った研究では、接地から膝が曲がる量（膝のつぶれ）は平均21.6°だった（環太平洋大学ほか、7人）。',
-    how: `今日の基準（走り出しに整えた形）の腰の高さ（脚の長さに対する割合）から、${LIMITS.hip.cue}%以上下がった状態が続いたら声をかける。走り終わったら、腰の高さを立った姿勢と比べた割合を、研究データのふつうの走り（${pct1(GAIT.typical.hip.min)}〜${pct1(GAIT.typical.hip.max)}%）と並べて出す。カメラでは人どうしの比べの誤差がこの範囲の幅と同じくらいあるので、「腰が低い」とは声にしない。`,
+    how: `今日の基準（走り出しに整えた形）の腰の高さ（脚の長さに対する割合）から、${LIMITS.hip.cue}%以上下がった状態が続いたら声をかける。走り終わったら、腰の高さを立った姿勢と比べた割合を、研究データのふつうの走り（${pct1(GAIT.typical.hip.min)}〜${pct1(GAIT.typical.hip.max)}%）と並べて出す。カメラでは人どうしの比べの誤差がこの範囲の幅と同じくらいあるので、「腰が低い」とは声にしない。走っている間の腰の高さそのもの（立脚中期）も、決まった線（${HIP_ABS.line}）と比べて記録するが、腰落ちの例とよい例が重なり、まだ確かめていないので声にはしない。今日の基準の腰は、この線より下にしない。`,
     status: 'coach',
     refs: ['enomoto1999', 'tanaka2025', 'folland', 'mcmahon'],
     demo: { lean: 7, head: 0, drop: 16 },

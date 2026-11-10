@@ -1,10 +1,10 @@
 import { ITEM_KEYS, type Category, type FormGroup, type Frame, type ItemKey, type Sample, type Session, type Stride } from '../../core/types'
-import type { HipComb, Measure } from './types'
+import type { HipAbs, HipComb, Measure } from './types'
 import { category } from '../../core/scoring'
 import { itemScore, LIMITS } from './scoring'
 import { CUE } from '../../core/phrases'
 import { HIP_REF } from '../../core/params'
-import { applySpeed, applyStrictness, CAM_YAW, FORM, HIP_COMB, HIP_MID, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
+import { applySpeed, applyStrictness, BASE_SETTLE, CAM_YAW, FORM, HIP_ABS, HIP_COMB, HIP_MID, HUNCH, LANDING, REL_LIMITS, STRIDE } from './params'
 import type { Level } from '../../core/level'
 import { CUE as CUE_P } from '../../core/params'
 import { RunningGate } from './motion'
@@ -114,6 +114,11 @@ const meanComb = (xs: Comb[]): Comb | null => {
   return { low: mean(xs.map((x) => x.low)), ...(ks.length ? { kst: mean(ks) } : {}) }
 }
 
+// 腰の基準を、腰の決まった線（params.ts の HIP_ABS.line）の上に寄せる。膝の曲がりはそのまま
+export function clampHip(h: Hip | null): Hip | null {
+  return h && h.hip < HIP_ABS.line ? { ...h, hip: HIP_ABS.line } : h
+}
+
 const rnd = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d
 const roundComb = (c: HipComb): HipComb => {
   const o: HipComb = { low: rnd(c.low, 3), n: c.n, nK: c.nK }
@@ -145,12 +150,13 @@ function addSecond(p: Pool, form: FormStage, t: number, v: FormValues, hip: Hip 
 
 // ためた秒から、姿勢の基準（首・頭の位置・上体・体全体）と腰の高さの基準を作る。
 // 項目ごとに、線の内側にいた秒の平均。足りなければ、走っていた秒の平均を線の内側に寄せた値（入らなかった項目は、線そのもの）。
-// 線と比べられなかった項目（頭が、ずっと斜めから撮っているように見えた）は、走っていた秒の平均（線の値は当てにならないため）
+// 線と比べられなかった項目（頭が、ずっと斜めから撮っているように見えた）は、走っていた秒の平均（線の値は当てにならないため）。
+// 腰の高さは、腰の決まった線（HIP_ABS.line）より下にしない（もとから沈んだ形を基準にしない。clampHip）
 function postureRefOf(p: Pool, form: FormStage) {
   const typical = { ...meanOf(p.all), yaw: mean(p.yaw) }
   const at = (g: FormGroup) => (!form.judged(g) ? typical : p.in[g].length >= FORM.refMin ? meanOf(p.in[g]) : clampInside(g, typical))
   const head = at('head')
-  return { lean: { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body }, hip: p.hipIn.length >= FORM.refMin ? meanHip(p.hipIn) : meanHip(p.hipAll),
+  return { lean: { neck: head.neck, headLean: head.headLean, trunk: at('trunk').trunk, body: at('body').body }, hip: clampHip(p.hipIn.length >= FORM.refMin ? meanHip(p.hipIn) : meanHip(p.hipAll)),
     comb: p.combIn.length >= FORM.refMin ? meanComb(p.combIn) : meanComb(p.combAll),
   }
 }
@@ -185,6 +191,12 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
   private earlyRef: Pick<Ref, 'neck' | 'headLean' | 'trunk' | 'body'> | null = null
   // 直近の秒の、基準からの崩れ（点数の目盛り）。CUE.window 秒の平均で、崩れた秒を基準にためないためと、猫背が線を越えている間に上体・頭の声を重ねないため
   private recent: { t: number; v: Values<ItemKey> }[] = []
+  // 落ち着いてからの基準（params.ts の BASE_SETTLE）：走り出して from 秒からためる場所。作ったら（または until 秒を過ぎてあきらめたら）settled を決める
+  private settlePool = emptyPool()
+  // 落ち着いてからの基準を作った秒（しくみの秒）。作らずにあきらめたら -1、まだなら null
+  settledAt: number | null = null
+  // 腰の決まった線（記録だけ。params.ts の HIP_ABS）：腰を測れた1秒の値（直近 HIP_ABS.window 個まで）
+  private hipAbsWin: { t: number; hip: number }[] = []
   // 頭の声を待たせ始めた秒（待たせていなければ null）と、頭の声を猫背の声に替えた秒（defer。猫背を先に）
   private headHold: number | null = null
   private headTaken = -1e9
@@ -271,6 +283,8 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (hadRef && this.drift.guard.changes !== this.seenChanges) {
       this.seenChanges = this.drift.guard.changes
       this.repool = emptyPool()
+      // 落ち着いてからの基準も、新しい速さでため直す
+      this.settlePool = emptyPool()
     }
     // 姿勢を止めるのは、外れが LANDING.postureAfter 秒続いてから（窓の揺れで短く外れるたびに止めると、本当の崩れに気づくのが遅れるため）
     const away = hadRef && this.drift.guard.off >= LANDING.postureAfter
@@ -335,9 +349,27 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     }
     // 姿勢を今日の基準と比べない秒：速さが外れている秒と、速さが変わって基準をためなおしている間
     const paused = hadRef && (away || this.repool !== null)
+    // 落ち着いてからの基準（BASE_SETTLE）：走り出して from 秒から、歩数で走っていた、姿勢を比べている秒をためる。
+    // 直前までの秒で基準から崩れている間（直近 CUE.window 秒の平均が線を越えた。腰も）はためない
+    if (hadRef && this.settledAt === null && rt !== null) {
+      if (rt >= BASE_SETTLE.from && stepping && !paused && !this.recentOver([...REL_KEYS, 'hip'])) addSecond(this.settlePool, this.form, t, v, hip, comb, yaw, now.chin, steps)
+      if (rt >= BASE_SETTLE.to && this.settlePool.all.length >= BASE_SETTLE.min && !paused) {
+        const r = postureRefOf(this.settlePool, this.form)
+        this.leanRef = { ...this.leanRef!, ...r.lean }
+        if (r.hip) this.hipRef = r.hip
+        if (r.comb) this.combRef = r.comb
+        this.settledAt = t
+        this.settlePool = emptyPool()
+      } else if (rt > BASE_SETTLE.until) {
+        this.settledAt = -1
+        this.settlePool = emptyPool()
+      }
+    }
     // 今日の基準ができるまでは、仮の基準と比べる（速さが外れていない、ためている秒だけ）
     const ref = this.leanRef ?? (poolSame ? this.earlyRef : null)
     const hipDrop = this.hipRef && hip ? hipDropOf(this.hipRef, hip) : 0
+    // 腰の決まった線（記録だけ）：歩数で走っていて、速さが外れていない、腰を測れた秒をためる
+    const hipAbs = this.hipAbsOf(t, stepping && !away && rt !== null ? hip : null)
     // 頭は、今日の基準との差。1秒ごとに0で切らず、平均してから線と比べる（揺れの正の側だけが残って、実際より大きく出るため）
     const head = ref ? headForward(neck - ref.neck, headLean - ref.headLean) : 0
     // 着地：窓（細かく見ていれば16秒、間引いて見ている間は30秒）の、基準と同じ脚の山の中央値と基準の差。歩数で走っていた秒だけ。
@@ -401,12 +433,25 @@ class CameraAnalyzer implements ModeAnalyzer<Measure, Sample, ItemKey> {
     if (hip) sample.hipMid = { hip: Math.round(hip.hip * 1000) / 1000, knee: Math.round(hip.knee * 10) / 10, n: hip.n }
     // 腰落ちの新しい候補（記録だけ。声・判定・点数には使わない。params.ts の HIP_COMB）
     if (comb) (sample as Sample & { hipComb?: HipComb }).hipComb = roundComb({ ...comb, ...(this.combRef ? hipCombRel(this.combRef, comb) : {}) })
+    // 腰の決まった線（記録だけ。声・判定・点数には使わない。params.ts の HIP_ABS）
+    if (hipAbs) (sample as Sample & { hipAbs?: HipAbs }).hipAbs = hipAbs
     if (paused) sample.paused = true
     if (noRoll) sample.noRoll = true
     if (shown) sample.land = { heel: shown.heel, speed: shown.speed, res: shown.res, n: shown.n, ...(landing !== undefined ? { drift: landing } : {}) }
     if (score !== null) this.maybeKeepStride(sample)
     const cue = this.heldCue(t, ctx, lead)
     return { sample, values, ready, score, say: lead.say, hold: lead.hold, ...(cue ? { cue } : {}) }
+  }
+
+  // 腰の決まった線の値（params.ts の HIP_ABS）：直近 HIP_ABS.window 個の、腰を測れた秒の平均（HIP_ABS.maxAge 秒より古い秒は捨てる）。
+  // HIP_ABS.minSecs 個に足りなければ無い。low は線を下回った（記録だけ）
+  private hipAbsOf(t: number, hip: Hip | null): HipAbs | undefined {
+    const w = this.hipAbsWin
+    if (hip) w.push({ t, hip: hip.hip })
+    while (w.length && (w.length > HIP_ABS.window || w[0].t <= t - HIP_ABS.maxAge)) w.shift()
+    if (w.length < HIP_ABS.minSecs) return undefined
+    const v = Math.round(mean(w.map((x) => x.hip)) * 1000) / 1000
+    return { v, n: w.length, ...(v < HIP_ABS.line ? { low: true } : {}) }
   }
 
   // 声を待たせるか（しくみの ModeAnalyzer.defer と、整え終わったあとの正しいフォームの線の声から、言う直前に呼ぶ）。
@@ -555,6 +600,11 @@ export class Coach extends CueEngine<Measure, Sample, ItemKey> {
   // 今日の基準（整えたあとの形。できるまでは null）
   get leanRef() {
     return this.camera.leanRef
+  }
+
+  // 落ち着いてからの基準（params.ts の BASE_SETTLE）を作った秒（しくみの秒）。作らずにあきらめたら -1、まだなら null
+  get settledAt() {
+    return this.camera.settledAt
   }
 
   // 整え終わったか（form.ts）

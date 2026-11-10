@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { levelFrame, measure, midstance, rotateFrame, sideOffDeg, stanceKnee } from './geometry'
 import { itemScore, postureScore } from './scoring'
-import { Coach, headForward, hipCombOf, hipCombRel, hipDropOf, hipOf, hunchOf, toScale } from './coach'
-import { applyStrictness, BASELINE, CAM_YAW, FORM, GOOD, goodAt, HEAD_OPEN, HIP_COMB, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
+import { clampHip, Coach, headForward, hipCombOf, hipCombRel, hipDropOf, hipOf, hunchOf, toScale } from './coach'
+import { applyStrictness, BASE_SETTLE, BASELINE, CAM_YAW, FORM, GOOD, goodAt, HEAD_OPEN, HIP_ABS, HIP_COMB, HIP_MID, HUNCH, LIMITS, REL_LIMITS, SETUP, STRICT } from './params'
 import { formOver, formScale, FormStage, yawDeg, yawFixed } from './form'
 import { activeItems, startPhrase, startProgress, STEPS } from '../../core/level'
 import { formRows, gapSentence, gapState, goodGap, HEAD_NECK_NOTE, HEAD_NOTE, mainStride, nextItem, NEXT_TEXT, todayFocus } from './nextStep'
@@ -16,7 +16,7 @@ import { CUE, HIP_REF, RUNNING } from '../../core/params'
 import { FOCUS, PHRASES, phraseId } from '../../core/phrases'
 import { correctFrames, demoStride, frameAngles, strideStats, DEMO_FRAMES, DEMO_SPM, REFERENCE } from './ui/figure'
 import type { FormGroup, FormResult, Frame, Sample, Session, Stride } from '../../core/types'
-import type { HipComb, Measure } from './types'
+import type { HipAbs, HipComb, Measure } from './types'
 
 const mirror = (f: Frame): Frame => f.map((p) => ({ ...p, x: 340 - p.x }))
 
@@ -1624,5 +1624,67 @@ describe('一瞬の崩れは言わない（1秒ごとの値が線の外に CUE.s
     // 2秒の跳ねでも、16秒平均は線を越える（−3 × 14 + 30 × 2 > 0）
     expect(cuesOf(CUE.sustain - 1)).not.toContain('trunk')
     expect(cuesOf(CUE.sustain)).toContain('trunk')
+  })
+})
+
+describe('落ち着いてからの基準（params.ts の BASE_SETTLE）', () => {
+  it('走り出しの基準で見始め、走り出して to 秒たったら from〜to 秒の形で基準を作り直す', () => {
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 300, good)
+    expect(coach.leanRef!.trunk).toBeCloseTo(good.trunk, 1)
+    expect(coach.settledAt).toBeNull()
+    // 体が温まって、上体が少し起きた（基準からの崩れの線より小さい変化）
+    feedSparse(coach, 300, 280, { ...good, trunk: good.trunk - 1.5 })
+    expect(coach.settledAt).toBeNull() // 走り出して10分より前は、走り出しの基準のまま
+    expect(coach.leanRef!.trunk).toBeCloseTo(good.trunk, 1)
+    feedSparse(coach, 580, 120, { ...good, trunk: good.trunk - 1.5 })
+    expect(coach.settledAt).not.toBeNull()
+    expect(coach.settledAt!).toBeGreaterThanOrEqual(BASE_SETTLE.to)
+    expect(coach.leanRef!.trunk).toBeCloseTo(good.trunk - 1.5, 1)
+  })
+
+  it('基準から崩れている秒はためない。足りないまま until 秒を過ぎたら、走り出しの基準のまま', () => {
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 340, good)
+    // 6分から崩したまま（上体 +4.5°。初心者の基準からの崩れの線 4° を越え、正しいフォームの線 12° の内側）
+    feedSparse(coach, 340, 640, { ...good, trunk: good.trunk + 4.5 })
+    expect(coach.settledAt).toBe(-1)
+    expect(coach.leanRef!.trunk).toBeCloseTo(good.trunk, 1)
+  })
+
+  it('10分より短い走りは、走り出しの基準のまま（いままでと同じ）', () => {
+    const coach = new Coach({ pause: false })
+    feedSparse(coach, 0, 500, good)
+    expect(coach.settledAt).toBeNull()
+    expect(coach.leanRef!.trunk).toBeCloseTo(good.trunk, 1)
+  })
+})
+
+describe('腰の決まった線（params.ts の HIP_ABS。記録だけ）', () => {
+  it('今日の基準の腰は、決まった線より下にしない（もとから沈んだ形を基準にしない）', () => {
+    expect(clampHip({ hip: HIP_ABS.line - 0.03, knee: 40 })).toEqual({ hip: HIP_ABS.line, knee: 40 })
+    expect(clampHip({ hip: 0.95, knee: 30 })).toEqual({ hip: 0.95, knee: 30 })
+    expect(clampHip(null)).toBeNull()
+  })
+
+  it('直近の腰を測れた秒の平均を記録し、線を下回ったら low。声はかけない', () => {
+    const sunk: Measure = { ...good, mid: { hip: HIP_ABS.line - 0.03, knee: 45 } }
+    const coach = new Coach({ pause: false })
+    const said = feedSparse(coach, 0, 400, sunk).speak
+    const abs = coach.samples.map((x) => (x as Sample & { hipAbs?: HipAbs }).hipAbs).filter((x): x is HipAbs => !!x)
+    expect(abs.length).toBeGreaterThan(0)
+    expect(abs[abs.length - 1].v).toBeCloseTo(HIP_ABS.line - 0.03, 3)
+    expect(abs[abs.length - 1].low).toBe(true)
+    expect(coach.cues.some((c) => c.item === 'hip')).toBe(false)
+    expect(said.some((x) => x.includes('腰'))).toBe(false)
+    // 走り出しから沈んだままなので、今日の基準からの下がりは決まった線までの分（基準は線に寄せる）
+    const drops = coach.samples.filter((x) => x.hipMid).map((x) => x.hipDrop)
+    expect(drops[drops.length - 1]).toBeCloseTo((0.03 / HIP_ABS.line) * 100, 1)
+    // ふつうの高さなら low にならない
+    const ok = new Coach({ pause: false })
+    feedSparse(ok, 0, 300, { ...good, mid: { hip: 0.95, knee: 30 } })
+    const last = ok.samples.map((x) => (x as Sample & { hipAbs?: HipAbs }).hipAbs).filter(Boolean).pop()!
+    expect(last.v).toBeCloseTo(0.95, 3)
+    expect(last.low).toBeUndefined()
   })
 })

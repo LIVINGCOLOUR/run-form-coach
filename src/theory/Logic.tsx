@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { LEVEL_LABEL, STEPS } from '../core/level'
 import { ABSENCE, BREAKDOWN, CUE, HIP_REF, LEVEL, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../core/params'
-import { BASELINE, CAM_YAW, CORRECT, FORM, FORM_SPEED, GAIT, GOOD, GOOD_SPEED, goodAt, HEAD_OPEN, HIP_MID, HUNCH, LANDING, LIMITS, REL_LIMITS, SETUP, STRICT, STRIDE } from '../modes/camera/params'
+import { BASE_SETTLE, BASELINE, CAM_YAW, CORRECT, FORM, FORM_SPEED, GAIT, GOOD, GOOD_SPEED, goodAt, HEAD_OPEN, HIP_ABS, HIP_MID, HUNCH, LANDING, LIMITS, REL_LIMITS, SETUP, STRICT, STRIDE } from '../modes/camera/params'
 import { CHEST_EXPECT, SPEED_FIT } from '../modes/sensor/params'
 import { expectedChest } from '../modes/sensor/expect'
 import { ITEM_KEYS } from '../core/types'
@@ -209,7 +209,8 @@ export function Logic() {
           今日の基準の頭は、線の内側にいた秒か、①と②のきびしいほうで線の内側に入る値になる。
         </Row>
         <Row>
-          今日の基準：整え終わってから（走り出して{HIP_REF.from}秒より後）、歩数で走っていた秒のうち、その項目が線の内側にいた秒（直近{FORM.hold}秒の平均で見る）だけをためる。走り出して{HIP_REF.to / 60}分たち、整え終わってから{FORM.refAfter}秒たったら基準にする。ためている間も速さを見張り（6 の速さの見張りと同じ）、速さが外れた秒はためず、速さが変わったとみたら（ベルトの速さを途中で上げたなど）、それまでにためた秒を捨てて、新しい速さで{LANDING.rebuild}秒たまってから基準にする（2つの速さを混ぜた基準にしない）。線の内側にいた秒が{FORM.refMin}秒に足りない項目（直らなかった項目）は、走りの平均を線の内側に寄せた値、つまり線そのものを基準にする（頭をずっと線と比べられなかったとき（斜め）は、走りの平均）。走り出しから頭が前に出ていても、その頭は基準にしない（基準にすると、その頭からさらに前に出るまで言えなくなるため）。腰の高さは、体全体と上体の両方が線の内側にいた秒（整えた形）で作る。
+          今日の基準：整え終わってから（走り出して{HIP_REF.from}秒より後）、歩数で走っていた秒のうち、その項目が線の内側にいた秒（直近{FORM.hold}秒の平均で見る）だけをためる。走り出して{HIP_REF.to / 60}分たち、整え終わってから{FORM.refAfter}秒たったら基準にする。ためている間も速さを見張り（6 の速さの見張りと同じ）、速さが外れた秒はためず、速さが変わったとみたら（ベルトの速さを途中で上げたなど）、それまでにためた秒を捨てて、新しい速さで{LANDING.rebuild}秒たまってから基準にする（2つの速さを混ぜた基準にしない）。線の内側にいた秒が{FORM.refMin}秒に足りない項目（直らなかった項目）は、走りの平均を線の内側に寄せた値、つまり線そのものを基準にする（頭をずっと線と比べられなかったとき（斜め）は、走りの平均）。走り出しから頭が前に出ていても、その頭は基準にしない（基準にすると、その頭からさらに前に出るまで言えなくなるため）。腰の高さは、体全体と上体の両方が線の内側にいた秒（整えた形）で作る。腰の高さの基準は、腰の決まった線（立脚中期の腰の高さ {HIP_ABS.line}）より下にしない（もとから沈んだ形を基準にしない）。
+          走り出して{BASE_SETTLE.to / 60}分たったら、{BASE_SETTLE.from / 60}〜{BASE_SETTLE.to / 60}分の形（同じく線の内側にいた秒。基準から崩れていた秒と、速さが外れていた秒は除く）で、猫背・頭・上体・体全体・腰の基準を作り直す。走り出しの数分は体が温まる前で、トレッドミルの走りが落ち着くのに約6〜7分かかるため（Lavcanska 2005、Huang 2023。要旨）。それまでは走り出しの基準と正しいフォームの線で見る。{BASE_SETTLE.to / 60}分より短い走りは、走り出しの基準のまま。
           着地は、線の内側にいた秒の山の中央値（足りなければ、走っていた秒すべての山。試しの線に寄せると、線の外の人ほど基準からの増えの線が近くなり、ふつうに走るだけで声が出るため）と、そのときの速さの目安を基準にする。基準ができる前に止まったら、次に走り出したところから整え直す（同じ項目の声の回数は、整え直しても数え続ける）。
         </Row>
       </Step>

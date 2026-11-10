@@ -14,13 +14,14 @@
 //   骨格の点（記録の19点）があるコマは、撮ったときと同じくコマとしてコーチに渡す（着地の位置は点から測る。src/modes/camera/landing.ts）
 // スマホ版：記録の生の加速度・角速度（届いたコマすべて）を、PhoneRun にそのまま渡す（撮ったときとほぼ同じになる）
 import { Coach } from '../../src/modes/camera/coach'
-import { LIMITS, REL_LIMITS, FORM, LANDING, GOOD } from '../../src/modes/camera/params'
+import { LIMITS, REL_LIMITS, FORM, LANDING, GOOD, HIP_ABS, BASE_SETTLE } from '../../src/modes/camera/params'
+export { applyStrictness } from '../../src/modes/camera/params'
 import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
 import { CUE, RECOVER, SAY, PHRASES, FORM_SAY, phraseId } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'
 import { ITEM_KEYS, type Frame, type ItemKey, type RunLog, type Session } from '../../src/core/types'
-import type { Measure } from '../../src/modes/camera/types'
-import { midstance } from '../../src/modes/camera/geometry'
+import type { HipAbs, Measure } from '../../src/modes/camera/types'
+import { midstance, stanceKnee } from '../../src/modes/camera/geometry'
 import { PHONE_MEASURED, PHONE_VOICED, PhoneRun } from '../../src/modes/phone/session'
 import { PHONE_CUE } from '../../src/modes/phone/analyzer'
 import { MOUNT, PHONE_LIMITS } from '../../src/modes/phone/params'
@@ -29,7 +30,7 @@ import type { DrillOptions } from '../../src/modes/phone/drill'
 
 // --set で書き換えられる入れ物
 export const PARAMS: Record<string, Record<string, unknown>> = {
-  LIMITS, REL_LIMITS, FORM, LANDING, GOOD, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
+  LIMITS, REL_LIMITS, FORM, LANDING, GOOD, HIP_ABS, BASE_SETTLE, CUE: CUE_P, QUIET, PRAISE, POWER, RUNNING, ABSENCE, SCORE, HIP_REF, PHONE_LIMITS, MOUNT,
 }
 // 短い名前 → 入れ物の場所
 export const ALIASES: Record<string, string> = {
@@ -152,7 +153,10 @@ export interface ReplayOut {
   ref?: { from: number; to: number; neck: number; trunk: number; body: number; headLean: number; hipRatio: number | null } | null
   // カメラ版の1秒ごとの記録（ふつうの時刻）：前側・後ろ側の値（yawSign）と、着地の窓の値（Sample.land。窓の山が足りない秒は無い）。
   // あわせて、着地の今日の基準と、速さが変わって作り直した回数
-  secs?: { T: number; yaw?: number; land?: NonNullable<Session['samples'][number]['land']> }[]
+  // hipAbs：腰の決まった線の値（記録だけ。params.ts の HIP_ABS）。hipMid：その秒の立脚中期の腰の高さ。paused：姿勢を基準と比べなかった秒
+  secs?: { T: number; yaw?: number; land?: NonNullable<Session['samples'][number]['land']>; hipAbs?: HipAbs; hipMid?: number; paused?: boolean }[]
+  // 落ち着いてからの基準（params.ts の BASE_SETTLE）を作った時刻（ふつうの時刻）。作らずにあきらめたら -1、走りが短くて作らなかったら null
+  settledT?: number | null
   landRef?: { heel: number; speed: number; near: string; n: number } | null
   landRebuilds?: number
   form?: Session['form'] // 正しいフォームとの比べ（結果の画面の値）
@@ -160,7 +164,10 @@ export interface ReplayOut {
 
 // fromMs：この時刻（その端末の時計、ms）より前のコマは通さない（歩いている間にしくみが走り始めていても、基準をジョグで作り直すため）
 // thin：全コマ記録を、ふだんの間引きに通し直す（コーチが要らないと言ったコマは、撮ったときの onSkip と同じく時間だけ進める）
-export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fromMs?: number; thin?: boolean; running?: 'logged' | 'steps' } = {}): ReplayOut {
+// setup：'logged' なら、撮ったときと同じに、胸を開いた立ち方（イベント pose:b の首・頭の位置）をコーチに渡す。
+//   ランナーのレベルとベルトの速さの線は、採点の道具が先に applyStrictness(レベル, loggedSetup の kmh) で入れておく
+//   （コーチに level や kmh を渡すと、線を入れ直すので --set の上書きが消えるため）。無ければ今までどおり b を渡さない
+export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fromMs?: number; thin?: boolean; running?: 'logged' | 'steps'; setup?: 'logged' } = {}): ReplayOut {
   const { log, session } = unwrap<RunLog>(file)
   const s = session as Session | undefined
   const warnings: string[] = []
@@ -183,7 +190,8 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   let items: ItemKey[] | undefined
   if (opts.items !== 'all' && s?.focus) items = activeItems(s.focus.step)
   else if (opts.items !== 'all') warnings.push('結果（session）に「注意した項目」（focus）がないので、すべての項目で声をかけるとして通しました')
-  const coach = new Coach({ pause: RUNNING.pauseEnabled, items })
+  const open = opts.setup === 'logged' ? loggedSetup(log, s).open : undefined
+  const coach = new Coach({ pause: RUNNING.pauseEnabled, items, ...(open ? { open } : {}) })
   const events: Ev[] = []
   // 骨格の点（記録の19点）からコマを作る（撮ったときにコーチに渡していたもの。なめらかにして傾きを直したあとの点）
   const off = log.columns.length - 1
@@ -210,10 +218,15 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
   // 1秒ごとの記録ができた時刻（ふつうの時刻）と、前側・後ろ側の値・着地の値
   const secs: NonNullable<ReplayOut['secs']> = []
   let seen = 0
+  // 落ち着いてからの基準を作った時刻（ふつうの時刻）
+  let settledT: number | null = null
+  const cam = (coach as unknown as { analyzer: { settledAt: number | null } }).analyzer
   const handle = (ev: ReturnType<Coach['update']>, t: number) => {
+    if (settledT === null && cam.settledAt !== null) settledT = cam.settledAt < 0 ? -1 : toT(t)
     for (; seen < coach.samples.length; seen++) {
       const x = coach.samples[seen]
-      secs.push({ T: toT(t), yaw: x.yaw, ...(x.land ? { land: x.land } : {}) })
+      const ha = (x as typeof x & { hipAbs?: HipAbs }).hipAbs
+      secs.push({ T: toT(t), yaw: x.yaw, ...(x.land ? { land: x.land } : {}), ...(ha ? { hipAbs: ha } : {}), ...(x.hipMid ? { hipMid: x.hipMid.hip } : {}), ...(x.paused ? { paused: true } : {}) })
     }
     const n = coach.refSeconds
     if (n < refCount || n === 0) refFrom = null
@@ -256,6 +269,8 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     if (m && frame) {
       const mid = midstance(frame)
       if (mid) m.mid = mid
+      const k = stanceKnee(frame)
+      if (k !== null) m.kst = k
     }
     handle(coach.update({ t, present: visible, moving, m, frame }), t)
     lastT = t
@@ -263,10 +278,20 @@ export function replayCamera(file: unknown, opts: { items?: 'all' | 'logged'; fr
     lastMoving = moving
   }
   const lr = coach.leanRef
-  const analyzer = (coach as unknown as { analyzer: { hipRef: { hip: number; knee: number } | null; drift: { ref: ReplayOut['landRef']; rebuilds: number } } }).analyzer
+  const analyzer = (coach as unknown as { analyzer: { hipRef: { hip: number; knee: number } | null; settledAt: number | null; drift: { ref: ReplayOut['landRef']; rebuilds: number } } }).analyzer
   const hipRef = analyzer.hipRef?.hip ?? null
   const ref = lr && refFrom !== null && refTo !== null ? { from: refFrom, to: refTo, neck: lr.neck, trunk: lr.trunk, body: lr.body, headLean: lr.headLean, hipRatio: hipRef } : null
-  return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref, secs, landRef: analyzer.drift.ref, landRebuilds: analyzer.drift.rebuilds, form: coach.finish().form }
+  return { events, items: items ?? ITEM_KEYS, warnings, runStartT, ref, secs, settledT, landRef: analyzer.drift.ref, landRebuilds: analyzer.drift.rebuilds, form: coach.finish().form }
+}
+
+// 撮ったときのベルトの速さと、胸を開いた立ち方（b）の首・頭の位置（Live.tsx が Coach に渡したもの）
+export function loggedSetup(log: RunLog, s: Session | undefined): { kmh?: number; open?: { neck: number; headLean: number } } {
+  const out: { kmh?: number; open?: { neck: number; headLean: number } } = {}
+  if (s?.speedKmh !== undefined && s.speedSource === 'belt') out.kmh = s.speedKmh
+  const b = [...(log.events ?? [])].reverse().find((e) => typeof e[1] === 'string' && e[1].startsWith('pose:b '))
+  const m = b && /neck (-?[\d.]+) headLean (-?[\d.]+)/.exec(b[1])
+  if (m) out.open = { neck: Number(m[1]), headLean: Number(m[2]) }
+  return out
 }
 
 // ---- スマホ版：生の値を PhoneRun にもう一度通す ----

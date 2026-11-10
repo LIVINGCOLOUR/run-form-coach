@@ -10,7 +10,7 @@
 export const STEPS = {
   head: { name: '頭を前に', say: '頭を前に出して', camera: ['head'], phone: [] },
   down: { name: '下を向く', say: '下を向いて。目線を足もとに', camera: [], phone: [] },
-  hunch: { name: '猫背', say: '猫背にして。背中を丸めて', camera: ['trunk', 'head'], phone: [] },
+  hunch: { name: '猫背', say: '猫背にして。背中を丸めて', camera: ['hunch', 'trunk', 'head'], phone: [] },
   lean: { name: '体ごと前に', say: '体ごと前に倒して', camera: ['body', 'trunk'], phone: [] },
   armstill: { name: '腕を振らない', say: '腕を振らないで', camera: [], phone: [] },
   armcross: { name: '腕を横に振る', say: '腕を体の前で、横に振って', camera: [], phone: [] },

@@ -67,7 +67,9 @@ export function makeCameraSample(sections: SampleSection[], jumpAt: number | nul
       yaw: 0.01 + noise(0.005),
       trunk: (moving ? 6 : 2) + (sh.trunk ?? 0) * k + noise(1.5),
       body: (moving ? 9 : 2) + (sh.body ?? 0) * k + noise(1),
-      hipRatio: (moving ? 0.88 : 0.95) * (1 + (sh.hip ?? 0) * k) + noise(0.01),
+      // 走っている間の腰の高さは、研究データのふつうの走りの真ん中くらい（0.94。sim/result-hip-abs.md の 0.943〜0.951）。
+      // 腰の決まった線（params.ts の HIP_ABS.line 0.90）より下にすると、今日の基準の腰がその線に寄せられ、ふつうの区間で腰落ちに見えてしまう
+      hipRatio: (moving ? 0.94 : 0.97) * (1 + (sh.hip ?? 0) * k) + noise(0.01),
       dir: 1,
     }
     // 骨格を取らないコマ（走っている間、コーチが要らないと言ったとき）。記録には残らない

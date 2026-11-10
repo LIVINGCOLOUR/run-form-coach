@@ -26,6 +26,14 @@ export interface Measure {
   dir: 1 | -1
 }
 
+// 腰の決まった線（params.ts の HIP_ABS）の1秒の値。記録（Sample の hipAbs）に残すだけで、声・判定・点数には使わない
+//   v：直近の、腰を測れた n 個の1秒の、立脚中期の腰の高さ（腰の中心から立脚側の足首までの高さ ÷ 立脚側の脚の長さ）の平均。low：v が線を下回った
+export interface HipAbs {
+  v: number
+  n: number
+  low?: true
+}
+
 // 腰落ちの新しい候補（params.ts の HIP_COMB）の1秒の値。記録（Sample の hipComb）に残すだけで、声・判定・点数には使わない
 //   low：その秒の全部のコマの、腰の中心 → 低いほうの足首の高さ ÷ 脚の長さ（hipRatio）の平均（n コマ）
 //   kst：その秒の片足のコマの、低いほうの脚の膝の曲がり（度）の平均（nK コマ。片足のコマがなければ無い）
