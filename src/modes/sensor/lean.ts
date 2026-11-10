@@ -33,6 +33,11 @@ import type { Vec3 } from './parse'
 //     線の幅の下限 poseMargin（0 なら margin）・続いたら知らせる長さ poseHold（0 なら hold）・
 //     走り出して poseStart 秒から、走る前傾を覚え終わる前でも poseCap を基準にして知らせる（最初から崩れたまま走り出したのを、すぐ知らせる）・
 //     知らせたあと線の下に posePraise 秒続けていたら、ほめる（praise）
+//   人ごとの基準（胸。params.ts の HUNCH の settleFrom・settleTo）：その速さで正しい前傾（b + expect）を走り出しから基準にし、
+//     走り出して settleTo 秒までは寄せない（follow しない）。settleFrom〜settleTo 秒（走りが落ち着く6〜10分）に線の下にいた傾きの真ん中を、
+//     よい例の範囲（expect の lo〜hi）の内に収めて、その人の基準にする。そのあとは follow で寄せるが、いつもこの範囲の内まで（悪い形へ寄っていかない）
+//   b からの見張り（頭。params.ts の HEAD の shadowB。記録だけ）：2つの立ち方で見られないとき（差が小さい・立ち方が1つ）も、
+//     b（立った姿勢）+ poseCap を基準に、線の幅 poseMargin で、2つの立ち方で見るときと同じ決まりで知らせたかを数える（shadow を返す。震わせない）
 // 2026-11-02 20:23 と 2026-11-03 15:08 の走りで、胸のセンサーがずれて傾きが +9〜13° 増えた（カメラの上体は変わらず）。わざとの猫背（60秒まで）は置き直さない
 // 1時間の上限（core/params.ts の LIMIT.perHour。しくみ engine.ts と同じ決まり）：走った時間を1時間ずつの枠に切り、知らせが枠の中で上限に達したら、
 //   その枠の残りは知らせない（測って、線を越えているかは見続ける。capped を返した tick が、その枠の最後の知らせ）。長い走りで震え続けないため
@@ -45,13 +50,16 @@ export type CamValues = { trunk: number; head: number }
 // learned：走る前傾を覚えた（度）。offset：2つの立ち方で見るとき、そのうち基準として差し引いた分（度）
 // plausible：2つの立ち方で見ているとき、線を越えている向きが猫背としてありうる（ずれの見張りに数えない）
 // praise：知らせたあと、線の下に posePraise 秒続けていた（直った。2つの立ち方で見ているときだけ）
-export type LeanStep = { tilt: number | null; cue: boolean; capped?: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number }
+// settled：人ごとの基準を決めた（base：決めた基準、median：落ち着いた間の真ん中、n：使った tick の数、lo・hi：収めた範囲）
+// shadow：b からの見張り（記録だけ）で、知らせたことになる tick
+export type LeanStep = { tilt: number | null; cue: boolean; capped?: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number; settled?: { base: number; median: number | null; n: number; lo: number; hi: number }; shadow?: boolean }
 
 // 2つの立ち方で決めた物差し。deg：a と b の角度（猫背の大きさ）、margin：使う線の幅（度）、camB：カメラ版で b のときのカメラの上体の前傾（度）
 export type PoseScale = { deg: number; margin: number; camB: number | null }
 // 基準として差し引いた分。by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・speed（その速さで正しい胸の前傾。胸）。
 // cam：カメラ版で、カメラの上体の増え（b の立ち姿勢から、度。記録に残すだけ）。kmh・speedBy・trunk：speed のとき、使った速さとその出どころ、よい例の上体（度）
-export type PoseOffset = { deg: number; by: 'sensor' | 'cap' | 'speed'; cam: number | null; kmh?: number | null; speedBy?: SpeedBy; trunk?: number }
+// lo・hi：speed のとき、よい例の上体の範囲を胸の値に直したもの（人ごとの基準を収める範囲）
+export type PoseOffset = { deg: number; by: 'sensor' | 'cap' | 'speed'; cam: number | null; kmh?: number | null; speedBy?: SpeedBy; trunk?: number; lo?: number; hi?: number }
 
 const DEG = 180 / Math.PI
 const RECENT_SEC = 10 // rising のために残す傾きの長さ（秒）。HEAD_YIELD.riseSec より長く
@@ -103,6 +111,11 @@ export class LeanDetector {
   private owed = false // 知らせたあと、まだほめていない（2つの立ち方で見るとき、posePraise）
   private lastRef: number | null = null // 前の update で使った基準（rising で線と比べる）
   private recentTilts: { t: number; v: number }[] = [] // 線と比べた tick の傾き（rising。直近 HEAD_YIELD.riseSec 秒ほど）
+  band: { lo: number; hi: number } | null = null // 人ごとの基準を収める範囲（胸。settleTo があって、expect が範囲を返したとき）
+  settled = false // 人ごとの基準を決めた（それまでは寄せない）
+  private settleBuf: number[] = [] // 落ち着いた間（settleFrom〜settleTo 秒）に線の下にいた傾き
+  // b からの見張り（shadowB。記録だけ）：越え始めた t・最後に知らせたことにした t・続けた回数・線の下に入った t・ずれで動かした分・1時間の枠
+  private sh = { over: null as number | null, last: -Infinity, streak: 0, under: null as number | null, shift: 0, hour: -1, n: 0 }
   readonly p: LeanParams
   private readonly perHour: number
 
@@ -207,6 +220,10 @@ export class LeanDetector {
     this.anchor = null
     this.camUnder = []
     this.camOver = []
+    this.band = null
+    this.settled = false
+    this.settleBuf = []
+    this.sh = { over: null, last: -Infinity, streak: 0, under: null, shift: 0, hour: -1, n: 0 }
   }
 
   // 重力の向き u の、立った姿勢からの傾き（度）。前の向きがあれば、それに沿った符号つきの角度
@@ -253,7 +270,7 @@ export class LeanDetector {
     const cam = this.pose?.camB !== null && this.pose?.camB !== undefined && this.camLearn.length >= p.camMin ? median(this.camLearn) - this.pose.camB : null
     if (p.poseSpeed) {
       const e = this.expect?.() ?? expectedChest()
-      return { deg: e.deg, by: 'speed', cam, kmh: e.kmh, speedBy: e.by, trunk: e.trunk }
+      return { deg: e.deg, by: 'speed', cam, kmh: e.kmh, speedBy: e.by, trunk: e.trunk, ...(e.lo !== undefined && e.hi !== undefined && { lo: e.lo, hi: e.hi }) }
     }
     return runLean <= p.poseCap ? { deg: runLean, by: 'sensor', cam } : { deg: p.poseCap, by: 'cap', cam }
   }
@@ -284,6 +301,33 @@ export class LeanDetector {
   consume(t: number) {
     this.lastCue = t
     this.streak++
+  }
+
+  // b からの見張り（shadowB。記録だけ）：基準 ＝ b + min(走る前傾, poseCap)（覚える前は poseCap）+ ずれで動かした分、線の幅 poseMargin（0 なら margin）。
+  // 2つの立ち方で見るときと同じく、poseHold（0 なら hold）秒続いたら知らせたことにし、越えたままなら cooldown ごと、
+  // 続けて poseBackoffAfter 回のあとは poseBackoffEvery 秒ごと。線の下に poseBackoffReset 秒いたら数え直す。1時間の上限も同じ
+  private shadowStep(t: number, tilt: number): boolean {
+    const p = this.p
+    const sh = this.sh
+    const ref = (this.runLean === null ? p.poseCap : Math.min(this.runLean, p.poseCap)) + sh.shift
+    const line = ref + (p.poseMargin > 0 ? p.poseMargin : p.margin)
+    if (tilt <= line) {
+      sh.over = null
+      sh.under ??= t
+      if (t - sh.under >= p.poseBackoffReset) sh.streak = 0
+      return false
+    }
+    sh.under = null
+    sh.over ??= t
+    const hold = p.poseHold > 0 ? p.poseHold : p.hold
+    const every = sh.streak >= p.poseBackoffAfter ? p.poseBackoffEvery : p.cooldown
+    const hour = Math.floor(this.runSec / 3600)
+    if (sh.hour !== hour) Object.assign(sh, { hour, n: 0 })
+    if (sh.n >= this.perHour || t - sh.over < hold || t - sh.last < every) return false
+    sh.last = t
+    sh.streak++
+    sh.n++
+    return true
   }
 
   // 線を越えているか（いまの tick で。走っていない・曲げている間は越えていない）
@@ -321,6 +365,7 @@ export class LeanDetector {
       this.waitSince = null
       this.bending = false
       this.recentTilts = []
+      this.sh.over = null
       return out
     }
     this.runSec += dt
@@ -336,6 +381,7 @@ export class LeanDetector {
       this.recentTilts = []
       this.overSince = null
       this.waitSince = null
+      this.sh.over = null
       this.bending = true
       out.bent = true
       return out
@@ -354,6 +400,9 @@ export class LeanDetector {
           const start = this.offset ? this.offset.deg : this.runLean
           this.ref = start
           this.anchor = start
+          // 胸：人ごとの基準は、落ち着いてから決め、よい例の範囲の内に収める（それまでは寄せない）
+          const o = this.offset
+          this.band = p.settleTo > 0 && o?.lo !== undefined && o.hi !== undefined ? { lo: Math.min(o.lo, start), hi: Math.max(o.hi, start) } : null
           out.learned = this.runLean
           if (this.offset) out.offset = this.offset.deg
           out.ref = this.ref
@@ -363,12 +412,15 @@ export class LeanDetector {
         this.camLearn = []
         return out
       }
+      // b からの見張り（記録だけ）：2つの立ち方で見ないときも、poseStart 秒から見る
+      if (!this.pose && p.shadowB && p.poseStart > 0 && this.runSec >= p.poseStart) out.shadow = this.shadowStep(t, tilt)
       // 2つの立ち方で見ていて poseStart 秒走ったら、覚え終わる前から知らせる（基準は差し引く上限の poseCap。覚えた基準はそれより大きくならない）
       if (!(this.pose && p.poseStart > 0 && this.runSec >= p.poseStart)) return out
     }
     // learning：走る前傾を覚えている間（poseStart から）。基準を寄せず、ずれも見張らない
     const learning = this.runLean === null
     const ref = learning ? p.poseCap : (this.ref ?? this.runLean!)
+    if (!learning && !this.pose && p.shadowB) out.shadow = this.shadowStep(t, tilt)
     this.tilts.push({ t, v: tilt })
     while (t - this.tilts[0].t > p.slipRef) this.tilts.shift()
     this.lastRef = ref
@@ -425,14 +477,27 @@ export class LeanDetector {
       }
       // 線の下にいる間だけ、基準を今の傾きへゆっくり寄せる（follow が 0 なら寄せない）
       // 2つの立ち方で見ているときは、向きが猫背としてありうる間は前へ寄せない（ゆっくり猫背になったのを基準に吸わない）。後ろへはいつも寄せる
-      if (p.follow > 0 && !learning) {
-        const next = ref + (tilt - ref) * Math.min(1, dt / p.follow)
+      // 人ごとの基準を落ち着いてから決めるとき（band）：決めるまでは寄せず、落ち着いた間の傾きをためる。決めたあとは範囲の内まで寄せる
+      if (this.band && !learning && !this.settled) {
+        if (this.runSec >= p.settleFrom) this.settleBuf.push(tilt)
+      } else if (p.follow > 0 && !learning) {
+        let next = ref + (tilt - ref) * Math.min(1, dt / p.follow)
+        if (this.band) next = Math.min(this.band.hi, Math.max(this.band.lo, next))
         if (!(this.pose && next > ref && this.plausible())) this.ref = next
       }
       if (camOk) {
         this.camUnder.push({ t, v: cam! })
         while (t - this.camUnder[0].t > p.camRef) this.camUnder.shift()
       }
+    }
+    // 落ち着いた（settleTo 秒走った）：線の下にいた傾きの真ん中を、よい例の範囲の内に収めて、人ごとの基準にする。足りなければ、その速さで正しい前傾のまま
+    if (this.band && !learning && !this.settled && this.runSec >= p.settleTo) {
+      this.settled = true
+      const n = this.settleBuf.length
+      const mid = n >= p.settleMin ? median(this.settleBuf) : null
+      if (mid !== null) this.ref = Math.min(this.band.hi, Math.max(this.band.lo, mid))
+      out.settled = { base: this.ref!, median: mid, n, lo: this.band.lo, hi: this.band.hi }
+      this.settleBuf = []
     }
     // 崩れではなく、センサーがずれた：基準を今の傾きへ置き直し、ずれのせいで知らせ続けないようにする（slipSec・slipDrift が 0 なら見張らない）
     const long = p.slipSec > 0 && this.overAcc >= p.slipSec
@@ -449,7 +514,13 @@ export class LeanDetector {
       median(this.camOver.map((x) => x.head)) - median(this.camUnder.map((x) => x.v.head)) < p.camHeadRise
     if (!learning && (long || drift || camSlip)) {
       const from = this.anchor ?? this.runLean!
+      const before = this.ref ?? from
       this.ref = median(this.tilts.map((x) => x.v))
+      // 付け位置がずれた分だけ、人ごとの基準の範囲と b からの見張りの基準も動かす。落ち着いた間の傾きは、ずれる前のものなので捨てる
+      const moved = this.ref - before
+      if (this.band) this.band = { lo: this.band.lo + moved, hi: this.band.hi + moved }
+      this.settleBuf = []
+      this.sh.shift += moved
       this.anchor = this.ref
       this.overAcc = 0
       this.overSince = null

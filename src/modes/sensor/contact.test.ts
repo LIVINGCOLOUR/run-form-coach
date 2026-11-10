@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ContactJudge, StepDetector, dfNorm, principalAxis, swingSign, type Step } from './contact'
+import { ContactJudge, StepDetector, cadLow, dfNorm, principalAxis, swingSign, type Step } from './contact'
 import { ContactCoach, contactValues } from './contactCoach'
 import { ANKLES, CONTACT, CONTACT_BUZZ, STEP } from './params'
 import { PHRASES } from '../../core/phrases'
@@ -237,3 +237,26 @@ describe('足が体より前に着く（オーバーストライド）', () => {
     expect(first!).toBeGreaterThanOrEqual(CONTACT.steadySec - 1 + CONTACT.refSec - 1)
   })
 })
+
+describe('オーバーストライドの安全網（記録だけ。CONTACT.cadLow）', () => {
+  it('研究データの下の端：表の間は直線、外は端の値', () => {
+    expect(cadLow(8)).toBe(CONTACT.cadLow[0][1])
+    expect(cadLow(20)).toBe(CONTACT.cadLow[CONTACT.cadLow.length - 1][1])
+    expect(cadLow((8.9 + 12.4) / 2)).toBeCloseTo((150 + 155) / 2, 5)
+  })
+
+  it('走り出しから低いピッチ（大また）で走り続けると、走り出しの基準では知らせないが、安全網の値は線を越える。知らせはしない', () => {
+    const low = cadLow(9)
+    const cad = () => low * 0.9 // 下の端より 1割低いまま
+    const { co, cues } = runStrides({ sec: 200, cad })
+    expect(cues.filter((c) => c.kind === 'cue')).toHaveLength(0)
+    expect(co.last!.cadDropHeld).toBeLessThan(CONTACT.overDrop)
+    expect(co.last!.cadDropNetHeld).toBeGreaterThan(CONTACT.overDrop)
+  })
+
+  it('ふつうのピッチ（下の端より上）の人は、安全網の値は走り出しからの落ち方と同じ', () => {
+    const { co } = runStrides({ sec: 200, cad: () => 170 })
+    expect(co.last!.cadDropNet).toBeCloseTo(co.last!.cadDrop, 5)
+  })
+})
+

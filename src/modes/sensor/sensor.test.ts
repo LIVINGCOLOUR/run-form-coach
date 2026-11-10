@@ -1035,3 +1035,126 @@ describe('胸の、その速さで正しい前傾', () => {
     expect(expectedChest(7.5).deg).toBe(19)
   })
 })
+
+// 胸の人ごとの基準：走りが落ち着いてから決め、よい例の範囲の内に収める（params.ts の HUNCH の settleFrom・settleTo）
+describe('胸の人ごとの基準（落ち着いてから決め、よい例の範囲の内）', () => {
+  const A = 12
+  const BODY = 8 // その速さで正しい胸の前傾（b から）
+  const LO = 5
+  const HI = 10.5 // よい例の範囲を胸の値に直したもの
+  const setup = () => {
+    const d = new LeanDetector(HUNCH)
+    d.expect = () => ({ deg: BODY, trunk: 6, kmh: 9, by: 'belt', lo: LO, hi: HI })
+    play(d, 0, 3, () => A, () => false)
+    const da = d.dirOver(3, 3)!
+    play(d, 3, 6, () => 0, () => false)
+    const db = d.dirOver(6, 3)!
+    expect(d.setPoses(da, db)).toBe(true)
+    return d
+  }
+  // 走った秒（0〜）で傾きを決めて流す。100Hz の値を 0.1秒ごとに判定（長いので 0.1秒ごとに1件だけ流す）
+  const run = (d: LeanDetector, from: number, to: number, tiltAt: (s: number) => number) => {
+    const out: ({ t: number } & LeanStep)[] = []
+    for (let i = Math.round(from * 10); i < Math.round(to * 10); i++) {
+      const t = 6 + i / 10
+      for (let k = 0; k < 10; k++) d.sample(t + k / 100, lean(tiltAt(i / 10)))
+      out.push({ t: i / 10, ...d.update(t + 0.09, true) })
+    }
+    return out
+  }
+
+  it('範囲は、よい例の上体の min〜max を正しい前傾と同じ式で胸の値に直したもの', () => {
+    const e = expectedChest(7.5)
+    const g = goodAt(7.5).trunk
+    expect(e.lo!).toBeCloseTo(CHEST_EXPECT.gain * g.min + CHEST_EXPECT.k, 1)
+    expect(e.hi!).toBeCloseTo(CHEST_EXPECT.gain * g.max + CHEST_EXPECT.k, 1)
+    expect(e.lo!).toBeLessThan(e.deg)
+    expect(e.hi!).toBeGreaterThan(e.deg)
+  })
+
+  it('数字：6〜10分。胸だけ（頭は今までどおり）', () => {
+    expect(HUNCH.settleFrom).toBe(360)
+    expect(HUNCH.settleTo).toBe(600)
+    expect(HEAD.settleTo).toBe(0)
+  })
+
+  it('落ち着くまで（settleTo 秒）は基準を寄せない。そのあと、落ち着いた間の真ん中をよい例の範囲の内に収めて基準にする', () => {
+    const d = setup()
+    // 正しい前傾より 4° 前（線 5° の下）で走り続ける
+    const out = run(d, 0, HUNCH.settleTo + 30, () => BODY + 4)
+    const at = (s: number) => out.find((o) => o.t >= s)!
+    expect(at(300).ref!).toBeCloseTo(BODY, 5) // 前は follow で 12° 近くまで寄っていた
+    const st = out.find((o) => o.settled)!
+    expect(st.t).toBeGreaterThanOrEqual(HUNCH.settleTo - 0.2)
+    expect(st.settled!.median!).toBeCloseTo(BODY + 4, 0)
+    expect(st.settled!.base).toBe(HI) // 範囲の上の端で止める
+    expect(d.ref!).toBeLessThanOrEqual(HI + 1e-9)
+    expect(out.some((o) => o.cue)).toBe(false)
+  })
+
+  it('落ち着いたあと、ゆっくり前かがみになっても、基準は範囲の上の端までしか寄らず、上の端 + 線の幅を越えると知らせる', () => {
+    const d = setup()
+    run(d, 0, HUNCH.settleTo + 10, () => BODY)
+    // 10分かけて +8° 前へ（疲れの前かがみより速い。follow 60秒で追える速さ）
+    const t0 = HUNCH.settleTo + 10
+    const out = run(d, t0, t0 + 660, (s) => BODY + Math.min(8, ((s - t0) / 600) * 8))
+    expect(Math.max(...out.map((o) => o.ref ?? 0))).toBeLessThanOrEqual(HI + 1e-9)
+    const cue = out.find((o) => o.cue)
+    expect(cue).toBeDefined()
+    expect(cue!.tilt!).toBeGreaterThan(HI + HUNCH.poseLine)
+    // 範囲がないと（前の寄せ方）、同じゆっくりの前かがみを基準に吸って知らせない
+    const old = new LeanDetector({ ...HUNCH, settleTo: 0 })
+    old.expect = () => ({ deg: BODY, trunk: 6, kmh: 9, by: 'belt' })
+    play(old, 0, 3, () => A, () => false)
+    const da = old.dirOver(3, 3)!
+    play(old, 3, 6, () => 0, () => false)
+    old.setPoses(da, old.dirOver(6, 3)!)
+    run(old, 0, HUNCH.settleTo + 10, () => BODY)
+    expect(run(old, t0, t0 + 660, (s) => BODY + Math.min(8, ((s - t0) / 600) * 8)).some((o) => o.cue)).toBe(false)
+  })
+
+  it('落ち着いた間に線の下にいた時間が settleMin より短ければ、決めずに正しい前傾のまま', () => {
+    const d = setup()
+    const out = run(d, 0, HUNCH.settleTo + 5, (s) => (s >= HUNCH.settleFrom - 5 ? BODY + 12 : BODY))
+    const st = out.find((o) => o.settled)!
+    expect(st.settled!.median).toBeNull()
+    expect(st.settled!.base).toBeCloseTo(BODY, 5)
+  })
+
+  it('猫背のまま走り出しても、走り出しから知らせる（正しい前傾が基準のまま）', () => {
+    const d = setup()
+    const out = run(d, 0, 120, () => BODY + A)
+    expect(out.filter((o) => o.cue).length).toBeGreaterThan(3)
+  })
+})
+
+// 頭：2つの立ち方で見られないとき（差が小さい・立ち方が1つ）の、b からの見張り（記録だけ。params.ts の HEAD の shadowB）
+describe('頭の b からの見張り（記録だけ）', () => {
+  const setup = () => {
+    const d = new LeanDetector(HEAD)
+    play(d, 0, 3, () => 0, () => false)
+    d.stand(3, 3) // b を立った姿勢に（今までの見方）
+    return d
+  }
+  it('前に出たまま走り出すと、今までの見方は知らせないが、見張りは poseStart + poseHold 秒ごろから数える', () => {
+    const d = setup()
+    const out = play(d, 3, 3 + 120, () => 14, () => true)
+    expect(out.some((o) => o.cue)).toBe(false)
+    const sh = out.filter((o) => o.shadow)
+    expect(sh.length).toBeGreaterThan(2)
+    expect(sh[0].t - 3).toBeGreaterThanOrEqual(HEAD.poseStart + HEAD.poseHold - 0.2)
+    expect(sh[0].t - 3).toBeLessThan(HEAD.poseStart + HEAD.poseHold + 1)
+    // 知らせ直しの間隔は2つの立ち方と同じ（3回のあとは poseBackoffEvery 秒ごと）
+    expect(sh.length).toBeLessThan(10)
+  })
+  it('b に近い頭で走れば数えない。2つの立ち方で見るときは数えない', () => {
+    expect(play(setup(), 3, 3 + 120, () => 2, () => true).some((o) => o.shadow)).toBe(false)
+    const d = new LeanDetector(HEAD)
+    play(d, 0, 3, () => 12, () => false)
+    const da = d.dirOver(3, 3)!
+    play(d, 3, 6, () => 0, () => false)
+    d.setPoses(da, d.dirOver(6, 3)!)
+    expect(play(d, 6, 126, () => 14, () => true).some((o) => o.shadow)).toBe(false)
+  })
+})
+

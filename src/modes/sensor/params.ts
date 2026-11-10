@@ -117,6 +117,12 @@ export interface LeanParams {
   posePraise: number // 知らせたあと、線の下にこれ（秒）続けていたら、ほめる（短く praiseBuzzCount 回）。0 ならほめない
   praiseBuzzCount: number
   praiseBuzzMs: number
+  // 人ごとの基準を、走りが落ち着いてから決める（2つの立ち方で見て、その速さで正しい前傾を基準にするときだけ。胸。下の HUNCH の説明）。0 なら今までどおり
+  settleFrom: number // 走った時間（秒）がここから
+  settleTo: number // ここまでの間に、線の下にいた傾きの真ん中を人ごとの基準にする。それまでは基準を寄せない（follow しない）
+  settleMin: number // その間に線の下にいた tick がこれより少なければ、決めずに、その速さで正しい前傾のまま
+  // b からの見張り（記録だけ。頭。下の HEAD の説明）：2つの立ち方で見ないとき、b + poseCap を基準に線の幅 poseMargin で、知らせたことになるかを数える
+  shadowB: boolean
 }
 
 const LEAN = {
@@ -165,6 +171,10 @@ const LEAN = {
   posePraise: 0,
   praiseBuzzCount: 2,
   praiseBuzzMs: 150,
+  settleFrom: 0,
+  settleTo: 0,
+  settleMin: 0,
+  shadowB: false,
 }
 
 // 2つの立ち方（2026-11-05 から。すべて仮の値で、確かめ走（npm run drill -- --poses）で決める）
@@ -241,11 +251,25 @@ export const CHEST_EXPECT = {
 //   胸と頭が震えた。走っている間の胸の「傾き − 基準」は、4本の記録で ふつう 上から0.1%で +12〜19°、わざとの猫背（11-03）で +36°、
 //   11-03 の走りの終わり（止まるところ）で +52°。+45° はわざとの猫背より 9° 上で、拾う動きは越え始めから約0.5秒で越える（npm run replay:sensor）。
 //   +20° より大きく傾いて知らせるときだけ1秒待つ（ふつうの猫背の知らせ 24°・+10° 前後は待たない）
+// 人ごとの基準は、走りが落ち着いてから決める（settleFrom 360・settleTo 600・settleMin 600。2026-11-10 本人の決め。2つの立ち方で見るときだけ）。
+//   基準は走り出しから「b + その速さで正しい前傾」（CHEST_EXPECT）で、走って10分（settleTo）までは寄せない。走って6〜10分に線の下にいた傾きの真ん中を、
+//   よい例の上体の範囲（goodAt(速さ).trunk の min〜max）を同じ式で胸の値に直した範囲（expect.ts の lo〜hi。時速7.5km で 基準 −3.6〜+2.9°、12km で −2.7〜+2.0°）
+//   の内に収めて、その人の基準にする。そのあとの follow（センサーのずれを吸う）も、この範囲の内まで。範囲の外へ寄るのは、ずれの見張り（slipSec・camSlipSec）だけ
+//   なぜ：前は走って40秒から follow で寄せていて、線の下でゆっくり進む前かがみも基準に吸った。2つの立ち方で見るときは、猫背としてありうる（b から 0.4 × 差 か 線の幅 以上）
+//     と前へ寄せないが、それより下（差 10° なら +4° まで）は吸う。11-09（32分）を流し直すと、基準は走り出し6分で 19.4 → 22.5° と +3.2° 寄った（2つの立ち方は作りもの。docs/sensor-mode.md）
+//   疲れの前かがみ：自分の長い走りのカメラの上体は、はじめの5分から 30〜60分で +0.6〜+2.9°（11-04 4.0 → 5.6〜6.9°、11-05 4.5 → 6.3°、11-09 4.4 → 5.0〜5.3°）、
+//     頭の位置は +3〜+7°。研究では長く走ると上体が約 +4° 前に傾く（Koblbauer 2014、要旨だけ）。範囲の内なら、よい例の内なので吸ってよい（Crowell 2011 は人ごとの目標を、
+//     ふつうの人の範囲に入るところで決めた。要旨だけ）。範囲の外（悪い形）へは寄らないので、そこからは線（5°）で知らせる
+//   6〜10分：トレッドミルの走りは慣れるのに約6〜7分かかる（2026-11-10 の文献の見直し、要旨だけ）。自分の記録でも、カメラの上体は 0〜5分と5〜10分で −0.4〜+1.6° 違う
+//   settleMin 600（tick 0.1秒で60秒）：線の下にいた時間がそれより短ければ、決めずに正しい前傾のまま（ずっと線の上なら、猫背のままか、正しい前傾が合わない日）
+//   付け位置がずれたとみなしたら（ずれの見張り）、範囲もずれた分だけ動かし、落ち着いた間にためた傾きは捨てる
+//   流し直し（2つの立ち方の記録がある4本と、作りものの11-09。docs/sensor-mode.md の「人ごとの基準」）：胸の知らせ 28 → 28回、猫背の区間の知らせ 14 → 14回。どれも仮の値
 // HUNCH は、レベルが分からないときの線（中級＝カメラの既定 DEFAULT_STRICT と同じ）
+const SETTLE = { settleFrom: 360, settleTo: 600, settleMin: 600 }
 export const HUNCH_BY_LEVEL: Record<Level, LeanParams> = {
-  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true },
-  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true },
-  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true },
+  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, ...SETTLE },
+  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, ...SETTLE },
+  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, ...SETTLE },
 }
 export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 
@@ -278,6 +302,14 @@ export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 //   知らせ直す間隔：続けて3回（4秒ごと）のあとは30秒ごと（胸は5回のあと15秒ごと）。いつもの頭はずっと続く癖で、4秒ごとに頭を震わせ続けるとうるさい
 //     （おでこの振動は骨に響く）。うなずきと前に出たのを分けられない分、外れの知らせもある。線の下に10秒いたら数え直す
 //   posePraise 3：知らせたあと線の下に3秒いたら、短く2回（0.15秒）震わせてほめる（接地の「直った」と同じ形）。カメラ版は声でも「いいですね。その形です。」
+// b からの見張り（shadowB。2026-11-10。記録だけで、震わせない）：2つの立ち方で見られないとき（頭の差が poseMin より小さい・腰スマホのように立ち方が1つ）、
+//   頭は今までの見方（走り出しの頭 + 18°）なので、走り出しから前に出ている頭は基準になって知らせない（本人の課題）。代わりの見方を記録で数える：
+//   基準 ＝ b（立った姿勢）+ min(走り出しの頭, poseCap 3°)、線の幅 poseMargin 8°、続ける長さ・知らせ直しの間隔は2つの立ち方で見るときと同じ（events の sensor:shadow 頭）。
+//   b + 3° のわけ：胸を開いて走った区間の頭は b から −1.3°（11-06 12:27）・+0.6°（19:37）・−0.1 / −1.1°（11-07 18:07）で、よい形で走る頭はほぼ b（npm run merge）
+//   なぜ記録だけか（流し直し。docs/sensor-mode.md の「b からの見張り」）：11-09（腰スマホ、b ＝ 立った姿勢）は30分で10回、どれもカメラも頭が前（首 38〜48°）。
+//     11-07 18:07（差 5.3°）は3回（猫背の区間、カメラも頭が前）。ところが、立ち方が1つだった 11-03・11-04・11-05 は、どれも1時間の上限（20回）まで数え、
+//     そのうち 9・12・15回はカメラの頭が上級の線（首 32°・頭の位置 36°）の内だった。立った姿勢の頭は日によって違い、走っている頭も b から 1〜14° と日で違う
+//     （ふつうの区間の真ん中：11-06 12:27 5.3°・19:37 12.6°・11-07 17:58 7.0°・18:07 13.8°）ので、外れた知らせが多すぎる。2つの立ち方の記録がたまったら決め直す
 export const HEAD: LeanParams = {
   ...LEAN,
   place: HEAD_PLACE,
@@ -292,6 +324,7 @@ export const HEAD: LeanParams = {
   poseBackoffAfter: 3,
   poseBackoffEvery: 30,
   posePraise: 3,
+  shadowB: true,
 }
 
 // 猫背を頭より先に（2026-11-06 本人の決め。カメラ版の params.ts の HUNCH と同じ考え）：胸と頭は別々に震えるが、
@@ -455,6 +488,16 @@ export interface ContactParams {
   overDrop: number // ピッチがこれ（%）より落ちたら、オーバーストライド
   overHold: number // それがこれ（秒）続いたら知らせる
   overGap: number // 判定の間がこれ（秒）よりあいたら、続いていたとはみなさない
+  // オーバーストライドの安全網（記録だけ。知らせない。contact.ts の cadLow・cadDropNet、session.ts の sensor:strideNet）。
+  //   上の見方は走り出しのピッチと比べるので、走り出しから大またの人は「ふつう」になり、気づけない。そこで、基準のピッチを
+  //   その速さの研究データの下の端より下にしないで、同じ落ち方（overDrop % が overHold 秒）を数える。
+  //   下の端：RBDS（Fukuchi 2017。こちらで読めた22人の印から、こちらで出したピッチ。sim/result-landing.md の①）の、速さごとの下から1割
+  //   （秒速2.46m＝時速8.9km 150・3.44m＝12.4km 155・4.42m＝15.9km 168 歩/分。15.9km は10人）。表の外は端の値。
+  //   なぜ記録だけか：ピッチの決まった線の根拠になる研究はない。ピッチと速さの関係は人によって大きく違い（van Oeveren 2019、256人の普段の記録。
+  //   人ごとの傾きが正から負まで。docs/research/phone-methods.md）、背の高い人は低いピッチがふつう。下から1割は「その速さの人の1割はもっと低い」値で、悪い形の線ではない。
+  //   確かめていない（走り出しから大またで走った記録がない）。自分のふつうのピッチ（時速8〜9km で 165〜173）は下の端より 1割ほど上なので、自分の走りではまず越えない
+  //   高い側には収めない：同じ速さで自分のピッチから 5% 下げただけで膝の負担は増える（Heiderscheit 2011 の本文）ので、ピッチの高い人の落ち方も、その人の基準で見る
+  cadLow: [number, number][]
 }
 export const CONTACT: ContactParams = {
   norm: [
@@ -485,6 +528,11 @@ export const CONTACT: ContactParams = {
   overDrop: 6,
   overHold: 20,
   overGap: 3,
+  cadLow: [
+    [8.9, 150],
+    [12.4, 155],
+    [15.9, 168],
+  ],
 }
 
 // 足首の振動（ble.ts の buzz。回数と長さ ms）。足首で走りながら感じ取れるかは、まだ試していない（hardware/sensor/docs/haptic.md）

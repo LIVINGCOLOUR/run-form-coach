@@ -269,6 +269,10 @@ export interface ContactValues {
   cadDropHeld: number // 直近 CONTACT.overHold 秒の cadDrop のいちばん小さい値（その間ずっと落ちていたか）。続けて測れた長さが足りなければ NaN
   ctRise: number // 同じく、接地時間が何 % のびたか（記録用）
   ref: { v: number; cad: number; ct: number } | null // 走り出しの基準（その速さの、ふつうのピッチと接地時間）
+  // 安全網（記録だけ。params.ts の CONTACT.cadLow）：基準のピッチを、その速さの研究データの下の端（cadLow）より下にしないで出した落ち方（%）と、
+  // その直近 overHold 秒のいちばん小さい値。走り出しから大まただった人でも、ピッチが下の端より overDrop % 落ちていれば越える。基準がない・速さが違うときは NaN
+  cadDropNet: number
+  cadDropNetHeld: number
 }
 
 const median = (xs: number[]) => {
@@ -293,6 +297,19 @@ export function dfNorm(v: number, c: ContactParams = CONTACT): { mean: number; s
   return { mean: m0 + (m1 - m0) * u, sd: s0 + (s1 - s0) * u }
 }
 
+// 速さ v（km/h）での、研究データのピッチの下の端（歩/分。params.ts の CONTACT.cadLow）。表の間は直線でつなぎ、表の外は端の値のまま
+export function cadLow(v: number, c: ContactParams = CONTACT): number {
+  const T = c.cadLow
+  if (v <= T[0][0]) return T[0][1]
+  const last = T[T.length - 1]
+  if (v >= last[0]) return last[1]
+  let k = 0
+  while (v > T[k + 1][0]) k++
+  const [v0, c0] = T[k]
+  const [v1, c1] = T[k + 1]
+  return c0 + ((c1 - c0) * (v - v0)) / (v1 - v0)
+}
+
 // 両足の1歩をためて、直近 win 秒から判定の値を出す
 // オーバーストライド：ベルトの速さが同じなのに歩幅を大きくすると、ピッチが落ち、接地がのびる（2026-11-05 にわざとやった約15秒：
 //   時速9kmのまま、ピッチ 170 → 146〜153、接地時間 255 → 330ms。見積もった速さは 7.7〜8.2 km/h で変わらなかった）。
@@ -305,7 +322,7 @@ export class ContactJudge {
   private ref: { v: number; cad: number; ct: number } | null = null
   private refBuf: { t: number; v: number; cad: number; ct: number }[] = []
   private away: number | null = null // 速さが基準と違い始めた t
-  private drops: { t: number; d: number }[] = [] // 直近の cadDrop（同じ速さで測れた間だけ。途切れたら空にする）
+  private drops: { t: number; d: number; n: number }[] = [] // 直近の cadDrop と cadDropNet（同じ速さで測れた間だけ。途切れたら空にする）
   readonly c: ContactParams
 
   constructor(c: ContactParams = CONTACT) {
@@ -389,7 +406,7 @@ export class ContactJudge {
   // 走り出しの基準を覚え、同じ速さの間のピッチの落ち方を出す
   private overstride(t: number, v: number, cad: number, ct: number, steady: boolean) {
     const c = this.c
-    const none = { cadDrop: NaN, cadDropHeld: NaN, ctRise: NaN, ref: this.ref }
+    const none = { cadDrop: NaN, cadDropHeld: NaN, ctRise: NaN, ref: this.ref, cadDropNet: NaN, cadDropNetHeld: NaN }
     if (!(Number.isFinite(v) && Number.isFinite(cad) && Number.isFinite(ct))) return none
     if (!this.ref) {
       if (!steady) {
@@ -416,12 +433,17 @@ export class ContactJudge {
     this.away = null
     const cadDrop = ((ref.cad - cad) / ref.cad) * 100
     const ctRise = ((ct - ref.ct) / ref.ct) * 100
+    // 安全網（記録だけ）：基準を、その速さの研究データの下の端より下にしない
+    const netBase = Math.max(ref.cad, cadLow(ref.v, c))
+    const cadDropNet = ((netBase - cad) / netBase) * 100
     // 1回の判定の間が gap 秒よりあいたら（止まった・値が切れた）、続けて測れたとはみなさない
     const last = this.drops[this.drops.length - 1]
     if (last && t - last.t > c.overGap) this.drops = []
-    this.drops.push({ t, d: cadDrop })
+    this.drops.push({ t, d: cadDrop, n: cadDropNet })
     while (this.drops.length && t - this.drops[0].t > c.overHold) this.drops.shift()
-    const held = t - this.drops[0].t >= c.overHold - 1 ? Math.min(...this.drops.map((x) => x.d)) : NaN
-    return { cadDrop, cadDropHeld: held, ctRise, ref }
+    const long = t - this.drops[0].t >= c.overHold - 1
+    const held = long ? Math.min(...this.drops.map((x) => x.d)) : NaN
+    const netHeld = long ? Math.min(...this.drops.map((x) => x.n)) : NaN
+    return { cadDrop, cadDropHeld: held, ctRise, ref, cadDropNet, cadDropNetHeld: netHeld }
   }
 }

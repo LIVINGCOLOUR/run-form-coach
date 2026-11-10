@@ -2,13 +2,14 @@ import type { Level } from '../../core/level'
 import type { SensorCounts, SensorLog, SensorPoseLog } from '../../core/types'
 import { speak, voiceBusy } from '../../core/voice'
 import { sensors } from './ble'
+import { cadLow } from './contact'
 import { ContactCoach, type ContactKey } from './contactCoach'
 import type { GpsSec } from './gps'
 import { expectedChest, type ExpectLean } from './expect'
 import { angleDeg, HeadYield, LeanDetector, type CamValues } from './lean'
 import type { Vec3 } from './parse'
 import { SensorRecorder } from './log'
-import { ANKLES, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
+import { ANKLES, CONTACT, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
 import type { WaistPhone } from './waist'
 
 // 1回の走りの間、つないだセンサーの値を記録し、胸で猫背を、頭で頭が前に出たのを見て、その場所を震わせる（runner.ts の SensorRunner から使う）。
@@ -76,6 +77,7 @@ export class SensorSession {
   private cappedSeen = 0 // 接地のしくみ（engine.capped）のうち、もう数えた件数
   // 胸の猫背を先に：胸が線を越えている・上がってきている間は、頭の知らせを待たせる（lean.ts の HeadYield）
   private headYield = new HeadYield()
+  private strideNetOn = false // オーバーストライドの安全網（記録だけ）を越えている間
 
   // 胸の、その速さで正しい前傾（expect.ts）を決めるための速さ：ベルトの速さ（入れたとき）、足首のセンサーの見積もり（走っている間の tick ごと、直近 learn 秒）
   private belt: () => number | undefined
@@ -236,6 +238,13 @@ export class SensorSession {
         const spText = off?.by === 'speed' ? ` ${off.kmh ?? '-'} ${off.speedBy}` : ''
         this.onEvent(t, `${x.ev.lean} ${r.learned.toFixed(1)}${off ? ` offset ${off.deg.toFixed(1)} ${off.by}${spText}${off.cam !== null ? ` cam ${off.cam.toFixed(1)}` : ''}` : ''}`)
       }
+      // 人ごとの基準を決めた（胸。走りが落ち着いた settleTo 秒）：sensor:settle 胸 20.3 med 20.3 n 2050 band 15.8〜22.1（med：落ち着いた間の真ん中。足りなければ -）
+      if (r.settled) {
+        const st = r.settled
+        this.onEvent(t, `sensor:settle ${x.p.place} ${st.base.toFixed(1)} med ${st.median === null ? '-' : st.median.toFixed(1)} n ${st.n} band ${st.lo.toFixed(1)}〜${st.hi.toFixed(1)}`)
+      }
+      // b からの見張り（頭。記録だけで震わせない）：2つの立ち方で見ていたら知らせたことになる：sensor:shadow 頭 13.8
+      if (r.shadow && r.tilt !== null) this.onEvent(t, `sensor:shadow ${x.p.place} ${r.tilt.toFixed(1)}`)
       // ずれとみなした：短く3回震わせる（崩れの1秒1回と分ける）。声は出さない。走ったあとの結果の画面で「付け直して」と知らせる（SlipNote.tsx）
       if (r.slip) {
         const { from, to } = r.slip
@@ -340,7 +349,7 @@ export class SensorSession {
   //   sensor:contact sit 2.3（接地が長い。値は平均から標準偏差いくつぶん上か）・sensor:contact longL 16.9（左が長い左右差 %）・
   //   sensor:contact stride 8.2（オーバーストライド。同じ速さの走り出しからピッチが何 % 落ちたか）
   //   sensor:contactOk sit（直った）・sensor:capped sit（1時間の上限に達した。この1時間は知らせない）・
-  //   sensor:steps df 0.38 ct 272 L 270 R 275 v 7.4 cad 168 imp 4.1/4.9 drop 1.2（drop：走り出しからのピッチの落ち方 %）
+  //   sensor:steps df 0.38 ct 272 L 270 R 275 v 7.4 cad 168 imp 4.1/4.9 drop 1.2 net 1.2（drop：走り出しからのピッチの落ち方 %、net：基準を研究データの下の端より下にしないときの落ち方）
   private tickContact(t: number, running: boolean) {
     for (const c of this.contact.tick(t, running)) {
       for (const place of c.places) void sensors.buzz(place, c.count, c.ms)
@@ -355,10 +364,15 @@ export class SensorSession {
       this.onEvent(t, `sensor:capped ${capped[this.cappedSeen].item}`)
     }
     const m = this.contact.last
+    // オーバーストライドの安全網（記録だけ。params.ts の CONTACT.cadLow）：走り出しの基準では越えないが、基準を研究データの下の端まで上げると越えたとき、
+    // 越え始めに1回だけ残す：sensor:strideNet 7.2 base 140 low 150（落ち方 %・走り出しの基準のピッチ・その速さの下の端）
+    const net = !!m && m.steadyV && m.cadDropNetHeld > CONTACT.overDrop && !(m.cadDropHeld > CONTACT.overDrop)
+    if (net && !this.strideNetOn && m.ref) this.onEvent(t, `sensor:strideNet ${m.cadDropNetHeld.toFixed(1)} base ${m.ref.cad.toFixed(0)} low ${cadLow(m.ref.v).toFixed(0)}`)
+    this.strideNetOn = net
     if (m && t >= this.nextSteps) {
       this.nextSteps = t + CONTACT_LOG.every
       const f = (x: number, d = 0) => (Number.isFinite(x) ? x.toFixed(d) : '-')
-      this.onEvent(t, `sensor:steps df ${f(m.df, 3)} ct ${f(m.ct * 1000)} L ${f(m.ctL * 1000)} R ${f(m.ctR * 1000)} v ${f(m.v, 1)} cad ${f(m.cad)} imp ${f(m.impL, 1)}/${f(m.impR, 1)} drop ${f(m.cadDrop, 1)}${m.steady ? '' : ' unsteady'}${m.mountDiff ? ' mount' : ''}`)
+      this.onEvent(t, `sensor:steps df ${f(m.df, 3)} ct ${f(m.ct * 1000)} L ${f(m.ctL * 1000)} R ${f(m.ctR * 1000)} v ${f(m.v, 1)} cad ${f(m.cad)} imp ${f(m.impL, 1)}/${f(m.impR, 1)} drop ${f(m.cadDrop, 1)} net ${f(m.cadDropNet, 1)}${m.steady ? '' : ' unsteady'}${m.mountDiff ? ' mount' : ''}`)
     }
   }
 
