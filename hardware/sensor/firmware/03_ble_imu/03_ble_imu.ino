@@ -75,7 +75,7 @@ constexpr uint16_t MAX_PAYLOAD = 244; // MTU 247 - 3
 
 BLEDfu bledfu; // 無線での書き換え（次からは USB につながずに、Mac やスマホから書き込めるように）
 BLEDis bledis; // 機器の情報（0x180A）。受ける側が、どの版のファームかを読めるように
-const char* FW_VERSION = "2026-11-05.2"; // 振動（0xFFE3）・無線での書き換え・動いたら起きる・LED を点けない・型番 0x2A24 に番号
+const char* FW_VERSION = "2026-11-11.1"; // 振動（0xFFE3）・無線での書き換え・動いたら起きる・LED を点けない・型番 0x2A24 に番号・見張り番（ウォッチドッグ）
 BLEService imuService(0xFFE0);
 BLECharacteristic imuChar(0xFFE1);
 BLECharacteristic batChar(0xFFE2);
@@ -93,6 +93,27 @@ Sample ring[RING_SIZE];
 volatile uint32_t ringHead = 0; // 次に入れる位置（測る係だけが進める）
 volatile uint32_t ringTail = 0; // 次に出す位置（送る係だけが進める）
 volatile uint32_t lastMotion = 0; // 最後に動いた時刻（測る係が書く）
+volatile uint32_t lastSample = 0; // 最後に測れた時刻（測る係が書く。見張り番が、測る係が止まっていないかを見る）
+
+// ---- 見張り番（ウォッチドッグ）----
+// 固まったら自分でやり直す。2026-11-11 に1番が、電池のまま USB をつないでも Mac に出ず、リセットボタンでしか戻らなかった
+// （INT1 の線は正常で、USB で起きないので眠りではなく固まった見込み）。原因が分からなくても、8秒で最初から動き直す。
+// 送る係（loop）が回っていて、測る係も2秒以内に測れているときだけ餌をやる（I2C で測る係だけが止まった場合も拾う）。
+// 電気：見張り番は Bluetooth がもともと使っている 32.768kHz の時計で動くので、増えるのはごくわずか。
+// 眠る（System OFF）と見張り番も止まるので、眠っている間の電池には関係しない（nRF52840 の仕様）。
+// 一度動かすと止められず、ソフトのリセットをまたいで続くが、Adafruit のブートローダーは書き換えを待つ間に餌をやるので、
+// 無線・USB の書き換えはそのまま使える
+constexpr uint32_t WDT_SEC = 8;
+constexpr uint32_t WDT_SAMPLE_STALE_MS = 2000;
+void watchdogStart() {
+  NRF_WDT->CONFIG = (WDT_CONFIG_SLEEP_Run << WDT_CONFIG_SLEEP_Pos) | (WDT_CONFIG_HALT_Pause << WDT_CONFIG_HALT_Pos);
+  NRF_WDT->CRV = WDT_SEC * 32768 - 1;
+  NRF_WDT->RREN = WDT_RREN_RR0_Msk;
+  NRF_WDT->TASKS_START = 1;
+}
+void watchdogFeed(uint32_t now) {
+  if (now - lastSample < WDT_SAMPLE_STALE_MS) NRF_WDT->RR[0] = WDT_RR_RR_Reload;
+}
 
 void writeReg(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(lsm6_addr);
@@ -157,6 +178,7 @@ void sampleTask(void*) {
     s.seq = seq++;
     s.t = millis();
     readRegs(REG_OUTX_L_G, s.raw, 12);
+    lastSample = s.t;
     for (int i = 0; i < 3; i++) {
       int16_t g = (int16_t)(s.raw[i * 2] | (s.raw[i * 2 + 1] << 8));
       if (g > MOTION_GYRO || g < -MOTION_GYRO) lastMotion = s.t;
@@ -337,6 +359,8 @@ void setup() {
   Serial.println(" mV");
 
   xTaskCreate(sampleTask, "imu", 512, NULL, TASK_PRIO_NORMAL, &sampleTaskHandle);
+  lastSample = millis();
+  watchdogStart();
 }
 
 // 送る係
@@ -344,6 +368,7 @@ void loop() {
   static uint32_t lastBattery = 0;
   static uint32_t lastConnected = 0;
   uint32_t now = millis();
+  watchdogFeed(now);
   buzzUpdate(now);
   if (now - lastBattery >= BATTERY_EVERY_MS) {
     lastBattery = now;
