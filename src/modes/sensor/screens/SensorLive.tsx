@@ -20,7 +20,7 @@ import { fitSpeedA, saveSpeedFit } from '../speedFit'
 // 立った姿勢と走っているかは、センサーで決める（runner.ts）。記録は 60秒ごとに端末へ書き出す（runLog.ts。7時間まで）
 // 腰のポーチに入れたこのスマホの向きも記録する（waist.ts。知らせには使わない）。
 // トレッドミルでは、ベルトの速さを入れられる（胸の、その速さで正しい前傾と、足首の速さの式の人ごとの合わせに使う。speedFit.ts）。
-//   欄は画面のいちばん上に、走っている間も出しておく：始めて5秒でポーチに入れるので、立つ間だけ出していたら入れそびれた（2026-11-06 の2本。
+//   欄は画面のいちばん上に、走っている間も出しておく：始めて少し（SENSOR_RUN_SAY.pouch 秒）でポーチに入れるので、立つ間だけ出していたら入れそびれた（2026-11-06 の2本。
 //   ベルト時速9kmで、足首の見積もりは 7.7 のまま）。胸に使うのは走る前傾を覚える時刻（走って40秒）までに入れた値、速さの合わせは終えるときの値。
 //   外で走ることが多いので、カメラ版と違い前回の値は入れておかない（外の走りに前のベルトの速さを使わないため）
 
@@ -115,6 +115,8 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
 
   const on = nodes.filter((n) => n.status === 'connected')
   const lost = nodes.filter((n) => n.name && n.status === 'lost')
+  // 付けているはずなのに、つながっていない場所（自動のつなぎ直しにしくじった・選ばなかった）。切れてつなぎ直している（lost・つないでいます）のとは分けて出す
+  const missing = nodes.filter((n) => n.name && (n.status === 'idle' || n.status === 'error'))
   const p = phase === 'stand' && stage === 'b' ? { label: '立ち方 2/2', text: '胸を開いて、肩を後ろに引いて、顎を軽く引いて、3秒止まってください' } : PHASE_TEXT[phase]
   const startHold = () => {
     setHolding(true)
@@ -167,6 +169,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Chip ok={on.length > 0} label={`センサー ${on.length}個`} />
+        {missing.length > 0 && <Chip ok={false} label={`つながっていない：${missing.map((n) => n.place).join('・')}`} />}
         {lost.length > 0 && <Chip ok={false} label={`切れた：${lost.map((n) => n.place).join('・')}（つなぎ直しています）`} />}
         <Chip ok={wake} label={wake ? '画面は消えません' : '画面が消えるかも'} />
         <Chip ok={gps === 'on'} label={gps === 'on' ? 'GPS：記録しています' : gps === 'none' ? 'GPS：このブラウザでは使えません' : gps === 'denied' ? 'GPS：許可されていません' : 'GPS：待っています'} />

@@ -287,3 +287,145 @@ describe('覚えていた機器につなげないブラウザ（Bluefy）', () =
     }
   })
 })
+
+// 走っている途中で切れたとき：押さずにつなぎ直す（dropped → open の rejoin）
+describe('走っている途中で切れたとき（つなぎ直し）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+  // 切れる・つながるを外から動かせる機器。notify：値の通知を始めた直後に呼ぶ（そこで切れたことにできる）。refuse：つなぐのを断る
+  const flaky = (model: string) => {
+    const text = (s: string) => ({ readValue: async () => new DataView(new TextEncoder().encode(s).buffer) })
+    const hooks: { notify: () => void; refuse: unknown } = { notify: () => {}, refuse: undefined }
+    const ch = Object.assign(new EventTarget(), {
+      startNotifications: async () => {
+        hooks.notify()
+        return ch
+      },
+      readValue: async () => new DataView(new ArrayBuffer(2)),
+    })
+    const server = {
+      connected: false,
+      connect: vi.fn(async () => {
+        if (hooks.refuse !== undefined) throw hooks.refuse
+        server.connected = true
+        return server
+      }),
+      disconnect: vi.fn(),
+      getPrimaryService: async (u: string) => ({
+        getCharacteristic: async (c: string) => {
+          if (!server.connected) throw Object.assign(new Error('GATT Server is disconnected.'), { name: 'NetworkError' })
+          if (u.startsWith('0000180a')) return c.startsWith('00002a24') ? text(model) : text('2026-11-11.1')
+          return ch
+        },
+      }),
+    }
+    const device = Object.assign(new EventTarget(), { id: `id-${model}`, name: model, gatt: server })
+    // センサーが切れた（電源が落ちた・見張り番でやり直した）
+    const drop = () => {
+      server.connected = false
+      device.dispatchEvent(new Event('gattserverdisconnected'))
+    }
+    return { device, server, hooks, drop }
+  }
+  const setup = (device: object) => {
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
+    vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => device } })
+    return new SensorHub()
+  }
+  const head = SLOTS.findIndex((s) => s.place === '頭')
+
+  it('つなぎ直しの途中（値の通知を始めたあと）でまた切れても、つながったことにしない。もう一度つなぎ直す', async () => {
+    vi.useFakeTimers()
+    const f = flaky(SLOTS[head].name!)
+    const hub = setup(f.device)
+    await hub.connect(head)
+    expect(hub.snapshot()[head].status).toBe('connected')
+    // 走っている途中で切れる
+    f.drop()
+    expect(hub.snapshot()[head].status).toBe('lost')
+    // 3秒後のつなぎ直しでは、通知を始めた直後にまた切れる（はんだの甘い線で電源が落ちる・やり直しをくり返すとき）
+    f.hooks.notify = () => {
+      f.hooks.notify = () => {}
+      f.drop()
+    }
+    await vi.advanceTimersByTimeAsync(3100)
+    // 切れているのに「つながっています」のままだと、そのあと二度とつなぎ直さず、値も振動も止まったままになる
+    expect(hub.snapshot()[head].status).not.toBe('connected')
+    await vi.advanceTimersByTimeAsync(3100)
+    expect(hub.snapshot()[head].status).toBe('connected')
+    expect(f.server.connected).toBe(true)
+  })
+
+  it('つなぎ直せなかった理由を diag に残す（走りの記録で読めるように。毎回は残さない）', async () => {
+    vi.useFakeTimers()
+    const f = flaky(SLOTS[head].name!)
+    const hub = setup(f.device)
+    await hub.connect(head)
+    f.hooks.refuse = 2
+    f.drop()
+    await vi.advanceTimersByTimeAsync(3100 * 30)
+    const lines = hub.diag.filter((d) => d.text.includes('つなぎ直せない'))
+    expect(lines.length).toBeGreaterThan(0)
+    expect(lines.length).toBeLessThan(10)
+    expect(lines[0].text).toContain('number 2')
+    f.hooks.refuse = undefined
+    await vi.advanceTimersByTimeAsync(3100)
+    expect(hub.snapshot()[head].status).toBe('connected')
+    expect(hub.diag.some((d) => d.text.includes('つなぎ直した'))).toBe(true)
+  })
+
+  it('値の受け手の1つがエラーを出しても、ほかの受け手（走っているかの見分けなど）には届く。エラーは diag に残す', async () => {
+    const f = flaky(SLOTS[head].name!)
+    const hub = setup(f.device)
+    await hub.connect(head)
+    const got: number[] = []
+    hub.onPacket(() => {
+      throw new Error('こわれた受け手')
+    })
+    hub.onPacket((node) => got.push(node))
+    // 1件の通知（先頭7バイト + 1件13バイト。範囲 16g）
+    const v = new DataView(new ArrayBuffer(20))
+    v.setUint8(6, 16)
+    const data = (hub.nodes[head] as unknown as { data: EventTarget & { value?: DataView } }).data
+    for (let k = 0; k < 5; k++) {
+      data.value = v
+      data.dispatchEvent(new Event('characteristicvaluechanged'))
+    }
+    expect(got).toEqual([head, head, head, head, head])
+    const errs = hub.diag.filter((d) => d.text.includes('値の受け取りでエラー Error: こわれた受け手'))
+    expect(errs.length).toBeGreaterThan(0)
+    expect(errs.length).toBeLessThan(5)
+  })
+
+  it('抜けはつなぎ直しをまたいで数え（lostTotal）、センサーの時計が戻ったら（やり直した）diag に残す', async () => {
+    vi.useFakeTimers()
+    const f = flaky(SLOTS[head].name!)
+    const hub = setup(f.device)
+    await hub.connect(head)
+    const data = () => (hub.nodes[head] as unknown as { data: EventTarget & { value?: DataView } }).data
+    // 1件の通知：通し番号 seq、センサーの時計 ms
+    const send = (seq: number, ms: number) => {
+      const v = new DataView(new ArrayBuffer(20))
+      v.setUint16(0, seq, true)
+      v.setUint32(2, ms, true)
+      v.setUint8(6, 16)
+      const d = data()
+      d.value = v
+      d.dispatchEvent(new Event('characteristicvaluechanged'))
+    }
+    send(100, 60_000)
+    send(104, 60_040) // 3件抜けた
+    expect(hub.nodes[head]).toMatchObject({ lost: 3, lostTotal: 3, reboots: 0 })
+    // 見張り番でやり直して切れ、つなぎ直す。通し番号もセンサーの時計も 0 から
+    f.drop()
+    await vi.advanceTimersByTimeAsync(3100)
+    expect(hub.snapshot()[head].status).toBe('connected')
+    send(0, 900)
+    send(3, 930) // 2件抜けた
+    expect(hub.nodes[head]).toMatchObject({ lost: 2, lostTotal: 5, reboots: 1 })
+    expect(hub.diag.some((d) => d.text.includes('センサーがやり直した（時計 60秒→1秒）'))).toBe(true)
+  })
+})
+

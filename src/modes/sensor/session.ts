@@ -9,7 +9,7 @@ import { expectedChest, type ExpectLean } from './expect'
 import { angleDeg, HeadYield, LeanDetector, type CamValues } from './lean'
 import type { Vec3 } from './parse'
 import { SensorRecorder } from './log'
-import { ANKLES, CONTACT, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SLOTS, type LeanParams } from './params'
+import { ANKLES, CONTACT, CONTACT_LOG, HEAD, HUNCH, HUNCH_BY_LEVEL, SENSOR_LOG, SENSOR_STALL, SLOTS, type LeanParams } from './params'
 import { WAIST_RAW_COLUMNS, type WaistPhone, type WaistRawLog } from './waist'
 import { WAIST_SKIP } from './waistSit'
 
@@ -60,6 +60,12 @@ export class SensorSession {
   private off: () => void
   private offStatus: () => void
   private connected: boolean[]
+  // 場所ごとに最後に値が届いた t（つながっている間だけ）と、つながっているのに値が来ないとみなしているか（SENSOR_STALL。記録だけ）
+  private lastPacket: (number | null)[]
+  private stalled: boolean[]
+  // この走りで値が1つでも届いた場所と、走り始めの抜けの合計（ble.ts の lostTotal）。記録の nodes には、この走りの分だけを入れる
+  private seen: boolean[] = SLOTS.map(() => false)
+  private lostAtStart: number[] = sensors.snapshot().map((v) => v.lostTotal)
   private onEvent: (t: number, text: string) => void
   // 足首の2つで、接地時間が長い（腰が落ちている）・接地時間の左右差を見る（contactCoach.ts）。voice：知らせを声でも言う（カメラ版はトレッドミルで声が出せる）
   private contact = new ContactCoach()
@@ -101,6 +107,12 @@ export class SensorSession {
     this.waist = o.waist ?? null
     for (const x of this.parts) if (x.p.poseSpeed) x.d.expect = () => this.expectLean()
     this.off = sensors.onPacket((node, t, p) => {
+      if (this.stalled[node]) {
+        this.stalled[node] = false
+        this.onEvent(t, `sensor:resume ${SLOTS[node]?.place} ${(t - (this.lastPacket[node] ?? t)).toFixed(1)}`)
+      }
+      this.lastPacket[node] = t
+      this.seen[node] = true
       this.rec ??= new SensorRecorder(SLOTS.map((s) => ({ place: s.place, name: s.name ?? '' })))
       this.rec.add(node, t, p.range, p.samples)
       for (const x of this.parts) if (node === x.node) for (const s of p.samples) x.d.sample(t, s.a)
@@ -109,11 +121,19 @@ export class SensorSession {
     })
     // 切れた・戻ったも events に残す（あとで記録を読むとき、値が途切れた理由がわかるように）
     this.connected = sensors.snapshot().map((v) => v.status === 'connected')
+    const t0 = performance.now() / 1000
+    this.lastPacket = this.connected.map((on) => (on ? t0 : null))
+    this.stalled = this.connected.map(() => false)
     this.offStatus = sensors.subscribe(() => {
       const t = performance.now() / 1000
       sensors.snapshot().forEach((v, i) => {
         const now = v.status === 'connected'
-        if (now !== this.connected[i]) this.onEvent(t, `sensor:${now ? 'back' : 'lost'} ${v.place}`)
+        if (now !== this.connected[i]) {
+          this.onEvent(t, `sensor:${now ? 'back' : 'lost'} ${v.place}`)
+          // つながり直したら、そこから値が来るかを見る。切れている間は見ない（sensor:lost で分かる）
+          this.lastPacket[i] = now ? t : null
+          this.stalled[i] = false
+        }
         this.connected[i] = now
       })
     })
@@ -221,6 +241,7 @@ export class SensorSession {
   // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」。cam：カメラ版で、いまのカメラの上体と頭の位置（胸だけに渡す）。
   // gps：センサーランで、いまの GPS の速さと高さ（1秒ごとのまとめに残すだけ。知らせには使わない）
   tick(t: number, running: boolean, cam: CamValues | null = null, gps: GpsSec | null = null) {
+    this.tickStall(t)
     let chestCued = false
     // 足首のセンサーの速さ（胸の正しい前傾を決めるため。走っている間だけ、直近 HUNCH.learn 秒）
     const v = this.contact.last?.v
@@ -283,6 +304,15 @@ export class SensorSession {
       log.waistRawCols ??= WAIST_RAW_COLUMNS
       ;(log.waistRaw ??= []).push(...raw)
     }
+  }
+
+  // つながっているのに SENSOR_STALL.sec 秒より値が来ない（センサーが固まった）：sensor:stall <場所>（記録だけ。また来たら sensor:resume）
+  private tickStall(t: number) {
+    this.lastPacket.forEach((last, i) => {
+      if (last === null || this.stalled[i] || !this.connected[i] || t - last <= SENSOR_STALL.sec) return
+      this.stalled[i] = true
+      this.onEvent(t, `sensor:stall ${SLOTS[i]?.place}`)
+    })
   }
 
   // 崩れを知らせる：その場所を震わせ、記録と events に残す。capped：この知らせで1時間の上限に達した
@@ -359,9 +389,11 @@ export class SensorSession {
     const views = sensors.snapshot()
     log.nodes.forEach((n, i) => {
       const v = views[i]
-      if (!v?.name) return
+      // この走りで値が届かなかった場所（つながらなかった・前の走りでつないだだけ）には、前の版や電池を入れない
+      if (!v?.name || !this.seen[i]) return
       if (v.fw) n.fw = v.fw
-      n.lost = v.lost
+      // 抜けは、この走りの間の分（つなぎ直しをまたいで数える。前はつなぎ直すと 0 に戻っていた）
+      n.lost = v.lostTotal - (this.lostAtStart[i] ?? 0)
       if (v.battery !== null) n.battery = v.battery
     })
   }

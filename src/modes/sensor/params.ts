@@ -351,6 +351,13 @@ export const HEAD_YIELD = {
 //   手首 25Hz（平均）：アプリでは使っていない。あとで腕振り（compare:sensor の⑥、振り 約1.4Hz）を見るために残す
 // 大きさ：足首 2 × 50 + 頭・胸・手首 3 × 25 = 175件/秒 × 14バイト ＋ ブロックの頭 → base64 で約12MB/時（前の 5か所 × 50Hz は約17MB/時）。
 // 上限は置かない。走っている間、core/logChunks.ts の LOG_CHUNK.every 秒ごとに端末（IndexedDB）へ書き出して、手元に持たない
+// つながっているのに値が来ない（センサーが固まった）ことを記録に残す（session.ts。記録だけで、知らせない・つなぎ直さない）。
+//   ファームの測る係（I2C）が止まると、Bluetooth はつながったまま値だけが止まる（見張り番のない個体。hardware/sensor/CLAUDE.md）。
+//   そのときは「切れた」（sensor:lost）にならないので、これがないと記録の値が途切れた理由が分からない。
+//   stall 秒より来なければ events に sensor:stall <場所>、また来たら sensor:resume <場所> <止まっていた秒>。
+//   2：アプリの時計の止まり（runner.ts の GAP）と同じ。傾きは LEAN の stale（1秒）で使わなくなる。アプリが止まっていた（sensor:gap）あとにも出る
+export const SENSOR_STALL = { sec: 2 }
+
 export const SENSOR_LOG = {
   rates: { 頭: { every: 4, mean: true }, 胸: { every: 4, mean: true }, 左手首: { every: 4, mean: true }, 右手首: { every: 4, mean: true }, 左足首: { every: 2, mean: false }, 右足首: { every: 2, mean: false } } as Record<string, { every: number; mean: boolean }>,
   fallback: { every: 2, mean: false }, // 上にない場所
@@ -567,7 +574,8 @@ export const STILL = { sec: 3, accStd: 0.03, gyroMed: 15, gyroP90: 30, minN: 50,
 // 立った姿勢を覚えてから走り出すまでは「走り出すと始まります」を言い直す（走り出したあとの信号待ちでは言わない）
 // pouch：「はじめる」を押してから、スマホを腰のポーチに入れるまで待つ（秒）。その間は何も言わず、立ち方も測らない。
 //   2026-11-06 の試走：押してすぐ「いつもの楽な立ち方で」と言い、ポーチに入れている間（7秒後）に a を測ってしまった。本人は、いつもの立ち方を聞かれなかったと感じた。本人「5秒ぐらい」
-export const SENSOR_RUN_SAY = { standRepeat: 20, waitRepeat: 30, pouch: 5 }
+//   2026-11-14 本人：5秒ではスマホをポシェットに入れるのが間に合わない。倍の10秒にした（センサーランだけ。腰スマホ・カメラ版はこの数字を使わない）
+export const SENSOR_RUN_SAY = { standRepeat: 20, waitRepeat: 30, pouch: 10 }
 
 // 腰のスマホ（センサーランで腰のポーチに入れて持つスマホ。waist.ts）の向き。記録するだけで、知らせには使わない（2026-11-06 本人の決め。まず記録で確かめる）。
 //   スマホの動きのセンサー（DeviceMotion の accelerationIncludingGravity）を ema でならした向きを重力の向きにする（胸のセンサーと同じ見方。lean.ts）。

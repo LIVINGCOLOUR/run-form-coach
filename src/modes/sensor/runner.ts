@@ -1,7 +1,7 @@
 import type { Level } from '../../core/level'
 import { PHRASES } from '../../core/phrases'
 import type { SensorLog } from '../../core/types'
-import { sensors } from './ble'
+import { describeError, sensors } from './ble'
 import { MotionGate } from './gate'
 import { GpsLatest, watchGps, type GpsFix, type GpsStatus } from './gps'
 import { HUNCH, POSE, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
@@ -45,6 +45,7 @@ export interface SensorRunnerOptions {
 }
 
 const now = () => performance.now() / 1000
+const ERRORS_LOGGED = 3 // tick の中で起きたエラーを events に残す数（0.1秒ごとに同じエラーをくり返すので、はじめの数回だけ）
 const GAP = 2 // tick の間がこれ（秒）よりあいたら、止まっていたとみて events に残す（画面を消した・裏に回したときに、何が止まるかを記録で確かめるため）
 
 export class SensorRunner {
@@ -54,6 +55,7 @@ export class SensorRunner {
   stoodAt: number | null = null // 立った姿勢を覚えた t
   runSec = 0 // 走っていた時間（秒）
   gaps = 0 // tick が GAP 秒より止まった回数
+  errors = 0 // tick の中で起きたエラーの数
   trunk = false // 胸か頭が一度でもつながっていた（立った姿勢が要った）
   stage: PoseName = 'a' // 2つの立ち方のどちらを測っているか（センサーラン）
   poseResult: PoseResult | null = null // 2つの立ち方で決めた結果
@@ -71,6 +73,7 @@ export class SensorRunner {
   private wasRunning = false
   private closed = false
   private result: SensorLog | undefined
+  private diagSeen: number // ble.ts の diag のうち、もう events に移した行の数（diagTotal）
   private readonly o: SensorRunnerOptions
 
   constructor(o: SensorRunnerOptions) {
@@ -83,6 +86,9 @@ export class SensorRunner {
     this.lastTick = t0
     // 走る前に「まとめてつなぐ」で起きたこと（Bluefy でどう動いたかを、送った記録で確かめるため。ble.ts の diag）
     for (const d of sensors.diag) o.onEvent(t0, `sensor:ble ${d.text}（${Math.round(t0 - d.t)}秒前）`)
+    this.diagSeen = sensors.diagTotal
+    // 付けているはずなのに、つながっていない場所（自動のつなぎ直しにしくじったなど。走っている間は画面を見ないので、記録で分かるように）
+    for (const v of sensors.snapshot()) if (v.name && v.status !== 'connected') o.onEvent(t0, `sensor:missing ${v.place} ${v.status}`)
     this.lastSay = -Infinity
     this.phase = this.gate && this.needsStand() ? 'stand' : 'ready'
     if (this.gate) {
@@ -148,9 +154,24 @@ export class SensorRunner {
     }
     const dt = Math.max(0, Math.min(1, t - this.lastTick))
     this.lastTick = t
-    const running = this.o.running ? this.o.running() : this.autoTick(t)
-    if (running) this.runSec += dt
-    this.session.tick(t, running, this.o.camera?.() ?? null, this.gps?.at(t) ?? null)
+    this.flushDiag(t)
+    // エラーは events に残す（setInterval の中で投げると、画面にも記録にも出ないまま、毎回そこから先が動かなくなるため）
+    try {
+      const running = this.o.running ? this.o.running() : this.autoTick(t)
+      if (running) this.runSec += dt
+      this.session.tick(t, running, this.o.camera?.() ?? null, this.gps?.at(t) ?? null)
+    } catch (e) {
+      if (this.errors++ < ERRORS_LOGGED) this.o.onEvent(t, `sensor:error ${describeError(e)}`)
+    }
+  }
+
+  // 走っている間に ble.ts の diag に増えた行（途中で切れたセンサーのつなぎ直し・つなげなかった理由）も、events に sensor:ble で残す
+  // （前は走り始めの分だけで、途中でつなぎ直せなかった理由が記録に残らなかった）
+  private flushDiag(t: number) {
+    const fresh = sensors.diagTotal - this.diagSeen
+    if (fresh <= 0) return
+    this.diagSeen = sensors.diagTotal
+    for (const d of sensors.diag.slice(-Math.min(fresh, sensors.diag.length))) this.o.onEvent(t, `sensor:ble ${d.text}`)
   }
 
   // カメラなし：立った姿勢と走っているかを、センサーで決める

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { MotionGate, windowStats } from './gate'
-import { HEAD, POSE, RUN_GATE, SLOTS, STILL } from './params'
+import { HEAD, POSE, RUN_GATE, SENSOR_RUN_SAY, SENSOR_STALL, SLOTS, STILL } from './params'
 import type { Packet, Vec3 } from './parse'
 import { sensors } from './ble'
 import { SensorRunner } from './runner'
@@ -169,7 +169,7 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     t = send('胸', 'walk', t, 3, r)
     expect(said).toEqual([])
     // ポーチに入れ終えてじっとしていても、pouch 秒までは測らない（ここで a を測ってしまっていた。2026-11-06）
-    t = send('胸', 'slouch', t, 1.5, r)
+    t = send('胸', 'slouch', t, SENSOR_RUN_SAY.pouch - 3.5, r)
     expect(said).toEqual([])
     expect(r.stage).toBe('a')
     // pouch 秒を過ぎたら、最初に「いつもの楽な立ち方」を言う
@@ -384,7 +384,8 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     let speaking = true
     const r = new SensorRunner({ onEvent: () => {}, say: () => {}, speaking: () => speaking })
     let t = performance.now() / 1000
-    t = send('胸', 'slouch', t, 6, r)
+    // ポーチに入れる間（SENSOR_RUN_SAY.pouch 秒）を過ぎるまで話している
+    t = send('胸', 'slouch', t, SENSOR_RUN_SAY.pouch + 1, r)
     expect(r.stage).toBe('a')
     speaking = false
     t = send('胸', 'slouch', t, 2, r)
@@ -565,6 +566,123 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     running = true
     send('胸', 'stand', t, 5, r) // 揺れなくても、カメラが走っていると言えば走っている
     expect(r.runSec).toBeGreaterThan(4)
+    r.finish()
+  })
+})
+
+// 走っている途中で、1つのセンサーが止まった・切れた（2026-11-14 の外の走りで、はんだを直したばかりの頭の1番が途中で抜けた）
+describe('途中でセンサーが止まったとき', () => {
+  afterEach(() => {
+    for (const n of hub.nodes) if (n.status === 'connected') n.status = 'idle'
+    hub.refresh()
+  })
+  // 0.1秒ごとに、場所ごとの値を流す（kinds に入れなかった場所は、その間なにも届かない＝止まった）
+  function sendMany(kinds: Partial<Record<string, Kind>>, from: number, sec: number, runner: SensorRunner) {
+    for (let k = 0; k < Math.round(sec * HZ); k += 10) {
+      const t = from + k / HZ
+      for (const [place, kind] of Object.entries(kinds)) {
+        const samples = Array.from({ length: 10 }, (_, j) => {
+          const v = imu(kind!, t + j / HZ, k + j)
+          return { seq: seq++ & 0xffff, t: Math.round((t + j / HZ) * 1000), g: v.g, a: v.a, raw: new Uint8Array(12) }
+        })
+        for (const fn of hub.listeners) fn(node(place), t + 0.09, { seq: samples[0].seq, range: 16, n: 10, samples })
+      }
+      runner.tick(t + 0.09)
+    }
+    return from + sec
+  }
+
+  it('頭の値が止まっても、胸はそのまま猫背を知らせる。止まった・戻ったを events に残し、戻れば頭もまた見る', async () => {
+    connect(['胸', '頭'])
+    const events: [number, string][] = []
+    const r = new SensorRunner({ onEvent: (t, text) => events.push([t, text]), say: () => {} })
+    let t = performance.now() / 1000
+    t = sendUntil('胸', 'slouch', t, r, () => r.stage === 'b')
+    // sendUntil は1か所ずつなので、2つの立ち方は胸と頭をいっしょに流して測り直す
+    while (r.stoodAt === null && t < performance.now() / 1000 + 120) {
+      t = sendMany({ 胸: r.stage === 'a' ? 'slouch' : 'stand', 頭: r.stage === 'a' ? 'slouch' : 'stand' }, t, 0.1, r)
+    }
+    expect(r.stoodAt).not.toBe(null)
+    t = sendMany({ 胸: 'run', 頭: 'runOpen' }, t, 50, r)
+    expect(r.phase).toBe('run')
+    // 頭が止まる（つながったまま値だけ来ない）。その間に背中を丸める
+    const stopAt = t
+    t = sendMany({ 胸: 'hunch' }, t, 20, r)
+    expect(r.phase).toBe('run') // 走っているかは胸で見るので、頭が止まっても止まらない
+    expect(events.some(([, e]) => e === 'sensor:stall 頭')).toBe(true)
+    const stall = events.find(([, e]) => e === 'sensor:stall 頭')![0]
+    expect(stall - stopAt).toBeLessThan(SENSOR_STALL.sec + 0.5)
+    // 頭が戻る
+    t = sendMany({ 胸: 'run', 頭: 'runOpen' }, t, 5, r)
+    expect(events.some(([, e]) => /^sensor:resume 頭 \d/.test(e))).toBe(true)
+    const log = r.current()!
+    const ih = log.secCols!.indexOf('head')
+    expect(log.sec!.at(-1)![ih]).not.toBe(null) // 頭の傾きをまた見ている
+    await new Promise((ok) => setTimeout(ok, 0)) // 振動を送れたかを待ってから数える
+    const cues = events.filter(([, e]) => e.startsWith('sensor:hunch ')).map(([at]) => at)
+    expect(cues.some((at) => at > stopAt && at < stopAt + 20)).toBe(true)
+    r.finish()
+  })
+
+  it('tick の中のエラーは events に残し（はじめの数回だけ）、そのあとも動き続ける', () => {
+    connect(['胸'])
+    const events: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text) })
+    let t = performance.now() / 1000
+    t = send('胸', 'run', t, 10, r)
+    expect(r.phase).toBe('run')
+    const orig = r.session.tick
+    r.session.tick = () => {
+      throw new Error('tick のエラー')
+    }
+    for (let k = 1; k <= 10; k++) r.tick(t + k * 0.1)
+    r.session.tick = orig
+    const errs = events.filter((e) => e === 'sensor:error Error: tick のエラー')
+    expect(errs.length).toBeGreaterThan(0)
+    expect(errs.length).toBeLessThan(10)
+    const n = r.runSec
+    send('胸', 'run', t + 1.1, 2, r)
+    expect(r.phase).toBe('run')
+    expect(r.runSec).toBeGreaterThan(n)
+    r.finish()
+  })
+
+  it('付けているのにつながっていない場所は events に sensor:missing で残し、記録の nodes に前の版や電池を入れない', () => {
+    connect(['胸'])
+    // 頭は前の走りでつないでいた（版と電池が残っている）が、今はつながっていない
+    const h = hub.nodes[node('頭')] as unknown as { status: string; fw: string | null; battery: number | null; lostTotal: number }
+    h.status = 'idle'
+    h.fw = '2026-11-11.1'
+    h.battery = 3.9
+    h.lostTotal = 7
+    hub.refresh()
+    const events: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text) })
+    expect(events).toContain('sensor:missing 頭 idle')
+    expect(events.some((e) => e.startsWith('sensor:missing 胸'))).toBe(false)
+    send('胸', 'stand', performance.now() / 1000, 2, r)
+    const log = r.finish()!
+    const headNode = log.nodes[node('頭')]
+    expect(headNode.fw).toBeUndefined()
+    expect(headNode.battery).toBeUndefined()
+    expect(headNode.lost).toBeUndefined()
+    expect(log.nodes[node('胸')].lost).toBe(0)
+    h.fw = null
+    h.battery = null
+    h.lostTotal = 0
+    hub.refresh()
+  })
+
+  it('走っている途中でつなぎ直せなかった理由（ble.ts の diag に増えた行）も、events に sensor:ble で残す', () => {
+    connect(['胸'])
+    const events: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text) })
+    const t = performance.now() / 1000
+    r.tick(t + 0.1)
+    ;(sensors as unknown as { note: (x: string) => void }).note('頭（RFC-IMU-1）: つなぎ直せない（1回目）number 2')
+    r.tick(t + 0.2)
+    r.tick(t + 0.3)
+    expect(events.filter((e) => e === 'sensor:ble 頭（RFC-IMU-1）: つなぎ直せない（1回目）number 2')).toHaveLength(1)
     r.finish()
   })
 })

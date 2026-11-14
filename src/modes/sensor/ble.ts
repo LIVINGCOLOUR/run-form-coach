@@ -36,6 +36,12 @@ const LISTEN_MS = 3000 // 自動：覚えていた機器の広告（watchAdverti
 const RESTORE_CAP = 15 // 自動：これより長くかかっても、「まとめてつなぐ」を押せるようにする（秒）
 const RESTORE_WAIT = 4 // まとめてつなぐ：覚えているセンサーがつながるのを待つ長さ（秒）。待ちすぎると、押した扱いが切れて選ぶ画面を出せなくなる（Chrome は約5秒）
 const DIAG_MAX = 40 // diag に残す行数
+// 走っている途中のつなぎ直しでつなげなかったとき、diag に残すのは最初の REJOIN_NOTE_FIRST 回と、そのあと REJOIN_NOTE_EVERY 回ごと
+// （3秒おきに毎回残すと、1時間で1000行を超えて記録の events を埋めるため）
+const REJOIN_NOTE_FIRST = 3
+const REJOIN_NOTE_EVERY = 20
+const REBOOT_BACK_MS = 1000 // センサーの時計（起動からの ms）がこれより戻ったら、センサーがやり直したとみる（届く順の前後は数十 ms まで）
+const LISTENER_ERRORS_NOTED = 3 // 値の受け手で起きたエラーを diag に残す数（1秒に数百回呼ぶので、はじめの数回だけ）
 
 // TypeScript の DOM には Web Bluetooth の型がないので、使う分だけ書く
 interface BtChar extends EventTarget {
@@ -161,6 +167,8 @@ export interface NodeView {
   battery: number | null // V
   rate: number // 直近1秒に届いた件数（100Hz なら約100）
   lost: number // 通し番号が飛んだ件数（つないでからの合計）
+  lostTotal: number // 通し番号が飛んだ件数（つなぎ直しをまたいだ合計。走りの記録はこの差で数える：session.ts）
+  reboots: number // センサーの時計が戻った（センサーがやり直した）回数（つなぎ直しをまたいだ合計）
   fw: string | null
   canBuzz: boolean
 }
@@ -173,6 +181,7 @@ interface Node extends NodeView {
   expected: number | null
   count: number
   range: number
+  devT: number | null // 最後に届いた値のセンサーの時計（ms）。戻ったら、センサーがやり直した（見張り番・電源の落ち）
   wanted: boolean // 切れたらつなぎ直すか（自分で切ったときは false）
 }
 
@@ -211,11 +220,13 @@ export class SensorHub {
   private needTap = false
   private bulk: BulkView = { busy: false, left: 0, needTap: false, diag: [] }
   readonly diag: { t: number; text: string }[] = [] // t は performance.now() の秒
+  private listenerErrors = 0 // 値の受け手（onPacket）で起きたエラーの数
+  diagTotal = 0 // diag に残した行の数（消した行も数える。走っている間に増えた行を、runner.ts が記録の events に移すため）
 
   constructor() {
     this.nodes = SLOTS.map((s) => ({
-      ...s, status: s.name ? 'idle' : 'none', message: MESSAGE[s.name ? 'idle' : 'none'], battery: null, rate: 0, lost: 0, fw: null, canBuzz: false,
-      device: null, data: null, buzzChar: null, onData: null, expected: null, count: 0, range: 0, wanted: false,
+      ...s, status: s.name ? 'idle' : 'none', message: MESSAGE[s.name ? 'idle' : 'none'], battery: null, rate: 0, lost: 0, lostTotal: 0, reboots: 0, fw: null, canBuzz: false,
+      device: null, data: null, buzzChar: null, onData: null, expected: null, count: 0, range: 0, devT: null, wanted: false,
     }))
     this.refresh()
   }
@@ -467,6 +478,7 @@ export class SensorHub {
   }
 
   private note(text: string) {
+    this.diagTotal++
     this.diag.push({ t: performance.now() / 1000, text })
     if (this.diag.length > DIAG_MAX) this.diag.splice(0, this.diag.length - DIAG_MAX)
     this.refresh()
@@ -567,15 +579,21 @@ export class SensorHub {
         node.buzzChar = null // 振動のない古いファーム
       }
       node.canBuzz = !!node.buzzChar
+      // ここまでの間に切れていたら、つながったことにしない（切れた知らせは「つないでいます」の間に来るので dropped では拾えず、
+      // 「つながっています」のまま値も振動も止まり、二度とつなぎ直さなくなる。電池や線が甘く、つないだ直後に電源が落ちたとき）
+      if (gatt.connected === false) throw new Error('つないでいる途中で切れました')
       if (this.fromMemory.has(device)) {
         // 覚えていた機器に選ばずにつなげた。このブラウザはつなげるので、次の「まとめてつなぐ」も覚えている機器から
         this.fromMemory.delete(device)
         setMemoryFails(false)
       }
+      if (rejoin) this.note(`${node.place}（${node.name}）: つなぎ直した（${tries + 1}回目）`)
       this.set(node, 'connected')
       this.tick()
     } catch (e) {
       if (rejoin && node.wanted) {
+        // 走っている途中でつなぎ直せなかった理由を残す（走りの記録の events に sensor:ble で入る。runner.ts）
+        if (tries < REJOIN_NOTE_FIRST || (tries + 1) % REJOIN_NOTE_EVERY === 0) this.note(`${node.place}（${node.name}）: つなぎ直せない（${tries + 1}回目）${describe(e)}`)
         this.set(node, 'lost', `切れました。つなぎ直しています（${tries + 1}回目）`)
         setTimeout(() => void this.open(node, tries + 1, true), REJOIN_SEC * 1000)
         return
@@ -626,14 +644,32 @@ export class SensorHub {
     }
     if (node.expected !== null) {
       const gap = (p.seq - node.expected) & 0xffff
-      if (gap !== 0 && gap < 0x8000) node.lost += gap // 通し番号が飛んだぶんが抜け
+      if (gap !== 0 && gap < 0x8000) {
+        node.lost += gap // 通し番号が飛んだぶんが抜け
+        node.lostTotal += gap
+      }
     }
     node.expected = (p.seq + p.samples.length) & 0xffff
+    // センサーの時計が1秒より戻った：センサーがやり直した（つなぎ直しの通し番号は数え直すので、抜けには数えない）。記録で分かるように残す
+    const devT = p.samples[0].t
+    if (node.devT !== null && devT + REBOOT_BACK_MS < node.devT) {
+      node.reboots++
+      this.note(`${node.place}（${node.name}）: センサーがやり直した（時計 ${(node.devT / 1000).toFixed(0)}秒→${(devT / 1000).toFixed(0)}秒）`)
+    }
+    node.devT = p.samples[p.samples.length - 1].t
     node.range = p.range
     node.count += p.samples.length
     const t = performance.now() / 1000
     const i = this.nodes.indexOf(node)
-    for (const fn of this.listeners) fn(i, t, p)
+    // 受け手ごとに分けて呼ぶ：1つがエラーを出しても、ほかの受け手（記録・走っているかの見分け gate.ts）には届ける。
+    // 前は1つ目（session.ts）が投げると、あとに付けた走っているかの見分けに値が届かず、「走っていない」のまま全部の知らせが止まるおそれがあった
+    for (const fn of this.listeners) {
+      try {
+        fn(i, t, p)
+      } catch (e) {
+        if (this.listenerErrors++ < LISTENER_ERRORS_NOTED) this.note(`${node.place}（${node.name}）: 値の受け取りでエラー ${describe(e)}`)
+      }
+    }
   }
 
   // 1秒ごとに、届いた件数を数えて画面を直す（どれかがつながっている間だけ）
@@ -665,7 +701,7 @@ export class SensorHub {
     const left = this.left()
     if (!left) this.needTap = false
     this.bulk = { busy: this.bulkBusy || this.restoring, left, needTap: this.needTap, diag: this.diag.map((d) => d.text) }
-    this.views = this.nodes.map(({ place, name, status, message, battery, rate, lost, fw, canBuzz }) => ({ place, name, status, message, battery, rate, lost, fw, canBuzz }))
+    this.views = this.nodes.map(({ place, name, status, message, battery, rate, lost, lostTotal, reboots, fw, canBuzz }) => ({ place, name, status, message, battery, rate, lost, lostTotal, reboots, fw, canBuzz }))
     for (const fn of this.watchers) fn()
   }
 }
