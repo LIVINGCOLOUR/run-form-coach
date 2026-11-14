@@ -39,6 +39,7 @@ import type { Vec3 } from './parse'
 //   b からの見張り（頭。params.ts の HEAD の shadowB。記録だけ）：2つの立ち方で見られないとき（差が小さい・立ち方が1つ）も、
 //     b（立った姿勢）+ poseCap を基準に、線の幅 poseMargin で、2つの立ち方で見るときと同じ決まりで知らせたかを数える（shadow を返す。震わせない）
 // 2026-11-02 20:23 と 2026-11-03 15:08 の走りで、胸のセンサーがずれて傾きが +9〜13° 増えた（カメラの上体は変わらず）。わざとの猫背（60秒まで）は置き直さない
+// 平らにする（smooth。胸）：線と比べる傾き（越えた・3秒続いた・寄せる・ずれの見張り）は、直近 smooth 秒の傾きの平均。体を曲げたかは、その tick の値で見る
 // 1時間の上限（core/params.ts の LIMIT.perHour。しくみ engine.ts と同じ決まり）：走った時間を1時間ずつの枠に切り、知らせが枠の中で上限に達したら、
 //   その枠の残りは知らせない（測って、線を越えているかは見続ける。capped を返した tick が、その枠の最後の知らせ）。長い走りで震え続けないため
 
@@ -52,14 +53,16 @@ export type CamValues = { trunk: number; head: number }
 // praise：知らせたあと、線の下に posePraise 秒続けていた（直った。2つの立ち方で見ているときだけ）
 // settled：人ごとの基準を決めた（base：決めた基準、median：落ち着いた間の真ん中、n：使った tick の数、lo・hi：収めた範囲）
 // shadow：b からの見張り（記録だけ）で、知らせたことになる tick
-export type LeanStep = { tilt: number | null; cue: boolean; capped?: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number; settled?: { base: number; median: number | null; n: number; lo: number; hi: number }; shadow?: boolean }
+// judged：線と比べた傾き（smooth があるときの、直近 smooth 秒の平均。なければ tilt と同じなので入れない）
+export type LeanStep = { judged?: number; tilt: number | null; cue: boolean; capped?: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number; settled?: { base: number; median: number | null; n: number; lo: number; hi: number }; shadow?: boolean }
 
 // 2つの立ち方で決めた物差し。deg：a と b の角度（猫背の大きさ）、margin：使う線の幅（度）、camB：カメラ版で b のときのカメラの上体の前傾（度）
 export type PoseScale = { deg: number; margin: number; camB: number | null }
 // 基準として差し引いた分。by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・speed（その速さで正しい胸の前傾。胸）。
 // cam：カメラ版で、カメラの上体の増え（b の立ち姿勢から、度。記録に残すだけ）。kmh・speedBy・trunk：speed のとき、使った速さとその出どころ、よい例の上体（度）
 // lo・hi：speed のとき、よい例の上体の範囲を胸の値に直したもの（人ごとの基準を収める範囲）
-export type PoseOffset = { deg: number; by: 'sensor' | 'cap' | 'speed'; cam: number | null; kmh?: number | null; speedBy?: SpeedBy; trunk?: number; lo?: number; hi?: number }
+// expect：speed のとき、その速さで正しい前傾が走り出しの前傾より大きく、走り出しの前傾まで下げた（もとの正しい前傾。下げなければ入れない）
+export type PoseOffset = { deg: number; by: 'sensor' | 'cap' | 'speed'; cam: number | null; kmh?: number | null; speedBy?: SpeedBy; trunk?: number; lo?: number; hi?: number; expect?: number }
 
 const DEG = 180 / Math.PI
 const RECENT_SEC = 10 // rising のために残す傾きの長さ（秒）。HEAD_YIELD.riseSec より長く
@@ -114,6 +117,7 @@ export class LeanDetector {
   band: { lo: number; hi: number } | null = null // 人ごとの基準を収める範囲（胸。settleTo があって、expect が範囲を返したとき）
   settled = false // 人ごとの基準を決めた（それまでは寄せない）
   private settleBuf: number[] = [] // 落ち着いた間（settleFrom〜settleTo 秒）に線の下にいた傾き
+  private smoothBuf: { t: number; v: number }[] = [] // 直近 smooth 秒の傾き（線と比べる平均を出す。走っていない・値がない・曲げている間は捨てる）
   // b からの見張り（shadowB。記録だけ）：越え始めた t・最後に知らせたことにした t・続けた回数・線の下に入った t・ずれで動かした分・1時間の枠
   private sh = { over: null as number | null, last: -Infinity, streak: 0, under: null as number | null, shift: 0, hour: -1, n: 0 }
   readonly p: LeanParams
@@ -223,6 +227,7 @@ export class LeanDetector {
     this.band = null
     this.settled = false
     this.settleBuf = []
+    this.smoothBuf = []
     this.sh = { over: null, last: -Infinity, streak: 0, under: null, shift: 0, hour: -1, n: 0 }
   }
 
@@ -270,7 +275,11 @@ export class LeanDetector {
     const cam = this.pose?.camB !== null && this.pose?.camB !== undefined && this.camLearn.length >= p.camMin ? median(this.camLearn) - this.pose.camB : null
     if (p.poseSpeed) {
       const e = this.expect?.() ?? expectedChest()
-      return { deg: e.deg, by: 'speed', cam, kmh: e.kmh, speedBy: e.by, trunk: e.trunk, ...(e.lo !== undefined && e.hi !== undefined && { lo: e.lo, hi: e.hi }) }
+      // 走り出しの前傾を上限にする（2026-11-14 本人の決め「走りの前傾を上限にする」）。正しい前傾が、実際に走った前傾より大きいと、
+      //   線がふだんの走りよりずっと前になり、胸の知らせが走りの間ずっと出なくなる（11-14 18:37：正しい前傾 20.0° に走り出しの胸 13.9°、線 25° に胸 8〜14°）。
+      //   下げるだけで、上げはしない（猫背のまま走り出しても、猫背を基準にしない）
+      const capped = e.deg > runLean
+      return { deg: capped ? runLean : e.deg, by: 'speed', cam, kmh: e.kmh, speedBy: e.by, trunk: e.trunk, ...(e.lo !== undefined && e.hi !== undefined && { lo: e.lo, hi: e.hi }), ...(capped && { expect: e.deg }) }
     }
     return runLean <= p.poseCap ? { deg: runLean, by: 'sensor', cam } : { deg: p.poseCap, by: 'cap', cam }
   }
@@ -365,6 +374,7 @@ export class LeanDetector {
       this.waitSince = null
       this.bending = false
       this.recentTilts = []
+      this.smoothBuf = []
       this.sh.over = null
       return out
     }
@@ -379,6 +389,7 @@ export class LeanDetector {
     if (t < this.bendUntil) {
       if (this.overSince !== null) this.overAcc = this.overAccAtStart
       this.recentTilts = []
+      this.smoothBuf = []
       this.overSince = null
       this.waitSince = null
       this.sh.over = null
@@ -387,6 +398,14 @@ export class LeanDetector {
       return out
     }
     this.bending = false
+    // 線と比べる傾き（smooth があれば直近 smooth 秒の平均。1歩ごとの揺れで、線の下に一瞬入って数え直すのを防ぐ。params.ts の HUNCH の説明）
+    let judged = tilt
+    if (p.smooth > 0) {
+      this.smoothBuf.push({ t, v: tilt })
+      while (t - this.smoothBuf[0].t >= p.smooth) this.smoothBuf.shift()
+      judged = this.smoothBuf.reduce((a, x) => a + x.v, 0) / this.smoothBuf.length
+      out.judged = judged
+    }
     if (this.runLean === null) {
       if (this.runSec >= p.skip && this.runSec < p.skip + p.learn) {
         this.learnUs.push(u)
@@ -413,25 +432,25 @@ export class LeanDetector {
         return out
       }
       // b からの見張り（記録だけ）：2つの立ち方で見ないときも、poseStart 秒から見る
-      if (!this.pose && p.shadowB && p.poseStart > 0 && this.runSec >= p.poseStart) out.shadow = this.shadowStep(t, tilt)
+      if (!this.pose && p.shadowB && p.poseStart > 0 && this.runSec >= p.poseStart) out.shadow = this.shadowStep(t, judged)
       // 2つの立ち方で見ていて poseStart 秒走ったら、覚え終わる前から知らせる（基準は差し引く上限の poseCap。覚えた基準はそれより大きくならない）
       if (!(this.pose && p.poseStart > 0 && this.runSec >= p.poseStart)) return out
     }
     // learning：走る前傾を覚えている間（poseStart から）。基準を寄せず、ずれも見張らない
     const learning = this.runLean === null
     const ref = learning ? p.poseCap : (this.ref ?? this.runLean!)
-    if (!learning && !this.pose && p.shadowB) out.shadow = this.shadowStep(t, tilt)
-    this.tilts.push({ t, v: tilt })
+    if (!learning && !this.pose && p.shadowB) out.shadow = this.shadowStep(t, judged)
+    this.tilts.push({ t, v: judged })
     while (t - this.tilts[0].t > p.slipRef) this.tilts.shift()
     this.lastRef = ref
-    this.recentTilts.push({ t, v: tilt })
+    this.recentTilts.push({ t, v: judged })
     while (t - this.recentTilts[0].t > RECENT_SEC) this.recentTilts.shift()
     if (this.pose) {
       this.sides.push({ t, v: this.side(u) ?? 0 })
       while (t - this.sides[0].t > p.slipRef) this.sides.shift()
     }
     const camOk = p.camSlipSec > 0 && cam !== null && Number.isFinite(cam.trunk) && Number.isFinite(cam.head)
-    if (tilt > ref + this.margin()) {
+    if (judged > ref + this.margin()) {
       this.underSince = null
       if (this.overSince === null) {
         this.overSince = t
@@ -452,7 +471,7 @@ export class LeanDetector {
       if (this.hourCues.hour !== hour) this.hourCues = { hour, n: 0 }
       if (this.hourCues.n < this.perHour && t - this.overSince >= hold && t - this.lastCue >= every && !defer?.()) {
         // 越えて最初の知らせで大きく傾いているときは、曲げる途中かもしれないので少し待つ（越えたままの知らせ直しは待たない）
-        const wait = p.confirmAbove > 0 && p.confirmSec > 0 && this.lastCue < this.overSince && tilt >= ref + p.confirmAbove
+        const wait = p.confirmAbove > 0 && p.confirmSec > 0 && this.lastCue < this.overSince && judged >= ref + p.confirmAbove
         if (wait) this.waitSince ??= t
         if (!wait || t - this.waitSince! >= p.confirmSec) {
           this.lastCue = t
@@ -479,9 +498,9 @@ export class LeanDetector {
       // 2つの立ち方で見ているときは、向きが猫背としてありうる間は前へ寄せない（ゆっくり猫背になったのを基準に吸わない）。後ろへはいつも寄せる
       // 人ごとの基準を落ち着いてから決めるとき（band）：決めるまでは寄せず、落ち着いた間の傾きをためる。決めたあとは範囲の内まで寄せる
       if (this.band && !learning && !this.settled) {
-        if (this.runSec >= p.settleFrom) this.settleBuf.push(tilt)
+        if (this.runSec >= p.settleFrom) this.settleBuf.push(judged)
       } else if (p.follow > 0 && !learning) {
-        let next = ref + (tilt - ref) * Math.min(1, dt / p.follow)
+        let next = ref + (judged - ref) * Math.min(1, dt / p.follow)
         if (this.band) next = Math.min(this.band.hi, Math.max(this.band.lo, next))
         if (!(this.pose && next > ref && this.plausible())) this.ref = next
       }

@@ -123,6 +123,8 @@ export interface LeanParams {
   settleMin: number // その間に線の下にいた tick がこれより少なければ、決めずに、その速さで正しい前傾のまま
   // b からの見張り（記録だけ。頭。下の HEAD の説明）：2つの立ち方で見ないとき、b + poseCap を基準に線の幅 poseMargin で、知らせたことになるかを数える
   shadowB: boolean
+  // 線と比べる傾きを、直近 smooth 秒の平均にする（0 なら、その tick の値）。胸だけ 1（下の HUNCH の説明）
+  smooth: number
 }
 
 const LEAN = {
@@ -175,6 +177,7 @@ const LEAN = {
   settleTo: 0,
   settleMin: 0,
   shadowB: false,
+  smooth: 0,
 }
 
 // 2つの立ち方（2026-11-05 から。すべて仮の値で、確かめ走（npm run drill -- --poses）で決める）
@@ -265,11 +268,16 @@ export const CHEST_EXPECT = {
 //   付け位置がずれたとみなしたら（ずれの見張り）、範囲もずれた分だけ動かし、落ち着いた間にためた傾きは捨てる
 //   流し直し（2つの立ち方の記録がある4本と、作りものの11-09。docs/sensor-mode.md の「人ごとの基準」）：胸の知らせ 28 → 28回、猫背の区間の知らせ 14 → 14回。どれも仮の値
 // HUNCH は、レベルが分からないときの線（中級＝カメラの既定 DEFAULT_STRICT と同じ）
+// smooth 1（胸。2026-11-14 本人の決め「1秒の平均で見る」）：線と比べるのは、直近1秒の傾きの平均。3秒続いたかも、この平均で数える。
+//   前は 0.1秒ごとの値で比べていて、1つの tick でも線の下に入ると数え直した。走りの1歩ごとの揺れ（3秒の中で約 3.9°）で、
+//   11-14 の外の走り（18:53）は線を越えた 211回のどれも 0.6秒より続かず、体ごと前に傾けても一度も震えなかった（線 5° が約 8° のように効いていた）。
+//   1秒の平均なら1歩（約0.35秒）の揺れがならされる。体を曲げた（bend）は、すぐ分かるよう、その tick の値のまま見る。頭は変えない（0）
 const SETTLE = { settleFrom: 360, settleTo: 600, settleMin: 600 }
+const CHEST_SMOOTH = 1
 export const HUNCH_BY_LEVEL: Record<Level, LeanParams> = {
-  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, ...SETTLE },
-  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, ...SETTLE },
-  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, ...SETTLE },
+  beginner: { ...LEAN, place: CHEST, margin: 6, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, smooth: CHEST_SMOOTH, ...SETTLE },
+  intermediate: { ...LEAN, place: CHEST, margin: 5.5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, smooth: CHEST_SMOOTH, ...SETTLE },
+  advanced: { ...LEAN, place: CHEST, margin: 5, slipDrift: 8, bend: 45, confirmAbove: 20, camSlipSec: 10, poseLine: 5, poseSpeed: true, smooth: CHEST_SMOOTH, ...SETTLE },
 }
 export const HUNCH: LeanParams = HUNCH_BY_LEVEL.intermediate
 
@@ -357,6 +365,12 @@ export const HEAD_YIELD = {
 //   stall 秒より来なければ events に sensor:stall <場所>、また来たら sensor:resume <場所> <止まっていた秒>。
 //   2：アプリの時計の止まり（runner.ts の GAP）と同じ。傾きは LEAN の stale（1秒）で使わなくなる。アプリが止まっていた（sensor:gap）あとにも出る
 export const SENSOR_STALL = { sec: 2 }
+// センサーの途切れを声で知らせる（センサーランだけ。notice.ts。2026-11-14 本人の決め「スマホの声で知らせる」）。
+//   11-14 の外の走りで、頭のセンサーがつながらないまま・途中で切れたまま走り、画面の小さな印にしか出ず、走り終わるまで気づかなかった。
+//   走り出す前：付けているのにつながっていない場所を「頭のセンサーがつながっていません」（立ち方の案内の前に）。
+//   走っている間：値が after 秒より来ない（切れた・固まった）と「頭のセンサーが切れました」、また来たら「頭のセンサーが戻りました」。1回の途切れに1回ずつ。
+//   after 10：11-14 に胸がやり直して切れた2回は、切れてから戻るまで 4.7・4.8秒（sensor:lost → back。つなぎ直しは3秒おき）。すぐ戻る途切れまで言うとうるさいので、それより長いものだけ
+export const SENSOR_NOTICE = { after: 10 }
 
 export const SENSOR_LOG = {
   rates: { 頭: { every: 4, mean: true }, 胸: { every: 4, mean: true }, 左手首: { every: 4, mean: true }, 右手首: { every: 4, mean: true }, 左足首: { every: 2, mean: false }, 右足首: { every: 2, mean: false } } as Record<string, { every: number; mean: boolean }>,

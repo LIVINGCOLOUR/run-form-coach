@@ -41,12 +41,14 @@ export class SensorRunLog {
     }, LOG_CHUNK.every * 1000)
   }
 
-  // 知らせた回数（項目ごと）・上限に達した回数・ずれの回数（session.ts の counts）と、位置情報の様子も残す
+  // 知らせた回数（項目ごと）・上限に達した回数・ずれの回数（session.ts の counts）と、位置情報の様子・センサーの途切れも残す
   private summarize() {
     const r = this.runner
     if (!r) return
     const c = r.session.counts
-    this.log.summary = { runSec: Math.round(r.runSec), gaps: r.gaps, stood: r.stoodAt !== null, trunk: r.trunk, cues: { ...c.cues }, capped: { ...c.capped }, slips: { ...c.slips }, ...(r.gpsStatus && { gps: r.gpsStatus }) }
+    // センサーの途切れ（場所ごとの回数と秒）と、値が1つも来なかった場所（notice.ts。結果の画面に出す）
+    const w = r.watch?.summary(performance.now() / 1000)
+    this.log.summary = { runSec: Math.round(r.runSec), gaps: r.gaps, stood: r.stoodAt !== null, trunk: r.trunk, cues: { ...c.cues }, capped: { ...c.capped }, slips: { ...c.slips }, ...(r.gpsStatus && { gps: r.gpsStatus }), ...(w && { drops: w.drops, missing: w.missing }) }
   }
 
   // 走り終わり：センサーを止めて、残りを書く

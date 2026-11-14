@@ -260,11 +260,13 @@ export class SensorSession {
       }
       if (r.learned !== undefined && this.rec) {
         const off = x.d.offset
-        const sp = off?.by === 'speed' ? { kmh: off.kmh ?? null, speedBy: off.speedBy, trunk: off.trunk } : {}
+        const sp = off?.by === 'speed' ? { kmh: off.kmh ?? null, speedBy: off.speedBy, trunk: off.trunk, ...(off.expect !== undefined && { expect: Math.round(off.expect * 10) / 10 }) } : {}
         this.slot(x.key).runLean = { t: r2(t), deg: Math.round(r.learned * 10) / 10, ...(off && { offset: Math.round(off.deg * 10) / 10, by: off.by, cam: r1n(off.cam), ...sp }) }
         // 2つの立ち方で見るときは、差し引いた分とその決め方も：sensor:runLean 18.2 offset 19.2 speed 7.6 sensor（胸）・sensor:headLean 7.8 offset 3.0 cap（頭）
         const spText = off?.by === 'speed' ? ` ${off.kmh ?? '-'} ${off.speedBy}` : ''
         this.onEvent(t, `${x.ev.lean} ${r.learned.toFixed(1)}${off ? ` offset ${off.deg.toFixed(1)} ${off.by}${spText}${off.cam !== null ? ` cam ${off.cam.toFixed(1)}` : ''}` : ''}`)
+        // その速さで正しい前傾が走り出しの前傾より大きく、走り出しの前傾まで下げた：sensor:expectCap 胸 expect 20.0 run 13.9
+        if (off?.expect !== undefined) this.onEvent(t, `sensor:expectCap ${x.p.place} expect ${off.expect.toFixed(1)} run ${r.learned.toFixed(1)}`)
       }
       // 人ごとの基準を決めた（胸。走りが落ち着いた settleTo 秒）：sensor:settle 胸 20.3 med 20.3 n 2050 band 15.8〜22.1（med：落ち着いた間の真ん中。足りなければ -）
       if (r.settled) {
@@ -285,7 +287,7 @@ export class SensorSession {
       }
       if (r.cue && r.tilt !== null) {
         if (x.key === 'chest') chestCued = true
-        this.notify(x, t, r.tilt, !!r.capped)
+        this.notify(x, t, r.judged ?? r.tilt, !!r.capped) // 線と比べた傾き（胸は直近1秒の平均）を残す
       }
       // 知らせたあと直った：短く2回震わせる（知らせの1秒1回・ずれの0.3秒×3回と分ける）
       if (r.praise) {

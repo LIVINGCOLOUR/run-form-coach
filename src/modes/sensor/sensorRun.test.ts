@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { MotionGate, windowStats } from './gate'
-import { HEAD, POSE, RUN_GATE, SENSOR_RUN_SAY, SENSOR_STALL, SLOTS, STILL } from './params'
+import { HEAD, POSE, RUN_GATE, SENSOR_NOTICE, SENSOR_RUN_SAY, SENSOR_STALL, SLOTS, STILL } from './params'
 import type { Packet, Vec3 } from './parse'
 import { sensors } from './ble'
 import { SensorRunner } from './runner'
@@ -8,6 +8,7 @@ import { expectedChest } from './expect'
 import { WaistPhone, WAIST_RAW_COLUMNS, type WaistRawLog } from './waist'
 import type { MotionLike } from '../phone/sensor'
 import { SENSOR_LOG_PATHS, sensorRunCounts } from './runLog'
+import { noticeText } from './notice'
 import { PHRASES } from '../../core/phrases'
 import type { RunLog } from '../../core/types'
 
@@ -172,9 +173,11 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     t = send('胸', 'slouch', t, SENSOR_RUN_SAY.pouch - 3.5, r)
     expect(said).toEqual([])
     expect(r.stage).toBe('a')
-    // pouch 秒を過ぎたら、最初に「いつもの楽な立ち方」を言う
+    // pouch 秒を過ぎたら、付けているのにつながっていない場所（ここでは胸のほか全部）を1つずつ言ってから、「いつもの楽な立ち方」を言う
     t = send('胸', 'slouch', t, 1, r)
-    expect(said[0]).toBe(PHRASES.poseHabit)
+    const missing = SLOTS.filter((x) => x.name && x.place !== '胸').map((x) => noticeText(x.place, 'missing'))
+    expect(said.slice(0, missing.length)).toEqual(missing)
+    expect(said[missing.length]).toBe(PHRASES.poseHabit)
     expect(r.stoodAt).toBe(null)
     // a：いつもの楽な立ち方（猫背）。3秒じっとしたら、b の案内に進む
     t = sendUntil('胸', 'slouch', t, r, () => r.stage === 'b')
@@ -495,6 +498,20 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     expect(SENSOR_LOG_PATHS).toContain('sensors.waistRaw')
   })
 
+  it('正しい前傾（ベルト時速9.1km で 20.0°）が走り出しの胸（12°）より大きければ、走り出しの胸まで下げて、記録と events に残す', () => {
+    connect(['胸'])
+    const events: string[] = []
+    const r = new SensorRunner({ onEvent: (_t, text) => events.push(text), say: () => {}, belt: () => 9.1 })
+    let t = performance.now() / 1000
+    t = sendUntil('胸', 'slouch', t, r, () => r.stage === 'b')
+    t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null)
+    send('胸', 'run', t, 50, r)
+    const log = r.finish()!
+    expect(log.runLean).toMatchObject({ by: 'speed', kmh: 9.1, speedBy: 'belt', expect: 20 })
+    expect(log.runLean!.offset!).toBeCloseTo(log.runLean!.deg, 1)
+    expect(events.some((e) => /^sensor:expectCap 胸 expect 20\.0 run 1[12]\.\d$/.test(e))).toBe(true)
+  })
+
   it('頭だけ：いつもの頭（前へ15°）と顎を引いた頭で測り、前に出たまま走り出すと走る前傾を覚える前から震わせ、直すとほめる（声は出さない）', () => {
     connect(['頭'])
     const events: [number, string][] = []
@@ -545,6 +562,9 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     r.tick(t + 0.1)
     r.tick(t + 10)
     expect(r.gaps).toBe(1)
+    // つながっていない場所を1つずつ言い終えてから、待つ案内
+    for (let k = 1; k <= 10; k++) r.tick(t + 10 + k * 0.1)
+    expect(said).toContain(noticeText('頭', 'missing'))
     expect(events.some((e) => e.startsWith('sensor:gap'))).toBe(true)
     expect(said).not.toContain(PHRASES.poseHabit)
     expect(said).toContain(PHRASES.waitRun)
@@ -621,6 +641,60 @@ describe('途中でセンサーが止まったとき', () => {
     await new Promise((ok) => setTimeout(ok, 0)) // 振動を送れたかを待ってから数える
     const cues = events.filter(([, e]) => e.startsWith('sensor:hunch ')).map(([at]) => at)
     expect(cues.some((at) => at > stopAt && at < stopAt + 20)).toBe(true)
+    r.finish()
+  })
+
+  it('センサーラン：つながっていない場所を立ち方の案内の前に、走っている間の途切れは「切れました」「戻りました」を声で言う（ほかの声と重ねない）。結果の画面に回数と秒', () => {
+    connect(['胸', '頭'])
+    // 声：言うと2秒話している（話している間は、次の知らせを待つ）
+    const said: [number, string][] = []
+    let busyUntil = 0
+    let clock = 0
+    const r = new SensorRunner({
+      onEvent: () => {},
+      say: (x) => {
+        said.push([clock, x])
+        busyUntil = clock + 2
+      },
+      speaking: () => clock < busyUntil,
+    })
+    const step = (kinds: Partial<Record<string, Kind>>, from: number, sec: number) => {
+      let t = from
+      for (let k = 0; k < Math.round(sec * 10); k++) {
+        clock = t
+        t = sendMany(kinds, t, 0.1, r)
+      }
+      return t
+    }
+    let t = performance.now() / 1000
+    const t0 = t
+    t = step({ 胸: 'walk', 頭: 'walk' }, t, SENSOR_RUN_SAY.pouch + 0.5)
+    const missing = SLOTS.filter((x) => x.name && x.place !== '胸' && x.place !== '頭').map((x) => noticeText(x.place, 'missing'))
+    // ポーチに入れる間は言わない。そのあと、つながっていない場所を1つずつ（前の声を言い終えてから）
+    t = step({ 胸: 'slouch', 頭: 'slouch' }, t, 2 * missing.length + 1)
+    expect(said.slice(0, missing.length).map((x) => x[1])).toEqual(missing)
+    expect(said[0][0] - t0).toBeGreaterThan(SENSOR_RUN_SAY.pouch - 0.15)
+    said.slice(1, missing.length).forEach((x, i) => expect(x[0] - said[i][0]).toBeGreaterThan(1.95))
+    expect(said[missing.length][1]).toBe(PHRASES.poseHabit)
+    // 2つの立ち方を測って走る
+    while (r.stoodAt === null && t - t0 < 200) t = step({ 胸: r.stage === 'a' ? 'slouch' : 'stand', 頭: r.stage === 'a' ? 'slouch' : 'stand' }, t, 0.1)
+    expect(r.stoodAt).not.toBe(null)
+    t = step({ 胸: 'run', 頭: 'runOpen' }, t, 50)
+    expect(r.phase).toBe('run')
+    // 頭が30秒途切れる → 約10秒で「切れました」を1回、戻ったら「戻りました」を1回
+    const off = t
+    const n = said.length
+    t = step({ 胸: 'run' }, t, 30)
+    t = step({ 胸: 'run', 頭: 'runOpen' }, t, 5)
+    const after = said.slice(n)
+    expect(after.map((x) => x[1])).toEqual([PHRASES.sensorLostHead, PHRASES.sensorBackHead])
+    expect(after[0][0] - off).toBeGreaterThan(SENSOR_NOTICE.after - 0.5)
+    expect(after[0][0] - off).toBeLessThan(SENSOR_NOTICE.after + 1)
+    expect(r.phase).toBe('run') // 頭が途切れても、走っているかは胸で見る
+    const w = r.watch!.summary(t)
+    expect(w.drops).toEqual([{ place: '頭', n: 1, sec: expect.any(Number) }])
+    expect(w.drops[0].sec).toBeGreaterThanOrEqual(29)
+    expect(w.missing).toEqual(SLOTS.filter((x) => x.name && x.place !== '胸' && x.place !== '頭').map((x) => x.place))
     r.finish()
   })
 

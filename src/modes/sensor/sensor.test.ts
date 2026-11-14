@@ -147,6 +147,26 @@ describe('胸のセンサーで猫背を見る', () => {
     expect(cues[cues.length - 1]).toBeLessThan(71)
   })
 
+  it('1歩ごとの揺れで線の下に一瞬入っても、1秒の平均が線を越えたまま3秒なら知らせる（smooth。2026-11-14 の外の走りで、揺れのため一度も震えなかった）', () => {
+    // 50秒から、線（走る前傾 14° + margin）より 2° 前に傾け、1歩ごと（1.4Hz）に ±約5° 揺れる。揺れの谷では線の下に入る
+    const lean = (t: number) => (t < 50 ? 14 : 14 + HUNCH.margin + 2 + 25 * Math.sin(2 * Math.PI * 1.4 * t))
+    const runFor = (p: typeof HUNCH) => {
+      const d = setup(p)
+      play(d, 5, 50, () => 14, () => true)
+      return play(d, 50, 70, lean, () => true)
+    }
+    const now = runFor(HUNCH)
+    expect(HUNCH.smooth).toBe(1)
+    // 揺れの谷で、その tick の傾きは線の下に入っている
+    expect(now.some((o) => o.t > 52 && o.tilt! < 14 + HUNCH.margin)).toBe(true)
+    const cues = now.filter((o) => o.cue)
+    expect(cues.length).toBeGreaterThan(2)
+    expect(cues[0].t).toBeLessThan(50 + HUNCH.smooth + HUNCH.hold + 1)
+    expect(cues[0].judged!).toBeGreaterThan(14 + HUNCH.margin)
+    // 前の見方（その tick の値で比べ、1つでも線の下に入ったら数え直す）では、一度も知らせない
+    expect(runFor({ ...HUNCH, smooth: 0 }).some((o) => o.cue)).toBe(false)
+  })
+
   it('線のすぐ下（走る前傾 + margin − 1°）や、走っていない間は知らせない', () => {
     const d = setup()
     play(d, 5, 50, () => 14, () => true)
@@ -467,7 +487,8 @@ describe('体を曲げた（物を拾う）ときは、胸も頭も知らせな�
     const { chest, head } = setup()
     const out = both(chest, head, 50, 60, (t) => (t < 52 ? 14 : 24), () => 6)
     const first = out.find((o) => o.chest.cue)!
-    expect(first.t).toBeLessThan(52 + HUNCH.hold + 0.6)
+    // 胸は直近1秒の平均で線と比べるので、平均が線を越えるまで（1秒の半分ほど）遅れる
+    expect(first.t).toBeLessThan(52 + HUNCH.smooth + HUNCH.hold + 0.6)
   })
 })
 
@@ -780,7 +801,8 @@ describe('2つの立ち方で猫背を見る', () => {
   it('胸を開いたまま走れば（体ごとの前傾だけ）知らせない。そこから猫背になれば知らせる', () => {
     const { d } = setup()
     const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => BODY)
-    expect(out.find((o) => o.learned !== undefined)!.offset!).toBe(BODY)
+    // 走り出しの前傾がちょうど正しい前傾（計算の誤差で、わずかに下回ると、そこまで下げる）
+    expect(out.find((o) => o.learned !== undefined)!.offset!).toBeCloseTo(BODY, 5)
     expect(d.offset!.by).toBe('speed')
     expect(out.some((o) => o.cue)).toBe(false)
     const t0 = 6 + HUNCH.skip + HUNCH.learn + 30
@@ -793,6 +815,30 @@ describe('2つの立ち方で猫背を見る', () => {
       const { d } = setup()
       expect(run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => lean).some((o) => o.cue)).toBe(cue)
     }
+  })
+
+  it('その速さで正しい前傾が走り出しの前傾より大きければ、走り出しの前傾まで下げる（11-14 18:37：正しい前傾 20.0° に走り出し 13.9°）', () => {
+    const d = new LeanDetector(HUNCH)
+    d.expect = () => expectedChest(9.1) // 正しい前傾 20.0°（k 14.2・時速9.1km のよい例の上体 5.8°）
+    expect(expectedChest(9.1).deg).toBe(20)
+    play(d, 0, 3, () => A, () => false)
+    const da = d.dirOver(3, 3)!
+    play(d, 3, 6, () => 0, () => false)
+    expect(d.setPoses(da, d.dirOver(6, 3)!)).toBe(true)
+    const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 1, () => 13.9)
+    const learned = out.find((o) => o.learned !== undefined)!
+    expect(learned.learned!).toBeCloseTo(13.9, 1)
+    expect(d.offset).toMatchObject({ by: 'speed', expect: 20 })
+    expect(d.offset!.deg).toBeCloseTo(13.9, 1)
+    expect(d.ref!).toBeCloseTo(13.9, 1)
+    // 線は 13.9 + 5 = 18.9°（前は 25°）。ふだんの胸（13.9°）から 7° 前に傾ければ知らせる
+    const t0 = 6 + HUNCH.skip + HUNCH.learn + 1
+    expect(run(d, t0, t0 + 10, () => 13.9 + HUNCH.poseLine + 2).some((o) => o.cue)).toBe(true)
+    // 正しい前傾が走り出しの前傾より小さければ、そのまま（上げない。猫背のまま走り出しても、猫背を基準にしない）
+    const { d: up } = setup()
+    run(up, 6, 6 + HUNCH.skip + HUNCH.learn + 1, () => A + BODY)
+    expect(up.offset).toMatchObject({ deg: BODY, by: 'speed' })
+    expect(up.offset!.expect).toBeUndefined()
   })
 
   it('カメラ版でも、胸の基準はその速さで正しい前傾（カメラの上体の増えは記録に残すだけ）', () => {

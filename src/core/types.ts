@@ -166,14 +166,16 @@ export interface RunLog {
   // 走り終わりのまとめ（センサーランの結果の画面）。runSec：走っていた秒、gaps：アプリが2秒より止まっていた回数（画面が消えた・裏に回った）、
   // trunk：胸か頭がつながっていた。cues：項目ごとの知らせた回数、capped：1時間の上限に達した回数、slips：ずれとみなした回数（sensor/session.ts の counts。前の記録にはない）、
   // gps：位置情報の様子（none＝使えないブラウザ、on＝取れた、denied＝許可されていない、error＝取れなかった。センサーランだけ）
-  summary?: { runSec: number; gaps: number; stood: boolean; trunk?: boolean; cues?: SensorCounts; capped?: SensorCounts; slips?: { chest: number; head: number }; gps?: string }
+  // drops：付けているセンサーが途切れた（値が2秒より来なかった）場所ごとの回数と合わせた秒、missing：その走りで値が1つも来なかった場所（sensor/notice.ts）
+  summary?: { runSec: number; gaps: number; stood: boolean; trunk?: boolean; cues?: SensorCounts; capped?: SensorCounts; slips?: { chest: number; head: number }; gps?: string; drops?: { place: string; n: number; sec: number }[]; missing?: string[] }
   // 走り始めたときの端末の入れ物の様子（navigator.storage。使えないブラウザではない）。usage・quota はバイト
   storage?: { usage?: number; quota?: number; persisted?: boolean }
 }
 
 // by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・speed（その速さで正しい胸の前傾。sensor/expect.ts）・camera（前の記録だけ：カメラの上体の増え + 5° で抑えた）。
 // speed のときは、使った速さ kmh（時速 km、分からなければ null）とその出どころ speedBy（belt・sensor・none）、よい例の上体 trunk（度）
-export type SensorRunLean = { t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'speed' | 'camera'; cam?: number | null; kmh?: number | null; speedBy?: 'belt' | 'sensor' | 'none'; trunk?: number }
+// expect：胸で、その速さで正しい前傾が走り出しの前傾 deg より大きく、deg まで下げたときの、もとの正しい前傾（sensor/lean.ts の poseOffset）
+export type SensorRunLean = { t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'speed' | 'camera'; cam?: number | null; kmh?: number | null; speedBy?: 'belt' | 'sensor' | 'none'; trunk?: number; expect?: number }
 
 // 腰のスマホ（センサーランだけ。sensor/waist.ts）の2つの立ち方：t：決めた t、a・b：スマホの軸での重力の向き、deg：a と b の角度（度）、
 // mode：pose（b→a の向きに沿って見た）・fallback（差が小さい・片方だけ。b からの向きによらない角度）・none（測れなかった）

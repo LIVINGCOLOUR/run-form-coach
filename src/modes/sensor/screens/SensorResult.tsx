@@ -6,7 +6,7 @@ import { slipNotes } from '../slipText'
 import { SENSOR_RUN_NAME } from '../name'
 
 // センサーランの結果。走っている間は画面を見ないので、何回どこで知らせたか・センサーがずれたか・アプリが止まっていたかを、ここで出す。
-// 記録の頭（events・cues・slips・summary。センサーの値そのものは読まない）から数える
+// 記録の頭（events・cues・slips・summary。センサーの値そのものは読まない）から数える。センサーの途切れ・つながらなかった場所は summary の drops・missing（notice.ts）
 export function SensorResult({ logId, onHome }: { logId: string; onHome: () => void }) {
   const [log, setLog] = useState<RunLog | null | undefined>(undefined)
   useEffect(() => {
@@ -71,6 +71,16 @@ export function SensorResult({ logId, onHome }: { logId: string; onHome: () => v
               立った姿勢が取れなかったので、胸と頭は見ていません（接地は見ています）。次は、始めてすぐに、案内に従って2つの立ち方で3秒ずつ止まってください。
             </div>
           )}
+          {log.summary?.missing?.map((place) => (
+            <div key={`m-${place}`} style={{ color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
+              {place}のセンサーは、つながっていませんでした（{place}は見ていません）。
+            </div>
+          ))}
+          {log.summary?.drops?.map((d) => (
+            <div key={`d-${d.place}`} style={{ color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
+              {d.place}のセンサーが {d.n} 回途切れました（合わせて {d.sec} 秒。その間は見ていません）。
+            </div>
+          ))}
           {sum.gaps > 0 && (
             <div style={{ color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
               アプリが {sum.gaps} 回止まっていました（画面が消えた・ほかのアプリに切り替えたなど）。その間は見られていません。次は画面を消さずに走ってください。

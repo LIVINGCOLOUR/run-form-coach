@@ -8,6 +8,7 @@ import { HUNCH, POSE, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
 import { SensorSession, type PoseName, type PoseResult } from './session'
 import type { CamValues } from './lean'
 import { WaistPhone } from './waist'
+import { noticeText, SensorWatch } from './notice'
 
 // 1回の走りの間、センサーを動かす役（トレッドミルのカメラ版・センサーラン・腰スマホで共通）。
 // SensorSession（崩れの見分け・知らせ・記録）を HUNCH.tick 秒ごとに動かし、「立った姿勢」と「走っている」を渡す。
@@ -25,6 +26,10 @@ import { WaistPhone } from './waist'
 //   gps を渡すと（センサーラン）、位置情報の速さと高さを1秒ごとのまとめに残す（gps.ts。知らせには使わない。使えないブラウザでは events に gps: none）
 //   waist を渡すと（センサーラン）、腰のポーチに入れたこのスマホの向きを、2つの立ち方とあわせて記録する（waist.ts。知らせには使わない）
 //   belt を渡すと、ベルトの速さ（トレッドミル）を胸の正しい前傾の速さに使う（session.ts。なければ足首のセンサーの見積もり）
+//   カメラなしでは、付けているセンサーの途切れを見張る（notice.ts の SensorWatch）。say があれば（センサーラン）声で知らせる：
+//     走り始めに、つながっていない場所を「頭のセンサーがつながっていません」（ポーチに入れる間のあと、立ち方の案内の前に）、
+//     走っている間に SENSOR_NOTICE.after 秒より値が来なければ「…切れました」、また来たら「…戻りました」。
+//     声は1つずつ、ほかの声を話していないときに言う（立ち方を測るのは、言い終えてから。core/voice.ts の voicePending）。途切れの回数と秒は結果の画面へ（runLog.ts の summary）
 
 export type SensorRunPhase = 'stand' | 'ready' | 'run' | 'stop'
 
@@ -74,6 +79,8 @@ export class SensorRunner {
   private closed = false
   private result: SensorLog | undefined
   private diagSeen: number // ble.ts の diag のうち、もう events に移した行の数（diagTotal）
+  readonly watch: SensorWatch | null // 付けているセンサーの途切れ（カメラなしのときだけ）
+  private notices: string[] = [] // まだ言っていない、センサーの途切れの知らせ（センサーランだけ）
   private readonly o: SensorRunnerOptions
 
   constructor(o: SensorRunnerOptions) {
@@ -91,11 +98,17 @@ export class SensorRunner {
     for (const v of sensors.snapshot()) if (v.name && v.status !== 'connected') o.onEvent(t0, `sensor:missing ${v.place} ${v.status}`)
     this.lastSay = -Infinity
     this.phase = this.gate && this.needsStand() ? 'stand' : 'ready'
+    this.watch = this.gate ? new SensorWatch(sensors.snapshot(), t0) : null
+    // センサーラン：つながっていない場所を、立ち方の案内の前に言う
+    if (this.watch && o.say) this.notices.push(...this.watch.missingAtStart.map((place) => noticeText(place, 'missing')))
     if (this.gate) {
       const gate = this.gate
+      const watch = this.watch!
       this.offPacket = sensors.onPacket((node, t, p) => {
         const place = SLOTS[node]?.place
         if (place) for (const s of p.samples) gate.sample(place, t, s.a, s.g)
+        const back = watch.packet(node, t)
+        if (back && o.say) this.notices.push(back)
       })
     }
     this.onVisible = () => o.onEvent(now(), `sensor:visible ${document.visibilityState}`)
@@ -151,6 +164,7 @@ export class SensorRunner {
     if (t - this.lastTick > GAP) {
       this.gaps++
       this.o.onEvent(t, `sensor:gap ${(t - this.lastTick).toFixed(1)}`)
+      this.watch?.appGap(t) // アプリが止まっていた間は、センサーの途切れに数えない
     }
     const dt = Math.max(0, Math.min(1, t - this.lastTick))
     this.lastTick = t
@@ -203,6 +217,14 @@ export class SensorRunner {
     }
     else this.quietSince ??= t
     const quiet = this.quietSince !== null && t - this.quietSince >= STILL.sec
+    // センサーの途切れ：切れた場所を見つけ、センサーランなら1つずつ言う（ポーチに入れる間は待つ。ほかの声を話している間も待つ）
+    const lost = this.watch!.tick(t)
+    if (two) this.notices.push(...lost)
+    if (two && !pouching && this.notices.length && !this.o.speaking?.()) {
+      const text = this.notices.shift()!
+      this.o.say!(text)
+      this.o.onEvent(t, text)
+    }
     if (this.stoodAt === null && !running && quiet && gate.still(t)) {
       if (!two) {
         if (this.session.stand(t, STILL.sec)) {
@@ -230,7 +252,8 @@ export class SensorRunner {
       }
     }
     // 案内（声）：立つ前は、いま測る立ち方（言い直しも）、覚えてから走り出すまでは「走り出すと始まります」。走り出したあとは言わない
-    if (!running && !this.started && !pouching) {
+    // つながっていない・切れたの知らせが残っている間は待つ（知らせを先に言い終える）
+    if (!running && !this.started && !pouching && !this.notices.length) {
       if (this.stoodAt === null && this.needsStand()) {
         if (t - this.lastSay >= SENSOR_RUN_SAY.standRepeat) this.speak(t, !two ? PHRASES.baseStand : this.stage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen)
       } else if (t - this.lastSay >= SENSOR_RUN_SAY.waitRepeat) this.speak(t, PHRASES.waitRun)
