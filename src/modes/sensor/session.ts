@@ -1,5 +1,5 @@
 import type { Level } from '../../core/level'
-import type { SensorCounts, SensorLog, SensorPoseLog } from '../../core/types'
+import type { SensorCounts, SensorLog, SensorPoseAttempt, SensorPoseLog } from '../../core/types'
 import { speak, voiceBusy } from '../../core/voice'
 import { sensors } from './ble'
 import { cadLow } from './contact'
@@ -32,8 +32,9 @@ const SLIP = 'sensor:slip'
 
 // 2つの立ち方（params.ts の POSE）。a：いつもの楽な立ち方、b：胸を開いた立ち方
 export type PoseName = 'a' | 'b'
-// calibrate の結果。retry：差が小さいので測り直す（まだ何も覚えていない）。parts：場所ごとの角度（度。測れなければ null）と見方
-export type PoseResult = { retry: boolean; parts: { key: Key; place: string; deg: number | null; mode: 'pose' | 'fallback' | 'none' }[] }
+// calibrate の結果。retry：差が小さいので測り直す（まだ何も覚えていない）。parts：場所ごとの角度（度。測れなければ null）と見方。
+// small：胸の差が小さかったが、b を基準に2つの立ち方の見方のまま見る（前の向きは走り出しの前傾から。lean.ts の setSmall）
+export type PoseResult = { retry: boolean; parts: { key: Key; place: string; deg: number | null; mode: 'pose' | 'small' | 'fallback' | 'none' }[] }
 
 const r2 = (x: number) => Math.round(x * 100) / 100
 const r4v = (v: Vec3) => v.map((x) => Math.round(x * 1e4) / 1e4) as [number, number, number]
@@ -82,6 +83,9 @@ export class SensorSession {
   private poseDirs: Record<PoseName, Partial<Record<Key, Vec3>>> = { a: {}, b: {} }
   private poseCam: Partial<Record<PoseName, CamValues>> = {}
   private poseDegs: Record<Key, (number | null)[]> = { chest: [], head: [] }
+  // 測った回ごとの a・b・角度と、b の案内の間に a からいちばん傾いた角度（記録の poseAttempts）。peak：a を測ってから b を測るまで見ている間
+  private attempts: Record<Key, SensorPoseAttempt[]> = { chest: [], head: [] }
+  private peak: Partial<Record<Key, { a: Vec3; deg: number; done: boolean }>> = {}
   poseTries = 0
   voice = true
   // この走りで知らせた回数（項目ごと）・1時間の上限（core/params.ts の LIMIT.perHour）に達した回数・ずれとみなした回数。
@@ -175,6 +179,13 @@ export class SensorSession {
       if (!d) continue
       this.poseDirs[which][x.key] = d
       got.push(x.p.place)
+      // b の案内の間に、a からどれだけ傾いたか（胸のベルトがゆるい・姿勢を変えなかった、を記録で見分けるため）
+      if (which === 'a') this.peak[x.key] = { a: d, deg: 0, done: false }
+      else {
+        const pk = this.peak[x.key]
+        if (pk && !pk.done) pk.deg = Math.max(pk.deg, angleDeg(pk.a, d))
+        if (pk) pk.done = true
+      }
     }
     if (cam) this.poseCam[which] = cam
     if (got.length) this.onEvent(t, `sensor:pose ${which} ${got.join('・')}${cam ? ` cam ${cam.trunk.toFixed(1)}/${cam.head.toFixed(1)}` : ''}`)
@@ -195,6 +206,16 @@ export class SensorSession {
       this.poseDegs[x.key].push(deg === null ? null : Math.round(deg * 10) / 10)
       return { x, deg }
     })
+    // 測った回ごとに残す（測り直しも。前は最後の回だけだった）
+    for (const { x, deg } of parts) {
+      const pk = this.peak[x.key]
+      const da = a[x.key]
+      const dbb = b[x.key]
+      if (!da && !dbb) continue
+      this.attempts[x.key].push({ t: r2(t), try: this.poseTries, ...(da && { a: r4v(da) }), ...(dbb && { b: r4v(dbb) }), deg: deg === null ? null : Math.round(deg * 10) / 10, peak: pk ? Math.round(pk.deg * 10) / 10 : null })
+      if (this.rec) this.slot(x.key).poseAttempts = this.attempts[x.key].slice()
+    }
+    this.peak = {}
     const main = parts.find((y) => y.x.key === 'chest' && y.deg !== null) ?? parts.find((y) => y.deg !== null)
     const degText = parts.map((y) => `${y.x.p.place} ${y.deg === null ? '-' : y.deg.toFixed(1)}`).join(' ')
     this.onEvent(t, `sensor:poseDiff ${degText} try ${this.poseTries}`)
@@ -210,16 +231,27 @@ export class SensorSession {
     for (const { x, deg } of parts) {
       const da = a[x.key]
       const db = b[x.key] ?? da
-      let mode: 'pose' | 'fallback' | 'none' = 'none'
+      let mode: 'pose' | 'small' | 'fallback' | 'none' = 'none'
       if (da && b[x.key] && x.d.setPoses(da, b[x.key]!, x.key === 'chest' ? camB : null)) mode = 'pose'
-      else if (db) {
+      // 胸の差が小さい：今までの見方にはもどさず、b を基準に見る（params.ts の POSE の説明。頭は今までどおり）
+      else if (x.key === 'chest' && da && b[x.key]) {
+        x.d.setSmall(da, b[x.key]!, camB)
+        mode = 'small'
+      } else if (db) {
         x.d.standDir(db)
         mode = 'fallback'
       }
       out.parts.push({ key: x.key, place: x.p.place, deg, mode })
       if (mode === 'none') continue
       const pose = x.d.pose
-      this.onEvent(t, mode === 'pose' ? `sensor:pose ${x.p.place} pose ${deg!.toFixed(1)} margin ${pose!.margin.toFixed(1)}` : `sensor:poseFallback ${x.p.place} ${deg === null ? '-' : deg.toFixed(1)}`)
+      this.onEvent(
+        t,
+        mode === 'pose'
+          ? `sensor:pose ${x.p.place} pose ${deg!.toFixed(1)} margin ${pose!.margin.toFixed(1)}`
+          : mode === 'small'
+            ? `sensor:poseSmall ${x.p.place} ${deg!.toFixed(1)} margin ${pose!.margin.toFixed(1)}`
+            : `sensor:poseFallback ${x.p.place} ${deg === null ? '-' : deg.toFixed(1)}`,
+      )
       this.onEvent(t, x.ev.stand)
       if (!this.rec) continue
       const slot = this.slot(x.key)
@@ -242,6 +274,12 @@ export class SensorSession {
   // gps：センサーランで、いまの GPS の速さと高さ（1秒ごとのまとめに残すだけ。知らせには使わない）
   tick(t: number, running: boolean, cam: CamValues | null = null, gps: GpsSec | null = null) {
     this.tickStall(t)
+    // b の案内の間（a を測ってから b を測るまで）に、a からいちばん傾いた角度
+    for (const x of this.parts) {
+      const pk = this.peak[x.key]
+      const u = pk && !pk.done ? x.d.dir() : null
+      if (pk && u) pk.deg = Math.max(pk.deg, angleDeg(pk.a, u))
+    }
     let chestCued = false
     // 足首のセンサーの速さ（胸の正しい前傾を決めるため。走っている間だけ、直近 HUNCH.learn 秒）
     const v = this.contact.last?.v
@@ -261,12 +299,15 @@ export class SensorSession {
       if (r.learned !== undefined && this.rec) {
         const off = x.d.offset
         const sp = off?.by === 'speed' ? { kmh: off.kmh ?? null, speedBy: off.speedBy, trunk: off.trunk, ...(off.expect !== undefined && { expect: Math.round(off.expect * 10) / 10 }) } : {}
-        this.slot(x.key).runLean = { t: r2(t), deg: Math.round(r.learned * 10) / 10, ...(off && { offset: Math.round(off.deg * 10) / 10, by: off.by, cam: r1n(off.cam), ...sp }) }
+        const dir = x.d.dirBy() ?? undefined
+        this.slot(x.key).runLean = { t: r2(t), deg: Math.round(r.learned * 10) / 10, ...(dir && { dir }), ...(off && { offset: Math.round(off.deg * 10) / 10, by: off.by, cam: r1n(off.cam), ...sp }) }
         // 2つの立ち方で見るときは、差し引いた分とその決め方も：sensor:runLean 18.2 offset 19.2 speed 7.6 sensor（胸）・sensor:headLean 7.8 offset 3.0 cap（頭）
         const spText = off?.by === 'speed' ? ` ${off.kmh ?? '-'} ${off.speedBy}` : ''
         this.onEvent(t, `${x.ev.lean} ${r.learned.toFixed(1)}${off ? ` offset ${off.deg.toFixed(1)} ${off.by}${spText}${off.cam !== null ? ` cam ${off.cam.toFixed(1)}` : ''}` : ''}`)
         // その速さで正しい前傾が走り出しの前傾より大きく、走り出しの前傾まで下げた：sensor:expectCap 胸 expect 20.0 run 13.9
         if (off?.expect !== undefined) this.onEvent(t, `sensor:expectCap ${x.p.place} expect ${off.expect.toFixed(1)} run ${r.learned.toFixed(1)}`)
+        // 前の向きをどこから決めたか（2つの立ち方の差が小さかった胸・立ち方が1つ）：sensor:runDir 胸 run（走り出しの前傾）・none（向きによらない角度）
+        if (dir && dir !== 'pose') this.onEvent(t, `sensor:runDir ${x.p.place} ${dir}`)
       }
       // 人ごとの基準を決めた（胸。走りが落ち着いた settleTo 秒）：sensor:settle 胸 20.3 med 20.3 n 2050 band 15.8〜22.1（med：落ち着いた間の真ん中。足りなければ -）
       if (r.settled) {

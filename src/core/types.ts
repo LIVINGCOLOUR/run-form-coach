@@ -175,7 +175,8 @@ export interface RunLog {
 // by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・speed（その速さで正しい胸の前傾。sensor/expect.ts）・camera（前の記録だけ：カメラの上体の増え + 5° で抑えた）。
 // speed のときは、使った速さ kmh（時速 km、分からなければ null）とその出どころ speedBy（belt・sensor・none）、よい例の上体 trunk（度）
 // expect：胸で、その速さで正しい前傾が走り出しの前傾 deg より大きく、deg まで下げたときの、もとの正しい前傾（sensor/lean.ts の poseOffset）
-export type SensorRunLean = { t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'speed' | 'camera'; cam?: number | null; kmh?: number | null; speedBy?: 'belt' | 'sensor' | 'none'; trunk?: number; expect?: number }
+// dir：前の向きをどこから決めたか（pose：b→a、run：走り出しの前傾、none：決まらず向きによらない角度）。前の記録にはない
+export type SensorRunLean = { dir?: 'pose' | 'run' | 'none'; t: number; deg: number; offset?: number; by?: 'sensor' | 'cap' | 'speed' | 'camera'; cam?: number | null; kmh?: number | null; speedBy?: 'belt' | 'sensor' | 'none'; trunk?: number; expect?: number }
 
 // 腰のスマホ（センサーランだけ。sensor/waist.ts）の2つの立ち方：t：決めた t、a・b：スマホの軸での重力の向き、deg：a と b の角度（度）、
 // mode：pose（b→a の向きに沿って見た）・fallback（差が小さい・片方だけ。b からの向きによらない角度）・none（測れなかった）
@@ -194,19 +195,22 @@ export type SensorCounts = { chest: number; head: number; sit: number; longL: nu
 //   t：決めた t、tries：測った回数（差が小さくて測り直したぶんを含む）、a・b：最後に測った、いつもの楽な立ち方・胸を開いた立ち方の重力の向き、
 //   deg：a と b の角度（度）、mode：pose（2つの立ち方で見た）・fallback（差が poseMin より小さい、または片方しか測れず、b を立った姿勢にして今までの見方）、
 //   margin：使う線の幅（度）、line：決まった度数の線の幅 poseLine（胸）、frac：poseFrac（poseLine が 0 のとき。頭）、degs：測った回ごとの角度、cam：カメラ版で a・b のときのカメラの上体と頭の位置（度）
+// mode の small：胸の差が poseMin より小さかった（測り直しを使い切った）が、b を基準に2つの立ち方の見方のまま見た（前の向きは走り出しの前傾から。sensor/lean.ts の setSmall）
 export interface SensorPoseLog {
   t: number
   tries: number
   a?: [number, number, number]
   b?: [number, number, number]
   deg: number | null
-  mode: 'pose' | 'fallback'
+  mode: 'pose' | 'small' | 'fallback'
   margin?: number
   line?: number
   frac?: number
   degs?: (number | null)[]
   cam?: { a?: { trunk: number; head: number }; b?: { trunk: number; head: number } }
 }
+
+export type SensorPoseAttempt = { t: number; try: number; a?: [number, number, number]; b?: [number, number, number]; deg: number | null; peak: number | null }
 
 // センサーの記録（src/modes/sensor/log.ts の SensorRecorder で作り、decodeBlock で戻す）。時刻 t は rows と同じ時計の秒
 export interface SensorLog {
@@ -235,6 +239,9 @@ export interface SensorLog {
   // 抑えたもの（by：sensor＝そのまま・cap＝上限・camera＝カメラの上体の増え）、カメラの上体の増え（cam、度）も
   runLean?: SensorRunLean
   pose?: SensorPoseLog // 2つの立ち方（胸）。前の記録にはない
+  // 2つの立ち方を測った回ごと（測り直しも）：a・b の重力の向き、a と b の角度、b の案内の間（a を測ってから b を測るまで）に a からいちばん傾いた角度（度）。
+  // 前の記録にはない（前は最後の回の a・b だけ）
+  poseAttempts?: SensorPoseAttempt[]
   waist?: SensorWaistLog // 腰のスマホの2つの立ち方（センサーランだけ。1秒ごとの値は sec の waist・wgx・wgy・wgz・wHz）。前の記録にはない
   cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]
   slips?: [number, number, number][] // 胸のセンサーがずれたとみなした [t, ずれを測るもとの基準（度）, 置き直した基準（度）]。見張る前の記録にはない
@@ -243,6 +250,7 @@ export interface SensorLog {
     stand?: { t: number; base: [number, number, number] }
     runLean?: SensorRunLean
     pose?: SensorPoseLog
+    poseAttempts?: SensorPoseAttempt[]
     cues: [number, number, number][] // [t, 頭の前への傾き（度）, 震わせられたか 1/0]
     slips?: [number, number, number][] // 胸と同じ形
   }

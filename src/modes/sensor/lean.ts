@@ -1,6 +1,6 @@
 import { LIMIT } from '../../core/params'
 import { expectedChest, type ExpectLean, type SpeedBy } from './expect'
-import { HEAD_YIELD, type LeanParams } from './params'
+import { HEAD_YIELD, POSE, type LeanParams } from './params'
 import type { Vec3 } from './parse'
 
 // 1個のセンサーの前への傾きで崩れを見分ける（胸＝猫背、頭＝頭が前に出る。数字は params.ts の HUNCH・HEAD）
@@ -56,8 +56,9 @@ export type CamValues = { trunk: number; head: number }
 // judged：線と比べた傾き（smooth があるときの、直近 smooth 秒の平均。なければ tilt と同じなので入れない）
 export type LeanStep = { judged?: number; tilt: number | null; cue: boolean; capped?: boolean; praise?: boolean; plausible?: boolean; learned?: number; offset?: number; ref?: number | null; slip?: { from: number; to: number }; bent?: boolean; bend?: number; settled?: { base: number; median: number | null; n: number; lo: number; hi: number }; shadow?: boolean }
 
-// 2つの立ち方で決めた物差し。deg：a と b の角度（猫背の大きさ）、margin：使う線の幅（度）、camB：カメラ版で b のときのカメラの上体の前傾（度）
-export type PoseScale = { deg: number; margin: number; camB: number | null }
+// 2つの立ち方で決めた物差し。deg：a と b の角度（猫背の大きさ）、margin：使う線の幅（度）、camB：カメラ版で b のときのカメラの上体の前傾（度）。
+// small：a と b の差が小さかった（胸。setSmall）。前の向きは走り出しの前傾から決める
+export type PoseScale = { deg: number; margin: number; camB: number | null; small?: boolean }
 // 基準として差し引いた分。by：sensor（走る前傾そのまま）・cap（poseCap で抑えた）・speed（その速さで正しい胸の前傾。胸）。
 // cam：カメラ版で、カメラの上体の増え（b の立ち姿勢から、度。記録に残すだけ）。kmh・speedBy・trunk：speed のとき、使った速さとその出どころ、よい例の上体（度）
 // lo・hi：speed のとき、よい例の上体の範囲を胸の値に直したもの（人ごとの基準を収める範囲）
@@ -170,6 +171,22 @@ export class LeanDetector {
     return true
   }
 
+  // 2つの立ち方の差が poseMin より小さかった（胸。params.ts の POSE の説明）：b を立った姿勢（基準）にして、2つの立ち方の見方のまま見る。
+  // 前（猫背）の向きは、走る前傾を覚えるときに、b から走っている重力の向きへ決める（fwdMin より小さければ、向きによらない b からの角度）
+  setSmall(a: Vec3, b: Vec3, camB: number | null = null) {
+    const deg = angleDeg(a, b)
+    this.standDir(b)
+    const margin = this.p.poseLine > 0 ? this.p.poseLine : Math.max(this.p.poseMargin > 0 ? this.p.poseMargin : this.p.margin, this.p.poseFrac * deg)
+    this.pose = { deg, margin, camB: camB !== null && Number.isFinite(camB) ? camB : null, small: true }
+  }
+
+  // 前の向きをどこから決めたか：pose（b→a）・run（走り出しの前傾。差が小さい・立ち方が1つ）・none（決まらず、向きによらない角度）。まだなら null
+  dirBy(): 'pose' | 'run' | 'none' | null {
+    if (this.pose && !this.pose.small) return 'pose'
+    if (this.runLean === null) return null
+    return this.fwd ? 'run' : 'none'
+  }
+
   // b→a の向きと直角な（横の）傾き（度）。2つの立ち方で見ていなければ null
   side(u: Vec3): number | null {
     if (!this.pose || !this.base || !this.fwd) return null
@@ -185,12 +202,14 @@ export class LeanDetector {
   //   b→a に沿った傾き（差し引いた走る前傾を除く）が min(poseIdxMin × 差, 線の幅)〜poseSlipIdx × 差 で、横の傾きが max(poseSlipSide, poseSlipSideFrac × 差) 以下。
   //   下の端を線の幅までにするのは、線が決まった度数（poseLine）のとき、差が大きい人の線のすぐ上の猫背を、ずれの見張りに数えないため（params.ts の POSE の説明）。
   //   1歩ごとの揺れで割合が一瞬はみ出すので、直近 slipRef 秒の傾きと横の傾きの真ん中の値で見る
+  //   差が小さかったとき（small）は、差の代わりに max(差, POSE.smallScale) を物差しにする（差がほとんど 0 だと、線を越えた前傾をすぐずれとみなすため）
   private plausible(): boolean {
     const pose = this.pose!
     const p = this.p
+    const deg = pose.small ? Math.max(pose.deg, POSE.smallScale) : pose.deg
     const along = median(this.tilts.map((x) => x.v)) - (this.offset?.deg ?? 0)
     const side = Math.abs(median(this.sides.map((x) => x.v)))
-    return along >= Math.min(p.poseIdxMin * pose.deg, pose.margin) && along <= p.poseSlipIdx * pose.deg && side <= Math.max(p.poseSlipSide, p.poseSlipSideFrac * pose.deg)
+    return along >= Math.min(p.poseIdxMin * deg, pose.margin) && along <= p.poseSlipIdx * deg && side <= Math.max(p.poseSlipSide, p.poseSlipSideFrac * deg)
   }
 
   // 線の幅（度）：2つの立ち方で見ているときは poseLine（0 なら max(poseMargin（0 なら margin）, poseFrac × 角度)）、そうでなければ margin
@@ -198,9 +217,9 @@ export class LeanDetector {
     return this.pose?.margin ?? this.p.margin
   }
 
-  // 猫背の割合（b ＝ 0、a ＝ 1）。2つの立ち方で見ていないか、傾きがなければ null
+  // 猫背の割合（b ＝ 0、a ＝ 1）。2つの立ち方で見ていないか、差が小さかったか、傾きがなければ null
   index(tilt: number | null = this.tilt()): number | null {
-    return this.pose && tilt !== null ? tilt / this.pose.deg : null
+    return this.pose && !this.pose.small && tilt !== null ? tilt / this.pose.deg : null
   }
 
   // 立った姿勢の向き b を覚える（stand と setPoses から）。前の向きと走る前傾も覚え直す
@@ -260,8 +279,8 @@ export class LeanDetector {
       for (let i = 0; i < 3; i++) m[i] += u[i] - c * b[i]
     }
     const n = this.learnUs.length
-    // 2つの立ち方で見ているときは、前の向きは決まっている（b から a へ）
-    if (!this.pose) {
+    // 2つの立ち方で見ているときは、前の向きは決まっている（b から a へ）。差が小さかったときは、立ち方が1つのときと同じく走り出しの前傾から
+    if (!this.pose || this.pose.small) {
       const size = Math.asin(Math.min(1, Math.hypot(m[0], m[1], m[2]) / n)) * DEG
       this.fwd = size >= this.p.fwdMin ? norm(m) : null
     }
@@ -502,7 +521,11 @@ export class LeanDetector {
       } else if (p.follow > 0 && !learning) {
         let next = ref + (judged - ref) * Math.min(1, dt / p.follow)
         if (this.band) next = Math.min(this.band.hi, Math.max(this.band.lo, next))
-        if (!(this.pose && next > ref && this.plausible())) this.ref = next
+        // 今までの見方（立ち方が1つ・頭の差が小さい）：前に傾き続けている間（HEAD_YIELD の rising。直近 riseSec 秒に線を越えた tick がある、
+        // または平均が 基準 + riseFrac × 線の幅 以上）は、前へ寄せない（2026-11-16 本人の決め「前に傾き続ける間は止める」。11-14 18:53 は、
+        // 体ごと前に傾けた 19:01 の間に、線の下にいた tick で基準が 70秒で +2.7° 寄った）。後ろへはいつも寄せる
+        const leaning = !this.pose && next > ref && this.rising(t, HEAD_YIELD.riseSec, HEAD_YIELD.riseFrac)
+        if (!(this.pose && next > ref && this.plausible()) && !leaning) this.ref = next
       }
       if (camOk) {
         this.camUnder.push({ t, v: cam! })

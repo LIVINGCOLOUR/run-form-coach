@@ -267,7 +267,7 @@ export class SensorRunner {
             this.o.onEvent(t, 'sensor:autoStand')
             const chest = r.parts.find((p) => p.mode !== 'none')
             // 走り出したあとの止まりで測ったときも言う（「走り出すと始まります」は、止まっている今もそのとおり）
-            this.speak(t, chest?.mode === 'fallback' ? PHRASES.poseSmall : PHRASES.poseDone)
+            this.speak(t, chest?.mode === 'small' ? PHRASES.poseChestStill : chest?.mode === 'fallback' ? PHRASES.poseSmall : PHRASES.poseDone)
           }
         }
       }

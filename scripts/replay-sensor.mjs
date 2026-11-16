@@ -94,7 +94,8 @@ function replay(p, samples, running, standT, t0, t1, hz, bentBy, camAt, pose = n
     now = t
     while (i < samples.length && samples[i].tt <= t) d.sample(samples[i].tt, samples[i++].a)
     if (!stood && t >= standT) {
-      if (pose && pose !== 'fallback') stood = d.setPoses(pose.a, pose.b, pose.camB ?? null) || d.stand(t, BASELINE.collect)
+      // 胸（poseSpeed）の差が小さいときは、アプリと同じく b を基準に見る（lean.ts の setSmall）
+      if (pose && pose !== 'fallback') stood = d.setPoses(pose.a, pose.b, pose.camB ?? null) || (p.poseSpeed ? (d.setSmall(pose.a, pose.b, pose.camB ?? null), true) : d.stand(t, BASELINE.collect))
       else if (pose === 'fallback') {
         const b = d.dirOver(t, BASELINE.collect)
         if (b && !d.setPoses(b, b)) d.standDir(b)
@@ -194,7 +195,9 @@ function cameraLog(path) {
     }
     const hz = nodeHz(log.sensors, ni)
     const pl = K.key === 'chest' ? log.sensors.pose : log.sensors.head?.pose
-    const pose = poseOpt === 'fallback' ? 'fallback' : poseOpt !== 'off' && pl?.mode === 'pose' && pl.a && pl.b ? { a: pl.a, b: pl.b, camB: K.key === 'chest' ? (pl.cam?.b?.trunk ?? null) : null } : null
+    // 胸は、差が小さかった記録（small、2026-11-16 より前は fallback）も a・b があれば、アプリと同じく b を基準に見る
+    const usePose = pl?.mode === 'pose' || (K.key === 'chest' && (pl?.mode === 'small' || pl?.mode === 'fallback'))
+    const pose = poseOpt === 'fallback' ? 'fallback' : poseOpt !== 'off' && usePose && pl.a && pl.b ? { a: pl.a, b: pl.b, camB: K.key === 'chest' ? (pl.cam?.b?.trunk ?? null) : null } : null
     if (pl) say(`2つの立ち方：${pl.mode}・差 ${f1(pl.deg)}°・測った回数 ${pl.tries}${pose && pose !== 'fallback' ? '（この2つで見る）' : ''}`)
     const r = replay(K.p, n.samples.map((s) => ({ tt: s.tt, a: s.a })), running, standT, t0, t1, hz, K.key === 'head' ? chestBent : null, K.key === 'chest' ? camAt : null, pose, K.p.poseSpeed ? expectAt : null)
     if (K.key === 'chest') chestBent = r.ticks.map((x) => x.bentNow)

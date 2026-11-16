@@ -190,16 +190,22 @@ describe('胸のセンサーで猫背を見る', () => {
     expect(out.some((o) => o.cue)).toBe(false)
   })
   // ベルトの上でセンサーが少しずつずれる（2026-11-02 の走り：3分半で約15°）。基準をゆっくり寄せて、鳴らさない
-  it('ゆっくりのずれ（3分半で +21°）では知らせない。寄せないと鳴り続ける', () => {
+  // 前に傾き続けている間は、基準を前へ寄せない（2026-11-16 本人の決め「前に傾き続ける間は止める」。HEAD_YIELD の rising で見る）。
+  // その代わり、ゆっくりのずれ（ベルトがずれていく）も吸わずに知らせ、線を越えたまま slipSec 秒たったら、ずれとみなして置き直す。
+  // 前（2026-11-02 の形）は、3分半で +21° のずれを基準が追って一度も知らせなかった
+  it('立ち方が1つ：ゆっくりのずれ（3分半で +21°）も、前に傾き続ける間は基準を寄せずに知らせ、線を越えたまま slipSec 秒でずれとみなす', () => {
     const drift = (t: number) => (t < 50 ? 14 : 14 + (t - 50) * 0.1)
     const d = setup()
     play(d, 5, 50, () => 14, () => true)
     const out = play(d, 50, 260, drift, () => true)
-    expect(out.some((o) => o.cue)).toBe(false)
-    expect(out[out.length - 1].ref!).toBeGreaterThan(28) // 基準がずれについていった
-    const fixed = setup({ ...HUNCH, follow: 0 })
-    play(fixed, 5, 50, () => 14, () => true)
-    expect(play(fixed, 50, 260, drift, () => true).filter((o) => o.cue).length).toBeGreaterThan(10)
+    expect(out.some((o) => o.cue)).toBe(true)
+    expect(out.some((o) => o.slip)).toBe(true)
+    // 後ろへは、いつも寄せる
+    const back = setup()
+    play(back, 5, 50, () => 20, () => true)
+    const bout = play(back, 50, 200, (t) => 20 - Math.min(10, (t - 50) * 0.1), () => true)
+    expect(bout.at(-1)!.ref!).toBeLessThan(14)
+    expect(bout.some((o) => o.cue)).toBe(false)
   })
 
   it('ずれたあとでも、数秒で 12° 前に傾けば知らせる', () => {
@@ -208,13 +214,14 @@ describe('胸のセンサーで猫背を見る', () => {
     play(d, 50, 260, (t) => 14 + (t - 50) * 0.1, () => true) // 35° までずれる
     const out = play(d, 260, 290, (t) => 35 + Math.min(12, (t - 260) * 4), () => true) // 3秒で +12°
     const cues = out.filter((o) => o.cue)
-    expect(cues.length).toBeGreaterThanOrEqual(5) // 超えている間は基準を動かさないので、知らせ続ける
+    // ずれの間に線を越えていた時間がたまっているので、数回知らせたところで、ずれとみなして置き直すことがある（前に傾き続ける間は寄せないため）
+    expect(cues.length).toBeGreaterThanOrEqual(1)
     expect(cues[0].t).toBeLessThan(266)
   })
 
-  // 寄せることの代わり：ゆっくり進む猫背（疲れて少しずつ丸まる）は吸ってしまう。follow 60秒・margin 8° で、+12° なら約50秒より速く進めば知らせる
-  it('+12° の猫背：30秒で進めば知らせ、3分かけて進めば知らせない', () => {
-    for (const [sec, want] of [[30, true], [180, false]] as const) {
+  // ゆっくり進む猫背（疲れて少しずつ丸まる）：前は基準に吸っていた（3分かけて +12° は知らせなかった）。前に傾き続ける間は寄せないので、どちらも知らせる
+  it('+12° の猫背：30秒で進んでも、3分かけて進んでも知らせる（前に傾き続ける間は基準を寄せない）', () => {
+    for (const [sec, want] of [[30, true], [180, true]] as const) {
       const d = setup()
       play(d, 5, 50, () => 14, () => true)
       const out = play(d, 50, 50 + sec + 20, (t) => 14 + Math.min(12, ((t - 50) * 12) / sec), () => true)
@@ -263,7 +270,8 @@ describe('胸のセンサーで猫背を見る', () => {
   it('ゆっくりずれて基準が slipDrift より前へ動いたら、ずれとみなす（知らせはしない）', () => {
     const d = setup()
     play(d, 5, 50, () => 14, () => true)
-    const out = play(d, 50, 260, (t) => 14 + (t - 50) * 0.1, () => true) // 3分半で +21°
+    // 前に傾き続けているとみない遅さ（基準との差が riseFrac × 線の幅 より小さいまま）：1秒に 0.04°、5分で +12°
+    const out = play(d, 50, 350, (t) => 14 + (t - 50) * 0.04, () => true)
     expect(out.some((o) => o.cue)).toBe(false)
     const slips = out.filter((o) => o.slip)
     expect(slips.length).toBeGreaterThanOrEqual(1)
@@ -774,6 +782,39 @@ describe('2つの立ち方で猫背を見る', () => {
     // 猫背の割合：b ＝ 0、a ＝ 1
     run(d, 6, 10, () => A)
     expect(d.index()!).toBeGreaterThan(0.95)
+  })
+
+  it('差が小さかった胸（setSmall）：b を基準に、前の向きは走り出しの前傾から決める。前に傾けたままでも、ずれとみなさず知らせ続ける', () => {
+    const d = new LeanDetector(HUNCH)
+    d.expect = () => ({ deg: BODY, trunk: 6, kmh: 9, by: 'belt' })
+    play(d, 0, 3, () => 0.6, () => false)
+    const da = d.dirOver(3, 3)!
+    play(d, 3, 6, () => 0, () => false)
+    const db = d.dirOver(6, 3)!
+    expect(d.setPoses(da, db)).toBe(false)
+    d.setSmall(da, db)
+    expect(d.pose).toMatchObject({ small: true, margin: HUNCH.poseLine })
+    expect(d.index()).toBeNull() // 差が小さいので、猫背の割合は出さない
+    // 走り出しは前へ 10.4°（11-14 18:53 の走り出し）。正しい前傾 8° はそれより小さいので、そのまま
+    const out = run(d, 6, 6 + HUNCH.skip + HUNCH.learn + 30, () => 10.4)
+    expect(d.dirBy()).toBe('run')
+    expect(d.fwd![0]).toBeCloseTo(1, 2)
+    expect(out.find((o) => o.learned !== undefined)!.learned!).toBeCloseTo(10.4, 0)
+    expect(d.offset).toMatchObject({ deg: BODY, by: 'speed' })
+    expect(out.some((o) => o.cue)).toBe(false)
+    // 体ごと前に、正しい前傾 + 7°（15°）で2分：知らせ続け、ずれとみなさない（物差しは POSE.smallScale）
+    const t0 = 6 + HUNCH.skip + HUNCH.learn + 30
+    const lean = run(d, t0, t0 + 120, () => BODY + HUNCH.poseLine + 2)
+    expect(lean.filter((o) => o.cue).length).toBeGreaterThan(8)
+    expect(lean.some((o) => o.slip)).toBe(false)
+    // 走り出しの前傾が fwdMin より小さい：前の向きは決めず、b からの向きによらない角度
+    const flat = new LeanDetector(HUNCH)
+    flat.expect = () => ({ deg: BODY, trunk: 6, kmh: 9, by: 'belt' })
+    play(flat, 0, 6, () => 0, () => false)
+    flat.setSmall(da, db)
+    run(flat, 6, 6 + HUNCH.skip + HUNCH.learn + 1, () => 3, null, () => 2)
+    expect(flat.dirBy()).toBe('none')
+    expect(flat.fwd).toBeNull()
   })
 
   it('差が poseMin より小さければ覚えない（呼ぶ側が測り直す）', () => {

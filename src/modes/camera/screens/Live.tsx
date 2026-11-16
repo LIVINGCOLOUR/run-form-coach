@@ -684,8 +684,9 @@ export function Live({ video: file, sessions = [], onDone }: { video?: File; ses
                 // 決まった線（standing.ts）は、b でも越えていたら知らせるだけ（測り直さない。越えていなくても、まっすぐとは言わない）
                 const issue = standingIssue(st)
                 standing = { ...st, issue, hip: median(baseHips), habit: poseA }
-                const fallback = r?.parts.find((x) => x.mode !== 'none')?.mode === 'fallback'
-                say(fallback ? PHRASES.poseSmall : issue === 'head' ? PHRASES.baseHeadLeft : issue === 'back' ? PHRASES.baseBackLeft : PHRASES.poseDone, t)
+                // 胸の差が小さかった（small）：b を基準に見るが、ベルトを確かめてもらう。頭だけのときの差が小さい（fallback）は今までどおり
+                const mode = r?.parts.find((x) => x.mode !== 'none')?.mode
+                say(mode === 'small' ? PHRASES.poseChestStill : mode === 'fallback' ? PHRASES.poseSmall : issue === 'head' ? PHRASES.baseHeadLeft : issue === 'back' ? PHRASES.baseBackLeft : PHRASES.poseDone, t)
                 say(focus.say, t) // 今日意識すること（ホームと同じ1つ。前の言葉のあとに続けて話す）
                 lastNextSay = t
                 // ベルトの速さ（走る前に入れたもの）を記録に残す。線とよい例の範囲は、この速さにする（Coach を作るときに渡す）

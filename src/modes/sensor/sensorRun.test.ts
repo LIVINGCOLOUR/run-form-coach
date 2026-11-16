@@ -486,7 +486,7 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     r.finish()
   })
 
-  it('2つの立ち方の差が小さい：案内して測り直し（POSE.retries 回）、それでも小さければ今までの見方にして記録に残す', () => {
+  it('2つの立ち方の差が小さい：案内して測り直し（POSE.retries 回）、それでも小さければ b を基準にしたまま見る（前の向きは走り出しの前傾から）。測った回ごとに記録に残す', () => {
     connect(['胸'])
     const events: string[] = []
     const said: string[] = []
@@ -502,15 +502,46 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     t = sendUntil('胸', 'stand', t, r, () => r.stage === 'b')
     t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null)
     expect(r.stoodAt).not.toBe(null)
-    expect(r.poseResult!.parts.find((p) => p.key === 'chest')!.mode).toBe('fallback')
-    expect(said).toContain(PHRASES.poseSmall)
+    expect(r.poseResult!.parts.find((p) => p.key === 'chest')!.mode).toBe('small')
+    // 今までの見方にはもどさない。ベルトを確かめてもらう
+    expect(said).toContain(PHRASES.poseChestStill)
+    expect(said).not.toContain(PHRASES.poseSmall)
     expect(events.filter((e) => e.startsWith('sensor:poseDiff'))).toHaveLength(POSE.retries + 1)
-    expect(events.some((e) => e.startsWith('sensor:poseFallback 胸'))).toBe(true)
-    expect(r.session.current()!.pose).toMatchObject({ mode: 'fallback', tries: POSE.retries + 1 })
-    expect(r.session.current()!.pose!.degs).toHaveLength(POSE.retries + 1)
-    // 今までの見方：走る前傾 + margin で見る（走り出しの猫背を基準にする）
+    expect(events.some((e) => e.startsWith('sensor:poseSmall 胸'))).toBe(true)
+    expect(events.some((e) => e.startsWith('sensor:poseFallback 胸'))).toBe(false)
+    const log = r.session.current()!
+    expect(log.pose).toMatchObject({ mode: 'small', tries: POSE.retries + 1, line: 5 })
+    expect(log.pose!.degs).toHaveLength(POSE.retries + 1)
+    // 測った回ごとの a・b・角度・b の案内の間にいちばん傾いた角度（前は最後の回の a・b だけ）
+    expect(log.poseAttempts).toHaveLength(POSE.retries + 1)
+    for (const [k, x] of log.poseAttempts!.entries()) {
+      expect(x).toMatchObject({ try: k + 1 })
+      expect(x.a).toHaveLength(3)
+      expect(x.b).toHaveLength(3)
+      expect(x.deg!).toBeLessThan(1)
+      expect(x.peak!).toBeLessThan(2)
+    }
+    // 走る：前の向きは走り出しの前傾（前へ 12°）から決め、基準は その速さで正しい前傾（走り出しの前傾が上限）。線は + poseLine
     send('胸', 'run', t, 50, r)
-    expect(r.session.current()!.runLean!.offset).toBeUndefined()
+    const rl = r.session.current()!.runLean!
+    expect(rl).toMatchObject({ dir: 'run', by: 'speed' })
+    expect(rl.deg).toBeGreaterThan(11)
+    expect(rl.offset!).toBeCloseTo(rl.deg, 1) // 正しい前傾（講師の速さ 21.7°）を走り出しの前傾まで下げた
+    expect(events).toContain('sensor:runDir 胸 run')
+    r.finish()
+  })
+
+  it('b の案内の間に胸がどれだけ傾いたか（peak）を、測った回ごとに残す', () => {
+    connect(['胸'])
+    const r = new SensorRunner({ onEvent: () => {}, say: () => {} })
+    let t = performance.now() / 1000
+    t = sendUntil('胸', 'slouch', t, r, () => r.stage === 'b') // a：前へ 15°
+    t = send('胸', 'stand', t, 2, r) // 胸を開く途中
+    t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null) // b：0°
+    const at = r.session.current()!.poseAttempts!
+    expect(at).toHaveLength(1)
+    expect(at[0].deg!).toBeCloseTo(SLOUCH, 0)
+    expect(at[0].peak!).toBeGreaterThan(SLOUCH - 1.5)
     r.finish()
   })
 
