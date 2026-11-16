@@ -88,6 +88,8 @@ export const PHRASES = {
   poseRetry: '2つの姿勢の違いが小さく、うまく測れませんでした。もう一度お願いします。',
   poseDone: '胸を開いた姿勢を登録しました。走り出すと始まります。',
   poseSmall: '姿勢の違いが小さいので、今日はこの姿勢で始めます。走り出すと始まります。',
+  // センサーラン：2つの立ち方を測る前に走り出した。止まったときに、案内して測る（src/modes/sensor/runner.ts）
+  poseLater: '立ち方をまだ測っていません。止まったときに測ります。',
   // 胸を開いた立ち方でも、頭か上体がカメラの決まった線を越えていた（camera/standing.ts）。知らせるだけで、測り直さない
   baseHeadLeft: '頭が少し前に出たままですが、今日はこの姿勢で始めます。走り出すと始まります。',
   baseBackLeft: '背中が少し丸まったままですが、今日はこの姿勢で始めます。走り出すと始まります。',
@@ -112,6 +114,13 @@ export const PHRASES = {
   sensorMissingAnkleR: '右足首のセンサーがつながっていません。',
   sensorLostAnkleR: '右足首のセンサーが切れました。',
   sensorBackAnkleR: '右足首のセンサーが戻りました。',
+  // センサーラン：始めるときに、電池が少ない（params.ts の BATTERY_LOW 以下）センサー（notice.ts）
+  sensorBatteryHead: '頭のセンサーの電池が少なくなっています。',
+  sensorBatteryChest: '胸のセンサーの電池が少なくなっています。',
+  sensorBatteryWristL: '左手首のセンサーの電池が少なくなっています。',
+  sensorBatteryWristR: '右手首のセンサーの電池が少なくなっています。',
+  sensorBatteryAnkleL: '左足首のセンサーの電池が少なくなっています。',
+  sensorBatteryAnkleR: '右足首のセンサーの電池が少なくなっています。',
   // 今日意識すること（走り出す前に言う1つ。ホームの「今日の意識」と同じもの）。項目ごとの言葉は下の FOCUS
   focusUpright: '今日意識するのは、ひとつだけ。胸のライトで前を照らすように、背を高くして走りましょう。目線は正面に。',
   focusHip: '今日意識するのは、腰の高さです。地面を真下に押して、腰を高く運びましょう。',

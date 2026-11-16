@@ -349,12 +349,15 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
       expect(events).toContain(PHRASES.start)
       expect(r.runSec).toBeGreaterThan(10 - RUN_GATE.startSec - RUN_GATE.win - 1)
       expect(r.runSec).toBeLessThanOrEqual(10)
-      // 止まって（信号・給水）、また走る：「始めます」は言い直さない
+      // 2つの立ち方を測る前に走り出した（ポーチに入れる間に立っていただけ）：「まだ測っていません」を1回
+      expect(said.filter((x) => x === PHRASES.poseLater)).toHaveLength(1)
+      // 止まって（信号・給水）、また走る：「始めます」は言い直さない。止まった間は、立ち方を a の案内から測る（下の「立ち方を測る前に走り出したら」）
       t = sendAll('stand', t, 10, r)
-      expect(r.phase).toBe('stop')
+      expect(r.phase).toBe('stand')
       t = sendAll('run', t, 10, r)
       expect(r.phase).toBe('run')
       expect(said.filter((x) => x === PHRASES.start)).toHaveLength(1)
+      expect(said.filter((x) => x === PHRASES.poseLater)).toHaveLength(1)
       expect(events.filter((e) => e.startsWith('sensor:run on'))).toHaveLength(2)
       r.finish()
       for (const n of hub.nodes) if (n.status === 'connected') n.status = 'idle'
@@ -404,6 +407,83 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     expect(r.stoodAt).toBe(null)
     send('胸', 'stand', t, 2, r)
     expect(r.stoodAt).not.toBe(null)
+  })
+
+  it('立ち方を測る前に走り出したら「まだ測っていません」を1回言い、止まったときに a の案内から測る（黙って a を測らない）。測れたら、そこから胸を見る', () => {
+    connect(['胸'])
+    const events: [number, string][] = []
+    const said: [number, string][] = []
+    let now = 0
+    const r = new SensorRunner({ onEvent: (t, text) => events.push([t, text]), say: (x) => said.push([now, x]) })
+    const go = (kind: Kind, from: number, sec: number) => {
+      let t = from
+      for (let k = 0; k < Math.round(sec * 10); k++) {
+        now = t
+        t = send('胸', kind, t, 0.1, r)
+      }
+      return t
+    }
+    let t = performance.now() / 1000
+    t = go('walk', t, SENSOR_RUN_SAY.pouch - 1) // ポーチに入れて、すぐ走り出す
+    t = go('run', t, 15)
+    expect(r.phase).toBe('run')
+    expect(r.stoodAt).toBe(null)
+    const later = said.filter(([, x]) => x === PHRASES.poseLater)
+    expect(later).toHaveLength(1)
+    // 測っていないので、背中を丸めても知らせない
+    t = go('hunch', t, 10)
+    expect(events.some(([, e]) => e.startsWith('sensor:hunch'))).toBe(false)
+    // 信号で止まる（いつもの楽な立ち方で、じっとしている）：止まったと分かってから a の案内を言い、言い終えてから測る
+    const habitBefore = said.filter(([, x]) => x === PHRASES.poseHabit).length
+    const stop = t
+    while (r.stage === 'a' && t - stop < 20) t = go('slouch', t, 0.1)
+    const habit = said.filter(([, x]) => x === PHRASES.poseHabit)
+    expect(habit.length).toBe(habitBefore + 1)
+    const poseA = events.find(([, e]) => e.startsWith('sensor:pose a'))
+    expect(poseA).toBeDefined()
+    expect(poseA![0]).toBeGreaterThan(habit.at(-1)![0] + STILL.sec - 0.2)
+    expect(r.stage).toBe('b')
+    expect(r.phase).toBe('stand')
+    expect(said.at(-1)![1]).toBe(PHRASES.poseOpen)
+    // b：胸を開いて止まる → 登録
+    t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null)
+    expect(r.poseResult!.parts.find((p) => p.key === 'chest')).toMatchObject({ mode: 'pose' })
+    expect(said.at(-1)![1]).toBe(PHRASES.poseDone)
+    // また走る：「まだ測っていません」は言い直さず、走る前傾を覚えたあと猫背を知らせる
+    t = go('run', t, 50)
+    t = go('hunch', t, 10)
+    expect(said.filter(([, x]) => x === PHRASES.poseLater)).toHaveLength(1)
+    expect(events.some(([, e]) => e.startsWith('sensor:runLean'))).toBe(true)
+    return new Promise<void>((done) =>
+      setTimeout(() => {
+        expect(events.some(([, e]) => e.startsWith('sensor:hunch'))).toBe(true)
+        r.finish()
+        done()
+      }, 0),
+    )
+  })
+
+  it('センサーラン：始めるとき、電池が少ない（BATTERY_LOW 以下）センサーを、つながっていない場所といっしょに、立ち方の案内の前に言う', () => {
+    connect(['胸', '頭'])
+    const h = hub.nodes[node('頭')] as unknown as { battery: number | null }
+    const c = hub.nodes[node('胸')] as unknown as { battery: number | null }
+    h.battery = 3.6 // 約 8%
+    c.battery = 4.1
+    hub.refresh()
+    const said: string[] = []
+    const r = new SensorRunner({ onEvent: () => {}, say: (x) => said.push(x) })
+    let t = performance.now() / 1000
+    t = send('胸', 'walk', t, SENSOR_RUN_SAY.pouch + 0.2, r)
+    send('胸', 'slouch', t, 1.5, r)
+    const k = said.indexOf(PHRASES.poseHabit)
+    expect(k).toBeGreaterThan(0)
+    expect(said.slice(0, k)).toContain(PHRASES.sensorBatteryHead)
+    expect(said).not.toContain(PHRASES.sensorBatteryChest)
+    expect(said.slice(0, k)).toContain(noticeText('左足首', 'missing'))
+    h.battery = null
+    c.battery = null
+    hub.refresh()
+    r.finish()
   })
 
   it('2つの立ち方の差が小さい：案内して測り直し（POSE.retries 回）、それでも小さければ今までの見方にして記録に残す', () => {

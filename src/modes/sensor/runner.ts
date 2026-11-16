@@ -8,7 +8,7 @@ import { HUNCH, POSE, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
 import { SensorSession, type PoseName, type PoseResult } from './session'
 import type { CamValues } from './lean'
 import { WaistPhone } from './waist'
-import { noticeText, SensorWatch } from './notice'
+import { lowBattery, noticeText, SensorWatch } from './notice'
 
 // 1回の走りの間、センサーを動かす役（トレッドミルのカメラ版・センサーラン・腰スマホで共通）。
 // SensorSession（崩れの見分け・知らせ・記録）を HUNCH.tick 秒ごとに動かし、「立った姿勢」と「走っている」を渡す。
@@ -74,6 +74,10 @@ export class SensorRunner {
   private readonly t0: number // 始めた t（センサーランは、ここから SENSOR_RUN_SAY.pouch 秒はポーチに入れる間）
   private lastSay: number
   private started = false // 一度でも走り出した
+  // センサーラン：2つの立ち方を測り終える前に走り出したら、止まったときに a の案内から測り直す。
+  // laterSaid：「立ち方をまだ測っていません…」を言った。armed：いま測ってよい（その止まりで a の案内を言った。走り出す前は、はじめから測ってよい）
+  private laterSaid = false
+  private armed = true
   private quietSince: number | null = null // 案内の声が終わった t
   private wasRunning = false
   private closed = false
@@ -99,8 +103,11 @@ export class SensorRunner {
     this.lastSay = -Infinity
     this.phase = this.gate && this.needsStand() ? 'stand' : 'ready'
     this.watch = this.gate ? new SensorWatch(sensors.snapshot(), t0) : null
-    // センサーラン：つながっていない場所を、立ち方の案内の前に言う
-    if (this.watch && o.say) this.notices.push(...this.watch.missingAtStart.map((place) => noticeText(place, 'missing')))
+    // センサーラン：つながっていない場所と、電池が少ない場所を、立ち方の案内の前に言う
+    if (this.watch && o.say) {
+      this.notices.push(...this.watch.missingAtStart.map((place) => noticeText(place, 'missing')))
+      this.notices.push(...lowBattery(sensors.snapshot()).map((place) => noticeText(place, 'battery')))
+    }
     if (this.gate) {
       const gate = this.gate
       const watch = this.watch!
@@ -202,6 +209,13 @@ export class SensorRunner {
         // そのまま使い続けるので、走り直しで新しく始まることはない（止まった・走り直したは events の sensor:run に残る）
         if (!this.started) this.speak(t, PHRASES.start)
         this.started = true
+        // センサーラン：2つの立ち方を測り終える前に走り出した。途中まで測っていても、止まったときに a の案内から測り直す（1回だけ言う）
+        if (this.o.say && this.stoodAt === null && this.needsStand()) {
+          if (!this.laterSaid) this.speak(t, PHRASES.poseLater)
+          this.laterSaid = true
+          this.armed = false
+          this.setStage('a')
+        }
       }
     }
     // 立った姿勢：まだ覚えていなくて、止まっている間に胸と頭が3秒じっとしたら測る
@@ -216,6 +230,12 @@ export class SensorRunner {
       if (this.lastSay > -Infinity) this.lastSay = t
     }
     else this.quietSince ??= t
+    // 走り出したあとに止まった（立ち方をまだ測っていない）：走り出す前と同じく、a の案内から始める。案内を言い終えてから測る
+    if (two && this.started && !this.armed && this.stoodAt === null && !running && !pouching && !this.notices.length && this.needsStand()) {
+      this.armed = true
+      this.quietSince = null
+      this.speak(t, PHRASES.poseHabit)
+    }
     const quiet = this.quietSince !== null && t - this.quietSince >= STILL.sec
     // センサーの途切れ：切れた場所を見つけ、センサーランなら1つずつ言う（ポーチに入れる間は待つ。ほかの声を話している間も待つ）
     const lost = this.watch!.tick(t)
@@ -225,7 +245,7 @@ export class SensorRunner {
       this.o.say!(text)
       this.o.onEvent(t, text)
     }
-    if (this.stoodAt === null && !running && quiet && gate.still(t)) {
+    if (this.stoodAt === null && !running && quiet && this.armed && gate.still(t)) {
       if (!two) {
         if (this.session.stand(t, STILL.sec)) {
           this.stoodAt = t
@@ -246,19 +266,23 @@ export class SensorRunner {
           } else {
             this.o.onEvent(t, 'sensor:autoStand')
             const chest = r.parts.find((p) => p.mode !== 'none')
-            if (!this.started) this.speak(t, chest?.mode === 'fallback' ? PHRASES.poseSmall : PHRASES.poseDone)
+            // 走り出したあとの止まりで測ったときも言う（「走り出すと始まります」は、止まっている今もそのとおり）
+            this.speak(t, chest?.mode === 'fallback' ? PHRASES.poseSmall : PHRASES.poseDone)
           }
         }
       }
     }
     // 案内（声）：立つ前は、いま測る立ち方（言い直しも）、覚えてから走り出すまでは「走り出すと始まります」。走り出したあとは言わない
     // つながっていない・切れたの知らせが残っている間は待つ（知らせを先に言い終える）
-    if (!running && !this.started && !pouching && !this.notices.length) {
+    // 走り出したあとも、立ち方をまだ測っていなければ、止まっている間は測る案内を言い直す（センサーラン。a の案内を言ったあと）
+    if (!running && !pouching && !this.notices.length) {
       if (this.stoodAt === null && this.needsStand()) {
-        if (t - this.lastSay >= SENSOR_RUN_SAY.standRepeat) this.speak(t, !two ? PHRASES.baseStand : this.stage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen)
-      } else if (t - this.lastSay >= SENSOR_RUN_SAY.waitRepeat) this.speak(t, PHRASES.waitRun)
+        if ((!this.started || (two && this.armed)) && t - this.lastSay >= SENSOR_RUN_SAY.standRepeat) this.speak(t, !two ? PHRASES.baseStand : this.stage === 'a' ? PHRASES.poseHabit : PHRASES.poseOpen)
+      } else if (!this.started && t - this.lastSay >= SENSOR_RUN_SAY.waitRepeat) this.speak(t, PHRASES.waitRun)
     }
-    const phase: SensorRunPhase = running ? 'run' : this.started ? 'stop' : this.stoodAt === null && this.needsStand() ? 'stand' : 'ready'
+    // 走り出したあとの止まりで立ち方を測っている間（センサーラン）も 'stand'（画面に、いま測る立ち方を出す）
+    const measuring = this.stoodAt === null && this.needsStand() && (!this.started || (two && this.armed))
+    const phase: SensorRunPhase = running ? 'run' : measuring ? 'stand' : this.started ? 'stop' : 'ready'
     if (phase !== this.phase) {
       this.phase = phase
       this.o.onChange?.()

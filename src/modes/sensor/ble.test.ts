@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { describeError, placeFor, SensorHub, sensors, whose } from './ble'
-import { SLOTS } from './params'
+import { SENSOR_STALL, SLOTS } from './params'
 
 // どのセンサーかの見分け（名前でなく、つないでから読む型番 0x2A24 で。iPhone が「AdaDFU」の名前を覚えたままになるため）
 
@@ -426,6 +426,68 @@ describe('走っている途中で切れたとき（つなぎ直し）', () => {
     send(3, 930) // 2件抜けた
     expect(hub.nodes[head]).toMatchObject({ lost: 2, lostTotal: 5, reboots: 1 })
     expect(hub.diag.some((d) => d.text.includes('センサーがやり直した（時計 60秒→1秒）'))).toBe(true)
+  })
+
+  it('つながっているのに値が SENSOR_STALL.reconnect 秒来なければ、切ってつなぎ直す。続けて来なければ間をのばす。アプリが止まったあと・全部いっしょに止まったときは切らない', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    const chest = SLOTS.findIndex((s) => s.place === '胸')
+    const fh = flaky(SLOTS[head].name!)
+    const fc = flaky(SLOTS[chest].name!)
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
+    let pick = fh.device
+    vi.stubGlobal('navigator', { bluetooth: { requestDevice: async () => pick } })
+    const hub = new SensorHub()
+    // 時計はテストで進める（ハブの1秒ごとの見張りも、この時計で見る）
+    const t0 = 1000
+    let clock = t0
+    hub.clock = () => clock
+    await hub.connect(head)
+    pick = fc.device
+    await hub.connect(chest)
+    const n = (i: number) => hub.nodes[i] as unknown as { lastPacket: number; kicks: number; status: string }
+    // 1秒ごとに見る。fresh の場所には値が来ている
+    const run = (from: number, to: number, fresh: number[]) => {
+      for (let t = from; t <= to; t++) {
+        clock = t0 + t
+        for (const i of fresh) n(i).lastPacket = t0 + t
+        hub.checkStalls(t0 + t)
+      }
+    }
+    run(0, 0, [head, chest])
+    run(1, SENSOR_STALL.reconnect, [chest])
+    expect(fh.server.disconnect).not.toHaveBeenCalled() // まだ5秒たっていない
+    run(SENSOR_STALL.reconnect + 1, SENSOR_STALL.reconnect + 1, [chest])
+    expect(fh.server.disconnect).toHaveBeenCalledTimes(1)
+    expect(n(head).status).toBe('lost')
+    expect(fc.server.disconnect).not.toHaveBeenCalled()
+    expect(hub.diag.some((d) => d.text.includes('頭（RFC-IMU-1）: 6秒 値が来ないので、切ってつなぎ直す（1回目）'))).toBe(true)
+    // いつものつなぎ直し（3秒後）でつながる。でも値は来ない（センサーが固まった）：次は 10秒待ってから
+    await vi.advanceTimersByTimeAsync(3100)
+    expect(n(head).status).toBe('connected')
+    n(head).lastPacket = t0 + 10
+    run(10, 10 + 2 * SENSOR_STALL.reconnect, [chest])
+    expect(fh.server.disconnect).toHaveBeenCalledTimes(1)
+    run(11 + 2 * SENSOR_STALL.reconnect, 11 + 2 * SENSOR_STALL.reconnect, [chest])
+    expect(fh.server.disconnect).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(3100)
+    // 値が来たら、間を数え直す
+    n(head).lastPacket = t0 + 30
+    ;(hub as unknown as { packet: (node: unknown, v: DataView) => void }).packet(hub.nodes[head], (() => {
+      const v = new DataView(new ArrayBuffer(20))
+      v.setUint8(6, 16)
+      return v
+    })())
+    expect(n(head).kicks).toBe(0)
+    // アプリが止まっていた（前に見てから2秒より空いた）：どれも値が来ていないように見えるが、切らない。そこから数え直す
+    const now = clock - t0
+    run(now + 1, now + 1, [head, chest])
+    run(now + 60, now + 60, [])
+    expect(fh.server.disconnect).toHaveBeenCalledTimes(2)
+    expect(fc.server.disconnect).not.toHaveBeenCalled()
+    // 2個とも同時に止まった：スマホの側とみて切らない
+    run(now + 61, now + 75, [])
+    expect(fh.server.disconnect).toHaveBeenCalledTimes(2)
+    expect(fc.server.disconnect).not.toHaveBeenCalled()
   })
 })
 

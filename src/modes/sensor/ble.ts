@@ -1,5 +1,5 @@
 import { parseBattery, parsePacket, type Packet } from './parse'
-import { SLOTS } from './params'
+import { SENSOR_STALL, SLOTS } from './params'
 
 // 自作のセンサーに Web Bluetooth でつなぐ（hardware/sensor/viewer/viewer.html と同じつなぎ方）。
 // iPhone の Safari は Web Bluetooth がないので、つなげるのは Bluefy などの対応ブラウザと、Mac・Android の Chrome だけ。
@@ -41,6 +41,7 @@ const DIAG_MAX = 40 // diag に残す行数
 const REJOIN_NOTE_FIRST = 3
 const REJOIN_NOTE_EVERY = 20
 const REBOOT_BACK_MS = 1000 // センサーの時計（起動からの ms）がこれより戻ったら、センサーがやり直したとみる（届く順の前後は数十 ms まで）
+const STALL_CHECK_GAP = 2 // checkStalls の間がこれ（秒）より空いたら、アプリが止まっていたとみる（runner.ts の GAP と同じ）
 const LISTENER_ERRORS_NOTED = 3 // 値の受け手で起きたエラーを diag に残す数（1秒に数百回呼ぶので、はじめの数回だけ）
 
 // TypeScript の DOM には Web Bluetooth の型がないので、使う分だけ書く
@@ -182,6 +183,8 @@ interface Node extends NodeView {
   count: number
   range: number
   devT: number | null // 最後に届いた値のセンサーの時計（ms）。戻ったら、センサーがやり直した（見張り番・電源の落ち）
+  lastPacket: number | null // 最後に値が届いた t（つながったときもその t にする。固まったのを見つけて、つなぎ直すため）
+  kicks: number // 値が来ないので、こちらから切ってつなぎ直した回数（値が来たら 0 に戻す。間をのばすため）
   wanted: boolean // 切れたらつなぎ直すか（自分で切ったときは false）
 }
 
@@ -221,12 +224,14 @@ export class SensorHub {
   private bulk: BulkView = { busy: false, left: 0, needTap: false, diag: [] }
   readonly diag: { t: number; text: string }[] = [] // t は performance.now() の秒
   private listenerErrors = 0 // 値の受け手（onPacket）で起きたエラーの数
+  private lastCheck = -Infinity // 前に checkStalls を呼んだ t（アプリが止まっていたかを見る）
+  clock = () => performance.now() / 1000 // 値が届いた t・固まったかを見る t（performance.now() の秒。テストで差し替える）
   diagTotal = 0 // diag に残した行の数（消した行も数える。走っている間に増えた行を、runner.ts が記録の events に移すため）
 
   constructor() {
     this.nodes = SLOTS.map((s) => ({
       ...s, status: s.name ? 'idle' : 'none', message: MESSAGE[s.name ? 'idle' : 'none'], battery: null, rate: 0, lost: 0, lostTotal: 0, reboots: 0, fw: null, canBuzz: false,
-      device: null, data: null, buzzChar: null, onData: null, expected: null, count: 0, range: 0, devT: null, wanted: false,
+      device: null, data: null, buzzChar: null, onData: null, expected: null, count: 0, range: 0, devT: null, lastPacket: null, kicks: 0, wanted: false,
     }))
     this.refresh()
   }
@@ -588,6 +593,7 @@ export class SensorHub {
         setMemoryFails(false)
       }
       if (rejoin) this.note(`${node.place}（${node.name}）: つなぎ直した（${tries + 1}回目）`)
+      node.lastPacket = this.clock()
       this.set(node, 'connected')
       this.tick()
     } catch (e) {
@@ -659,7 +665,9 @@ export class SensorHub {
     node.devT = p.samples[p.samples.length - 1].t
     node.range = p.range
     node.count += p.samples.length
-    const t = performance.now() / 1000
+    const t = this.clock()
+    node.lastPacket = t
+    node.kicks = 0
     const i = this.nodes.indexOf(node)
     // 受け手ごとに分けて呼ぶ：1つがエラーを出しても、ほかの受け手（記録・走っているかの見分け gate.ts）には届ける。
     // 前は1つ目（session.ts）が投げると、あとに付けた走っているかの見分けに値が届かず、「走っていない」のまま全部の知らせが止まるおそれがあった
@@ -680,12 +688,38 @@ export class SensorHub {
         n.rate = n.count
         n.count = 0
       }
+      this.checkStalls(this.clock())
       this.refresh()
       if (!this.nodes.some((n) => n.status === 'connected' || n.status === 'connecting')) {
         clearInterval(this.timer!)
         this.timer = null
       }
     }, 1000)
+  }
+
+  // つながっているのに値が来ないセンサーを、こちらから切って、いつものつなぎ直し（dropped → open の rejoin）に回す（params.ts の SENSOR_STALL.reconnect）。
+  // 1秒ごと（tick）に呼ぶ（テストでは t を渡して直接呼ぶ）。
+  //   アプリが止まっていた（前に呼んでから2秒より空いた：画面が消えた・裏に回った）ときは、どのセンサーも値が来ていないように見えるので、そこから数え直す。
+  //   2個以上つながっていて、全部が同時に止まっているときは、スマホの側とみて切らない。
+  //   同じセンサーを続けて切るときは、間をのばす（reconnect × 2 の回数乗、reconnectMax 秒まで。値が来たら数え直す）
+  checkStalls(t: number) {
+    const gap = t - this.lastCheck > STALL_CHECK_GAP
+    this.lastCheck = t
+    const on = this.nodes.filter((n) => n.status === 'connected' && n.lastPacket !== null)
+    if (gap) {
+      for (const n of on) n.lastPacket = Math.max(n.lastPacket!, t)
+      return
+    }
+    const wait = (n: Node) => Math.min(SENSOR_STALL.reconnectMax, SENSOR_STALL.reconnect * 2 ** n.kicks)
+    const stalled = on.filter((n) => t - n.lastPacket! > wait(n))
+    if (!stalled.length || (on.length >= 2 && stalled.length === on.length)) return
+    for (const n of stalled) {
+      this.note(`${n.place}（${n.name}）: ${(t - n.lastPacket!).toFixed(0)}秒 値が来ないので、切ってつなぎ直す（${n.kicks + 1}回目）`)
+      n.kicks++
+      n.lastPacket = t
+      n.device?.gatt?.disconnect()
+      this.dropped(n) // 切った知らせが来ないブラウザでも、つなぎ直しに回す（来たときは2回目なので何もしない）
+    }
   }
 
   private set(node: Node, status: NodeStatus, message?: string) {
