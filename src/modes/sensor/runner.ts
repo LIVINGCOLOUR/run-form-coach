@@ -4,6 +4,7 @@ import type { SensorLog } from '../../core/types'
 import { describeError, sensors } from './ble'
 import { MotionGate } from './gate'
 import { GpsLatest, watchGps, type GpsFix, type GpsStatus } from './gps'
+import { HeartLatest, type HeartSource, type HeartStatus } from './heart'
 import { HUNCH, POSE, SENSOR_RUN_SAY, SLOTS, STILL } from './params'
 import { SensorSession, type PoseName, type PoseResult } from './session'
 import type { CamValues } from './lean'
@@ -25,6 +26,9 @@ import { lowBattery, noticeText, SensorWatch } from './notice'
 //   say を渡すと、立つ案内と待つ案内を声で言う（センサーラン。腰スマホはスマホ版の声があるので渡さない）
 //   gps を渡すと（センサーラン）、位置情報の速さと高さを1秒ごとのまとめに残す（gps.ts。知らせには使わない。使えないブラウザでは events に gps: none）
 //   waist を渡すと（センサーラン）、腰のポーチに入れたこのスマホの向きを、2つの立ち方とあわせて記録する（waist.ts。知らせには使わない）
+//   heart を渡すと（センサーラン）、心拍計の心拍を1秒ごとのまとめ（sec の hr）に、RR 間隔を sensors.hrRR に残す（heart.ts。記録だけで、知らせ・声には使わない）。
+//     つながった・切れた・戻った・つないでいない・使えないを events に hr: on / lost / back / off / error / none で、つなぎ方で起きたことを hr:ble で残す。
+//     走っていた間の平均と最大の心拍は、結果の画面のため summary.hr に（runLog.ts。この走りで一度でもつながったときだけ）
 //   belt を渡すと、ベルトの速さ（トレッドミル）を胸の正しい前傾の速さに使う（session.ts。なければ足首のセンサーの見積もり）
 //   カメラなしでは、付けているセンサーの途切れを見張る（notice.ts の SensorWatch）。say があれば（センサーラン）声で知らせる：
 //     走り始めに、つながっていない場所を「頭のセンサーがつながっていません」（ポーチに入れる間のあと、立ち方の案内の前に）、
@@ -47,7 +51,14 @@ export interface SensorRunnerOptions {
   onGps?: (f: GpsFix) => void // 位置が届くたび（センサーの速さの見積もりを GPS に合わせるときの口。いまは記録に残すだけ）
   belt?: () => number | undefined // ベルトの速さ（時速 km。入れていなければ undefined）
   waist?: boolean | WaistPhone // 腰のスマホの向きを記録する（センサーラン。テストでは受け口を差し替えたものを渡す）
+  heart?: HeartSource // 心拍計（センサーラン。heart.ts の heart。テストでは差し替える）。記録だけ
 }
+
+// 結果の画面に出す心拍（走っていた間。拍/分。走っている間に心拍が届かなければ null）。sec：走っていて心拍があった秒、lost：途中で切れた回数
+export type HeartSummary = { avg: number | null; max: number | null; sec: number; lost: number }
+
+// 心拍計の様子を events の言葉にする（connecting は残さない）
+const HEART_WORD: Record<HeartStatus, string | null> = { none: 'none', idle: 'off', connecting: null, connected: 'on', lost: 'lost', error: 'error' }
 
 const now = () => performance.now() / 1000
 const ERRORS_LOGGED = 3 // tick の中で起きたエラーを events に残す数（0.1秒ごとに同じエラーをくり返すので、はじめの数回だけ）
@@ -86,6 +97,16 @@ export class SensorRunner {
   readonly watch: SensorWatch | null // 付けているセンサーの途切れ（カメラなしのときだけ）
   private notices: string[] = [] // まだ言っていない、センサーの途切れの知らせ（センサーランだけ）
   private readonly o: SensorRunnerOptions
+  // 心拍計（heart を渡したときだけ）
+  private hr: HeartLatest | null = null
+  private hrStatus: HeartStatus | null = null
+  private hrEver = false // この走りで一度でもつながった
+  private hrLost = 0
+  private hrSum = 0 // 走っていた間の 心拍 × 秒
+  private hrSec = 0
+  private hrMax: number | null = null
+  private hrDiagSeen = 0
+  private offHeart: () => void = () => {}
 
   constructor(o: SensorRunnerOptions) {
     this.o = o
@@ -138,7 +159,48 @@ export class SensorRunner {
         },
       )
     }
+    if (o.heart) this.startHeart(o.heart, t0)
     this.timer = setInterval(() => this.tick(now()), HUNCH.tick * 1000)
+  }
+
+  // 心拍計：走る前に起きたこと（hr:ble）と、いまの様子（hr: on / off / none …）を残し、心拍を受け取り始める
+  private startHeart(h: HeartSource, t0: number) {
+    const hr = new HeartLatest()
+    this.hr = hr
+    for (const d of h.diag) this.o.onEvent(t0, `hr:ble ${d.text}（${Math.round(t0 - d.t)}秒前）`)
+    this.hrDiagSeen = h.diagTotal
+    this.heartChanged(h, t0, false) // 作っている途中なので、画面には知らせない（呼ぶ側の runner がまだない）
+    const offRead = h.onReading((r) => hr.fix(r))
+    const offStatus = h.subscribe(() => this.heartChanged(h, now()))
+    this.offHeart = () => {
+      offRead()
+      offStatus()
+    }
+  }
+
+  // 様子が変わったときだけ events に残す。切れたあとにつながったら back（戻った）。tell：画面に知らせる（onChange）
+  private heartChanged(h: HeartSource, t: number, tell = true) {
+    const v = h.snapshot()
+    if (v.status === this.hrStatus) return
+    const word = HEART_WORD[v.status]
+    if (!word) return // つないでいる途中は残さない（つながった・つなげなかったで残す）
+    const was = this.hrStatus
+    this.hrStatus = v.status
+    if (v.status === 'connected') {
+      this.o.onEvent(t, `hr: ${this.hrEver && was === 'lost' ? 'back' : 'on'}${v.name ? ` ${v.name}` : ''}`)
+      this.hrEver = true
+    } else {
+      if (v.status === 'lost') this.hrLost++
+      this.o.onEvent(t, `hr: ${word}${v.status === 'error' ? ` ${v.message}` : ''}`)
+    }
+    if (tell) this.o.onChange?.()
+  }
+
+  // 結果の画面のため（runLog.ts の summary.hr）。この走りで心拍計が一度もつながらなければ undefined
+  heartSummary(): HeartSummary | undefined {
+    if (!this.hrEver) return undefined
+    const s = this.hrSec
+    return { avg: s > 0 ? Math.round(this.hrSum / s) : null, max: this.hrMax, sec: Math.round(s), lost: this.hrLost }
   }
 
   // 胸か頭がつながっている（立った姿勢が要る）
@@ -180,7 +242,14 @@ export class SensorRunner {
     try {
       const running = this.o.running ? this.o.running() : this.autoTick(t)
       if (running) this.runSec += dt
-      this.session.tick(t, running, this.o.camera?.() ?? null, this.gps?.at(t) ?? null)
+      // 心拍（記録だけ）：走っていた間の平均と最大を数え、1秒ごとのまとめと RR 間隔は session に渡す
+      const bpm = this.hr?.at(t) ?? null
+      if (running && bpm !== null) {
+        this.hrSum += bpm * dt
+        this.hrSec += dt
+        this.hrMax = Math.max(this.hrMax ?? 0, bpm)
+      }
+      this.session.tick(t, running, this.o.camera?.() ?? null, this.gps?.at(t) ?? null, this.hr ? { bpm, rr: this.hr.takeRR() } : null)
     } catch (e) {
       if (this.errors++ < ERRORS_LOGGED) this.o.onEvent(t, `sensor:error ${describeError(e)}`)
     }
@@ -188,11 +257,19 @@ export class SensorRunner {
 
   // 走っている間に ble.ts の diag に増えた行（途中で切れたセンサーのつなぎ直し・つなげなかった理由）も、events に sensor:ble で残す
   // （前は走り始めの分だけで、途中でつなぎ直せなかった理由が記録に残らなかった）
+  // 心拍計の diag（heart.ts）も同じく hr:ble で残す
   private flushDiag(t: number) {
     const fresh = sensors.diagTotal - this.diagSeen
-    if (fresh <= 0) return
-    this.diagSeen = sensors.diagTotal
-    for (const d of sensors.diag.slice(-Math.min(fresh, sensors.diag.length))) this.o.onEvent(t, `sensor:ble ${d.text}`)
+    if (fresh > 0) {
+      this.diagSeen = sensors.diagTotal
+      for (const d of sensors.diag.slice(-Math.min(fresh, sensors.diag.length))) this.o.onEvent(t, `sensor:ble ${d.text}`)
+    }
+    const h = this.o.heart
+    const hFresh = h ? h.diagTotal - this.hrDiagSeen : 0
+    if (h && hFresh > 0) {
+      this.hrDiagSeen = h.diagTotal
+      for (const d of h.diag.slice(-Math.min(hFresh, h.diag.length))) this.o.onEvent(t, `hr:ble ${d.text}`)
+    }
   }
 
   // カメラなし：立った姿勢と走っているかを、センサーで決める
@@ -315,6 +392,7 @@ export class SensorRunner {
     clearInterval(this.timer)
     this.offPacket()
     this.offGps() // 位置情報も止める（電池）
+    this.offHeart() // 心拍の受け取りをやめる（心拍計とのつながりは切らない。次の走りでも使うため）
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onVisible)
     this.result = this.session.finish()
     return this.result

@@ -673,3 +673,14 @@ export const WAIST_SIT = {
   sdPeak: 0.039,
   sdComb: 1.6,
 }
+
+// ---- 心拍計（センサーランだけ。heart.ts）。記録だけ（2026-11-17 本人の決め）。知らせ・声には使わない ----
+// ゆくゆくは心拍で「急ぎすぎです、ペースを落としましょう」と言いたいが、どの心拍で言うか（線）はまだ決めていない。まず記録を集める。
+// つなぎ方：ふつうの Bluetooth の Heart Rate Profile（サービス 0x180D、通知 0x2A37）。Fitbit Charge 6 は、時計の画面を下に引いて
+//   「Broadcast HR」（日本語の画面では「心拍数をブロードキャスト」）を押すと、これで心拍を出す。つないだあと、時計に出る画面で「共有」→「開始」を押す。
+//   同時につなげるのは1つのアプリだけ（Google のヘルプ https://support.google.com/googlehealth/answer/14236705 、2026-11-17 に確かめた）
+//   stale 5：最後の心拍がこれ（秒）より古ければ、1秒ごとのまとめ（sec の hr）と画面には出さない（null）。Heart Rate Profile の通知はふつう1秒に1回ほど。
+//     Charge 6 の間隔は未確認（記録の hr の並びで確かめる）
+//   rejoin 3：走っている途中で切れたら、この間隔（秒）で押さずにつなぎ直す（自作のセンサーと同じ。ble.ts の REJOIN_SEC）
+//   rrMax 4：1回の通知から残す RR 間隔（心拍の間）の数の上限（ふつうは0〜2個。おかしな値で記録がふくらまないように）
+export const HEART = { stale: 5, rejoin: 3, rrMax: 4 }

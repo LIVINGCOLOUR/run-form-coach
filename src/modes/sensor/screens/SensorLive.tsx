@@ -5,12 +5,13 @@ import { PHRASES } from '../../../core/phrases'
 import { keepAwake } from '../../../core/wake'
 import { queueUpload } from '../../../core/upload/uploads'
 import { sensors } from '../ble'
+import { heart } from '../heart'
 import type { GpsStatus } from '../gps'
 import { SensorRunner, type SensorRunPhase } from '../runner'
 import { SensorRunLog } from '../runLog'
 import { SENSOR_RUN_NAME } from '../name'
 import { parseKmh } from '../../camera/belt'
-import { CHEST, HEAD_PLACE, SPEED_FIT } from '../params'
+import { CHEST, HEAD_PLACE, HEART, SPEED_FIT } from '../params'
 import { loadMount } from '../mount'
 import { MountBadge } from '../MountPicker'
 import { fitSpeedA, saveSpeedFit } from '../speedFit'
@@ -19,6 +20,7 @@ import { fitSpeedA, saveSpeedFit } from '../speedFit'
 // 知らせは振動だけ（胸の猫背・頭が前に出る・接地が長い・左右差。ずれは短く3回、頭と接地は直ったら短く2回）。声は、立つ・待つの案内、センサーの途切れ（notice.ts）と、終わりの言葉だけ。
 // 立った姿勢と走っているかは、センサーで決める（runner.ts）。記録は 60秒ごとに端末へ書き出す（runLog.ts。7時間まで）
 // 腰のポーチに入れたこのスマホの向きも記録する（waist.ts。知らせには使わない）。
+// 心拍計をつないでいれば、心拍も記録し、今の心拍を小さく出す（heart.ts。知らせには使わない。つなぐのはホームの心拍計の枠）。
 // トレッドミルでは、ベルトの速さを入れられる（胸の、その速さで正しい前傾と、足首の速さの式の人ごとの合わせに使う。speedFit.ts）。
 //   欄は画面のいちばん上に、走っている間も出しておく：始めて少し（SENSOR_RUN_SAY.pouch 秒）でポーチに入れるので、立つ間だけ出していたら入れそびれた（2026-11-06 の2本。
 //   ベルト時速9kmで、足首の見積もりは 7.7 のまま）。胸に使うのは走る前傾を覚える時刻（走って40秒）までに入れた値、速さの合わせは終えるときの値。
@@ -54,6 +56,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
   const beltInvalid = beltText.trim() !== '' && beltRef.current === undefined
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
+  const hv = useSyncExternalStore(heart.subscribe, heart.snapshot)
   // 頭と胸を付けた場所（ホームで選んだもの）。2つの立ち方の案内の端に出して、毎回同じ場所に付けてもらう
   const [mount] = useState(loadMount)
 
@@ -68,6 +71,7 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
       speaking: voicePending,
       gps: true,
       waist: true,
+      heart,
       belt: () => beltRef.current,
       onChange: () => {
         setPhase(runner.phase)
@@ -172,6 +176,13 @@ export function SensorLive({ onDone }: { onDone: (logId?: string) => void }) {
         {missing.length > 0 && <Chip ok={false} label={`つながっていない：${missing.map((n) => n.place).join('・')}`} />}
         {lost.length > 0 && <Chip ok={false} label={`切れた：${lost.map((n) => n.place).join('・')}（つなぎ直しています）`} />}
         <Chip ok={wake} label={wake ? '画面は消えません' : '画面が消えるかも'} />
+        {/* 心拍計：つないだことがある（名前がある）か、いまつながっているときだけ出す */}
+        {(hv.name || hv.status === 'connected') && (
+          <Chip
+            ok={hv.status === 'connected'}
+            label={hv.status === 'connected' ? (hv.bpm !== null && hv.t !== null && performance.now() / 1000 - hv.t <= HEART.stale ? `心拍 ${hv.bpm}` : '心拍：待っています') : hv.status === 'lost' ? '心拍計：切れた（つなぎ直しています）' : '心拍計：つながっていません'}
+          />
+        )}
         <Chip ok={gps === 'on'} label={gps === 'on' ? 'GPS：記録しています' : gps === 'none' ? 'GPS：このブラウザでは使えません' : gps === 'denied' ? 'GPS：許可されていません' : 'GPS：待っています'} />
       </div>
       <div className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>

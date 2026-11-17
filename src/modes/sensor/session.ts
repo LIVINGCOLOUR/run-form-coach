@@ -47,11 +47,15 @@ const r3n = (x: number | null | undefined) => (x === null || x === undefined || 
 // GPS（センサーランだけ。gps.ts）の速さ（km/h）と横の誤差（m）・高さ（m）と高さの誤差（m）・
 // 腰のスマホ（センサーランだけ。waist.ts）の傾き（度。b から。2つの立ち方の差が小さければ向きによらない角度）と、ならした重力の向き（スマホの軸、長さ1）・その1秒に届いた値の数。値がなければ null
 // 腰落ち（センサーランの腰のスマホ。記録だけ。waistSit.ts）：直近6秒の窓のピッチ（歩/分）・上下動（cm）・有効接地時間（ms）・接地の割合・上下の加速度の山（g）、
-//   同じ速さのふつうの走り（基準）からの接地の割合と山の変わり（%）・見分けの値 wSitIdx・その秒が決まりを満たしたか wSit（1/0）・判定しなかったわけ wSkip（WAIST_SKIP の番号。0 は判定した）
+//   同じ速さのふつうの走り（基準）からの接地の割合と山の変わり（%）・見分けの値 wSitIdx・その秒が決まりを満たしたか wSit（1/0）・判定しなかったわけ wSkip（WAIST_SKIP の番号。0 は判定した）・
+// 心拍計（センサーランだけ。heart.ts。記録だけ）の心拍 hr（拍/分。つないでいない・HEART.stale 秒より届いていなければ null）
 export const SEC_COLS = [
   't', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx', 'gpsV', 'gpsAcc', 'alt', 'altAcc', 'waist', 'wgx', 'wgy', 'wgz', 'wHz',
-  'wCad', 'wBounce', 'wCt', 'wDuty', 'wPeak', 'wDutyPct', 'wPeakPct', 'wSitIdx', 'wSit', 'wSkip',
+  'wCad', 'wBounce', 'wCt', 'wDuty', 'wPeak', 'wDutyPct', 'wPeakPct', 'wSitIdx', 'wSit', 'wSkip', 'hr',
 ]
+
+// 心拍計から runner.ts が渡すもの：いまの心拍（拍/分。なければ null）と、前の tick から届いた RR 間隔 [届いた t, ms]
+export type HeartTick = { bpm: number | null; rr: [number, number][] }
 
 const zeroCounts = (): SensorCounts => ({ chest: 0, head: 0, sit: 0, longL: 0, longR: 0, stride: 0 })
 
@@ -271,8 +275,9 @@ export class SensorSession {
   }
 
   // HUNCH.tick 秒ごと（胸と頭で同じ間隔）。running：カメラが歩数で決めた「走っている」。cam：カメラ版で、いまのカメラの上体と頭の位置（胸だけに渡す）。
-  // gps：センサーランで、いまの GPS の速さと高さ（1秒ごとのまとめに残すだけ。知らせには使わない）
-  tick(t: number, running: boolean, cam: CamValues | null = null, gps: GpsSec | null = null) {
+  // gps：センサーランで、いまの GPS の速さと高さ（1秒ごとのまとめに残すだけ。知らせには使わない）。
+  // hr：センサーランで、心拍計の心拍と RR 間隔（記録に残すだけ。知らせには使わない）
+  tick(t: number, running: boolean, cam: CamValues | null = null, gps: GpsSec | null = null, hr: HeartTick | null = null) {
     this.tickStall(t)
     // b の案内の間（a を測ってから b を測るまで）に、a からいちばん傾いた角度
     for (const x of this.parts) {
@@ -339,7 +344,9 @@ export class SensorSession {
     this.resolveHead(t, running, chestCued)
     this.tickContact(t, running)
     this.waist?.tick(t)
-    this.tickLog(t, running, gps)
+    this.tickLog(t, running, gps, hr?.bpm ?? null)
+    // RR 間隔（心拍計。記録だけ）。記録がまだない（センサーの値が届く前）ぶんは捨てる
+    if (hr?.rr.length && this.rec) (this.rec.log.hrRR ??= []).push(...hr.rr)
     // 腰のスマホの生の値（テスト期間）を記録へ移す。記録がまだない（センサーの値が届く前）ぶんは捨てる
     const raw = this.waist?.takeRaw()
     if (raw?.length && this.rec) {
@@ -390,7 +397,7 @@ export class SensorSession {
   }
 
   // 1秒ごとのまとめと、電池の電圧を記録に残す
-  private tickLog(t: number, running: boolean, gps: GpsSec | null) {
+  private tickLog(t: number, running: boolean, gps: GpsSec | null, bpm: number | null) {
     if (!this.rec) return
     if (t >= this.nextSec) {
       this.nextSec = t + SENSOR_LOG.secEvery
@@ -411,6 +418,7 @@ export class SensorSession {
         r1n(gps?.v), r1n(gps?.acc), r1n(gps?.alt), r1n(gps?.altAcc),
         r1n(w?.tilt), r3n(w?.g?.[0]), r3n(w?.g?.[1]), r3n(w?.g?.[2]), w ? w.n : null,
         r1n(wg?.cad), r1n(wg?.bounceCm), r1n(wg?.contactMs), r3n(wg?.duty), r3n(wg?.peakG), r1n(ws?.dutyPct), r1n(ws?.peakPct), r2n(ws?.index), ws ? ws.sit : null, ws ? WAIST_SKIP.indexOf(ws.skip) : null,
+        bpm,
       ])
     }
     if (t >= this.nextBat) {

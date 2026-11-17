@@ -56,6 +56,7 @@ export function SensorResult({ logId, onHome }: { logId: string; onHome: () => v
             {sum.bends > 0 && <div className="muted" style={{ fontSize: 12 }}>体を大きく曲げた {sum.bends} 回は、走る姿勢ではないので知らせていません。</div>}
             {sum.capped > 0 && <div className="muted" style={{ fontSize: 12 }}>同じ知らせが1時間に {LIMIT.perHour} 回に達したので、その項目はその1時間の残りは知らせていません（{sum.capped} 回）。</div>}
           </div>
+          {log.summary?.hr && <HeartLine hr={log.summary.hr} />}
           {belt && (
             <div className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
               {fitted
@@ -94,6 +95,22 @@ export function SensorResult({ logId, onHome }: { logId: string; onHome: () => v
         ホームへ
       </button>
     </main>
+  )
+}
+
+// 心拍計（記録するだけ）：走っていた間の平均と最大を1行で。心拍計をつながなかった走りには出さない
+function HeartLine({ hr }: { hr: { avg: number | null; max: number | null; sec: number; lost: number } }) {
+  return (
+    <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+      {hr.avg !== null ? (
+        <>
+          心拍（走っていた間）：平均 <span className="num">{hr.avg}</span>・最大 <span className="num">{hr.max}</span> 拍/分
+        </>
+      ) : (
+        <span className="muted">心拍計はつないでいましたが、走っている間の心拍は届いていませんでした。</span>
+      )}
+      {hr.lost > 0 && <span className="muted" style={{ fontSize: 12 }}>（途中で {hr.lost} 回切れました）</span>}
+    </div>
   )
 }
 

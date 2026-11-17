@@ -7,7 +7,7 @@ import type { SensorRunner } from './runner'
 // カメラなしで使ったセンサーの記録（センサーラン、腰スマホといっしょ）。形はカメラ版と同じ RunLog（rows は空、mode: 'sensor'）で、
 // センサーの値（sensors.blocks）と1秒ごとのまとめ（sensors.sec）を、走っている間 60秒ごとに端末へ少しずつ書き出す（core/logChunks.ts。7時間でも残す）。
 // 入れ物は SENSOR_LOGS。Mac へは runs/sensor/rfc-sensor-年月日-時分_<id>.json で送る（2時間より長ければ分けて送り、npm run logs がつなぐ）
-export const SENSOR_LOG_PATHS = ['sensors.blocks', 'sensors.sec', 'sensors.waistRaw']
+export const SENSOR_LOG_PATHS = ['sensors.blocks', 'sensors.sec', 'sensors.waistRaw', 'sensors.hrRR']
 
 export class SensorRunLog {
   readonly log: RunLog
@@ -41,14 +41,15 @@ export class SensorRunLog {
     }, LOG_CHUNK.every * 1000)
   }
 
-  // 知らせた回数（項目ごと）・上限に達した回数・ずれの回数（session.ts の counts）と、位置情報の様子・センサーの途切れも残す
+  // 知らせた回数（項目ごと）・上限に達した回数・ずれの回数（session.ts の counts）と、位置情報の様子・センサーの途切れ・心拍（つないだときだけ）も残す
   private summarize() {
     const r = this.runner
     if (!r) return
     const c = r.session.counts
     // センサーの途切れ（場所ごとの回数と秒）と、値が1つも来なかった場所（notice.ts。結果の画面に出す）
     const w = r.watch?.summary(performance.now() / 1000)
-    this.log.summary = { runSec: Math.round(r.runSec), gaps: r.gaps, stood: r.stoodAt !== null, trunk: r.trunk, cues: { ...c.cues }, capped: { ...c.capped }, slips: { ...c.slips }, ...(r.gpsStatus && { gps: r.gpsStatus }), ...(w && { drops: w.drops, missing: w.missing }) }
+    const hr = r.heartSummary()
+    this.log.summary = { runSec: Math.round(r.runSec), gaps: r.gaps, stood: r.stoodAt !== null, trunk: r.trunk, cues: { ...c.cues }, capped: { ...c.capped }, slips: { ...c.slips }, ...(r.gpsStatus && { gps: r.gpsStatus }), ...(w && { drops: w.drops, missing: w.missing }), ...(hr && { hr }) }
   }
 
   // 走り終わり：センサーを止めて、残りを書く

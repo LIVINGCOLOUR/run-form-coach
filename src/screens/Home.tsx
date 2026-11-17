@@ -24,6 +24,7 @@ import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/s
 import { flushUploads } from '../core/upload/uploads'
 import { UploadKeyButton, UploadPanel } from '../ui/Upload'
 import { SensorPanel } from '../modes/sensor/SensorPanel'
+import { HeartPanel } from '../modes/sensor/HeartPanel'
 import { sensors } from '../modes/sensor/ble'
 import { SENSOR_RUN_NAME } from '../modes/sensor/name'
 import { requestWakeLock as keepScreenOn } from '../core/wake'
@@ -327,6 +328,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           <div style={{ fontSize: 12, color: 'var(--accent)' }}>全コマ記録（検証用）：走っている間も間引かず、毎コマ骨格を取って残します</div>
         )}
         <SensorPanel key={mode === 'sensor' ? 'open' : 'closed'} defaultOpen={mode === 'sensor' && sensorsOn === 0} />
+        {/* 心拍計（センサーランだけ。記録するだけ） */}
+        {mode === 'sensor' && <HeartPanel />}
         <div style={{ fontSize: 12 }} className="muted">
           {mode === 'treadmill' && <>走る前に、2つの立ち方で基準を取ります{' · '}</>}
           <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>

@@ -167,7 +167,8 @@ export interface RunLog {
   // trunk：胸か頭がつながっていた。cues：項目ごとの知らせた回数、capped：1時間の上限に達した回数、slips：ずれとみなした回数（sensor/session.ts の counts。前の記録にはない）、
   // gps：位置情報の様子（none＝使えないブラウザ、on＝取れた、denied＝許可されていない、error＝取れなかった。センサーランだけ）
   // drops：付けているセンサーが途切れた（値が2秒より来なかった）場所ごとの回数と合わせた秒、missing：その走りで値が1つも来なかった場所（sensor/notice.ts）
-  summary?: { runSec: number; gaps: number; stood: boolean; trunk?: boolean; cues?: SensorCounts; capped?: SensorCounts; slips?: { chest: number; head: number }; gps?: string; drops?: { place: string; n: number; sec: number }[]; missing?: string[] }
+  // hr：心拍計（センサーランで一度でもつながったときだけ。sensor/heart.ts。記録だけ）。走っていた間の平均・最大（拍/分。届かなければ null）、走っていて心拍があった秒、途中で切れた回数
+  summary?: { runSec: number; gaps: number; stood: boolean; trunk?: boolean; cues?: SensorCounts; capped?: SensorCounts; slips?: { chest: number; head: number }; gps?: string; drops?: { place: string; n: number; sec: number }[]; missing?: string[]; hr?: { avg: number | null; max: number | null; sec: number; lost: number } }
   // 走り始めたときの端末の入れ物の様子（navigator.storage。使えないブラウザではない）。usage・quota はバイト
   storage?: { usage?: number; quota?: number; persisted?: boolean }
 }
@@ -242,6 +243,7 @@ export interface SensorLog {
   // 2つの立ち方を測った回ごと（測り直しも）：a・b の重力の向き、a と b の角度、b の案内の間（a を測ってから b を測るまで）に a からいちばん傾いた角度（度）。
   // 前の記録にはない（前は最後の回の a・b だけ）
   poseAttempts?: SensorPoseAttempt[]
+  hrRR?: [number, number][] // 心拍計の RR 間隔（心拍の間）[届いた t, ms]（センサーランで、心拍計が RR を送るときだけ。sensor/heart.ts）。前の記録にはない
   waist?: SensorWaistLog // 腰のスマホの2つの立ち方（センサーランだけ。1秒ごとの値は sec の waist・wgx・wgy・wgz・wHz）。前の記録にはない
   cues: [number, number, number][] // 猫背で知らせた [t, 胸の傾き（度）, 震わせられたか 1/0]
   slips?: [number, number, number][] // 胸のセンサーがずれたとみなした [t, ずれを測るもとの基準（度）, 置き直した基準（度）]。見張る前の記録にはない
