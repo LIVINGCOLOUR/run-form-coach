@@ -41,6 +41,7 @@ export interface SensorRunnerOptions {
   onEvent: (t: number, text: string) => void // できごとを記録の events に残す
   level?: Level // 胸の線のレベル
   voice?: boolean // 接地の知らせを声でも言う（トレッドミルのカメラ版だけ。外は振動だけ）
+  haptic?: boolean // false なら震わせない（見分けた結果は記録に残す。テスト用のページ /lab/ の答えつきの記録。session.ts の haptic）
   running?: () => boolean // カメラの「走っている」。渡さなければセンサーで見分ける
   camera?: () => CamValues | null // カメラ版：いまのカメラの上体と頭の位置（胸のずれの見分けに使う。lean.ts）。なければ null
   say?: (text: string) => void // カメラなしの案内を声で言う
@@ -112,6 +113,7 @@ export class SensorRunner {
     this.o = o
     this.session = new SensorSession(o.onEvent, o.level, { belt: o.belt, waist: o.waist instanceof WaistPhone ? o.waist : o.waist ? new WaistPhone(o.onEvent) : null })
     this.session.voice = !!o.voice
+    this.session.haptic = o.haptic ?? true
     this.gate = o.running ? null : new MotionGate()
     const t0 = now()
     this.t0 = t0

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MotionGate, windowStats } from './gate'
 import { HEAD, POSE, RUN_GATE, SENSOR_NOTICE, SENSOR_RUN_SAY, SENSOR_STALL, SLOTS, STILL } from './params'
 import type { Packet, Vec3 } from './parse'
@@ -457,6 +457,28 @@ describe('センサーだけで動かす（runner.ts の SensorRunner。セン�
     return new Promise<void>((done) =>
       setTimeout(() => {
         expect(events.some(([, e]) => e.startsWith('sensor:hunch'))).toBe(true)
+        r.finish()
+        done()
+      }, 0),
+    )
+  })
+
+  it('震わせない（haptic: false。テスト用のページ /lab/ の答えつきの記録）：猫背を見分けたら記録だけ残し（「 (silent)」の印）、センサーは震わせない', () => {
+    connect(['胸'])
+    const buzz = vi.spyOn(sensors, 'buzz').mockResolvedValue(true)
+    const events: [number, string][] = []
+    const r = new SensorRunner({ onEvent: (t, text) => events.push([t, text]), haptic: false })
+    let t = performance.now() / 1000
+    t = sendUntil('胸', 'stand', t, r, () => r.stoodAt !== null) // 声の案内なしで、じっと立った3秒を立った姿勢にする
+    expect(r.stoodAt).not.toBe(null)
+    for (let k = 0; k < 500; k++) t = send('胸', 'run', t, 0.1, r)
+    for (let k = 0; k < 100; k++) t = send('胸', 'hunch', t, 0.1, r)
+    return new Promise<void>((done) =>
+      setTimeout(() => {
+        const cue = events.find(([, e]) => e.startsWith('sensor:hunch '))
+        expect(cue?.[1]).toMatch(/ \(silent\)$/)
+        expect(buzz).not.toHaveBeenCalled()
+        buzz.mockRestore()
         r.finish()
         done()
       }, 0),

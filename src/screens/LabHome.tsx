@@ -13,11 +13,14 @@ import { drillPlan, LAB_TIME, labSteps, type DrillOptions, type DrillVersion } f
 import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/storage'
 import { startPhone } from '../modes/phone/screens/startPhone'
 import { SensorPanel } from '../modes/sensor/SensorPanel'
+import { HeartPanel } from '../modes/sensor/HeartPanel'
 import { fmtDate } from './Home'
 
 // テスト用のページ（/lab/）のホーム。アプリはまだ公開できる段階ではないので、テストの機能はふつうのアプリ（/）から外して、ここに置く
 // （本人の決め 2026-11-17）。画面（走っている間・結果）と記録・Mac へ送るしくみは、ふつうのアプリと同じものを使う（App.tsx）。
-//   いちばん上：答えつきの記録（腰のスマホ1台。外でもトレッドミルでも。drill.ts の labPlan）。アプリが声で区間を順に指示する
+//   いちばん上：答えつきの記録（腰のスマホ1台。外でもトレッドミルでも。drill.ts の labPlan）。アプリが声で区間を順に指示し、
+//     終わったら指示なしの走り（自由走。free.ts）に切り替えて、腰のスマホの値だけで試しの声を出す。本人が長押しで終える。
+//     そのすぐ下に、センサーと心拍計をつなぐ枠（つながっている分だけ記録する。震わせない・立ち方の案内もしない）
 //   崩しの撮影（トレッドミル。横の iPhone で全身を録画。drill.ts）、腰スマホの開発中の機能（ピッチを上げる練習・フォームのテスト）、
 //   カメラ版の確かめ（動画で試す・スロー動画・記録の書き出し）、開発用（模擬データ・送る鍵）
 
@@ -82,9 +85,12 @@ export function LabHome({ sessions, phoneSessions = [], go }: { sessions: Sessio
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontSize: 17, fontWeight: 900 }}>答えつきの記録</div>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            腰のスマホ1台で走ります。アプリの声の指示どおりに、わざと崩した走りを順に走ります。崩しは{LAB_TIME.sec}秒ずつ、はっきり大きく。あいだの{LAB_TIME.back}秒は、走ったままふつうに戻します。ピッチの声とメトロノームは鳴りません。約{minOf(LAB)}分
+            腰のスマホで走ります。アプリの声の指示どおりに、わざと崩した走りを順に走ります。崩しは{LAB_TIME.sec}秒ずつ、はっきり大きく。あいだの{LAB_TIME.back}秒は、走ったままふつうに戻します。この間はピッチの声とメトロノームは鳴りません。約{minOf(LAB)}分
           </div>
-          <div style={{ fontSize: 12, lineHeight: 1.6 }}>{order}</div>
+          <div style={{ fontSize: 12, lineHeight: 1.6 }}>{order} → 指示なしで走る</div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+            そのあとは指示なしで、いつもどおり走ります。崩れたら、腰のスマホの値だけで声で言います（試し。線は、この走りの崩しの区間から作ります）。終えるときは「長押しで終える」。
+          </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontSize: 13 }} className="muted">
@@ -102,12 +108,18 @@ export function LabHome({ sessions, phoneSessions = [], go }: { sessions: Sessio
           </div>
         </div>
         <button className="primary" onClick={() => void startPhone(go, where, { kind: 'drill', drill: LAB })}>
-          はじめる（約{minOf(LAB)}分）
+          はじめる（約{minOf(LAB)}分 ＋ 指示なし）
         </button>
         <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
           スマホは腰のベルトかウエストポーチにしっかり付け、画面は点けたままにします。横の iPhone でも撮るとき（トレッドミル。なくてもよい）は、真横から全身が映るように置いて、録画かカメラ版を先に始めます。
         </div>
+        <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+          センサー（頭・胸・手首・足首）と心拍計は、下の枠でつないだ分だけ記録します（答え合わせの材料。震えません。立ち方の案内もしません）。つながなくても走れます。
+        </div>
       </div>
+
+      <SensorPanel defaultOpen={false} />
+      <HeartPanel />
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -171,7 +183,6 @@ export function LabHome({ sessions, phoneSessions = [], go }: { sessions: Sessio
         )}
       </div>
 
-      <SensorPanel defaultOpen={false} />
       <UploadPanel />
 
       <details className="dev">

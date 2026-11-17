@@ -192,7 +192,7 @@ describe('答えつきの記録：区間の並びと声', () => {
   const lab = { version: 'lab', extra: false } as const
   const plan = drillPlan(lab)
 
-  it('ふつう4分 → 腰を落とす3段×2・猫背・弾む×2・胸を開く・足を前に出しすぎる×2（30秒ずつ）→ ふつう1分。崩しのあいだは40秒、走ったまま戻す。全体はおよそ20分', () => {
+  it('ふつう4分 → 腰を落とす3段×2・猫背・弾む×2・胸を開く・足を前に出しすぎる×2（30秒ずつ）→ ふつう1分 → 自由走（終わりなし）。崩しのあいだは40秒、走ったまま戻す。答えつきの区間はおよそ20分', () => {
     const runs = plan.phases.filter((p) => p.kind === 'run')
     expect(runs.map((p) => p.mark)).toEqual(['normal1', 'sitlight', 'sitmid', 'sitdeep', 'hunch', 'bouncy', 'open', 'over', 'sitlight', 'sitmid', 'sitdeep', 'bouncy', 'over', 'normal2'])
     expect(runs.map((p) => p.sec)).toEqual([LAB_TIME.base, ...Array(12).fill(LAB_TIME.sec), LAB_TIME.last])
@@ -200,7 +200,12 @@ describe('答えつきの記録：区間の並びと声', () => {
     expect(plan.phases.filter((p) => p.kind === 'back')).toHaveLength(11)
     expect(plan.phases.filter((p) => p.kind === 'back').every((p) => p.sec === LAB_TIME.back && p.mark === 'back')).toBe(true)
     expect(plan.phases.map((p) => p.kind).slice(0, 5)).toEqual(['setup', 'jump', 'still', 'start', 'run'])
-    expect(plan.phases.slice(-2).map((p) => p.kind)).toEqual(['endJump', 'done'])
+    // 答えつきの区間のあとは自由走（終わりがない。本人が長押しで終える）。終わりのジャンプはない
+    expect(plan.phases.slice(-2).map((p) => p.kind)).toEqual(['run', 'free'])
+    expect(plan.phases.at(-1)!.sec).toBe(Infinity)
+    expect(plan.phases.at(-1)!.mark).toBe('free')
+    expect(plan.total).toBe(plan.phases.at(-1)!.start)
+    expect(plan.cues.filter((c) => c.at === plan.total).map((c) => c.mark ?? c.say)).toEqual(['protocol:normal2:end', 'protocol:done', 'protocol:free:start', PHRASES.labFree])
     plan.phases.slice(1).forEach((p, i) => expect(p.start).toBe(plan.phases[i].start + plan.phases[i].sec))
     expect(plan.total / 60).toBeGreaterThan(18)
     expect(plan.total / 60).toBeLessThan(22)
@@ -232,40 +237,80 @@ describe('答えつきの記録：区間の並びと声', () => {
     const back = plan.phases.find((p) => p.kind === 'back')!
     expect(d.at(back.start + 1).next?.kind).toBe('run')
   })
+
+  it('自由走は終わらず（done にならない）、画面の時間は自由走で走った秒。終えたら自由走の印だけ閉じる（protocol:stopped は付けない）', () => {
+    const d = new Drill(lab, 0)
+    const t = plan.total + 3600
+    d.advance(t)
+    const a = d.at(t)
+    expect(a.phase.kind).toBe('free')
+    expect(a.done).toBe(false)
+    expect(a.remaining).toBe(3600)
+    expect(d.stop()).toEqual(['protocol:free:end'])
+    // 答えつきの区間の途中でやめたら、今までどおり protocol:stopped
+    const e = new Drill(lab, 0)
+    e.advance(100)
+    expect(e.stop()).toContain('protocol:stopped')
+  })
 })
 
-describe('答えつきの記録：模擬データで最後まで（ピッチの声とメトロノームは出さない）', () => {
+describe('答えつきの記録：模擬データで最後まで（区間の間は、ピッチの声とメトロノームは出さない）、そのあと自由走', () => {
   const base = 500
   const lab = { version: 'lab', extra: false } as const
   const run = new PhoneRun({ perfMs: base * 1000, epochMs: 1_760_000_000_000 }, { userAgent: 'test', intervalMs: 16.7 }, 'treadmill', { kind: 'drill', drill: lab })
   const data = demoDrill(run.drill!.phases)
   const said: string[] = []
   let next = base
-  let done = false
+  let free = false // 自由走に入った
+  let lastT = base
+  const freeSaid: { t: number; text: string }[] = []
   for (const m of data) {
     const t = base + m.t
-    for (const e of run.feed({ ...m, t })) if (e.type === 'speak') said.push(e.text)
+    lastT = t
+    const inFree = run.drill!.at(t).phase.kind === 'free'
+    for (const e of run.feed({ ...m, t })) if (e.type === 'speak') (inFree ? freeSaid.push({ t: t - run.drill!.t0 - run.drill!.total, text: e.text }) : said.push(e.text))
     if (t >= next) {
       next += 0.25
       for (const e of run.guide(t)) if (e.type === 'speak') said.push(e.text)
-      if (run.drill!.at(t).done) {
-        done = true
-        break
-      }
+      if (inFree) free = true
     }
   }
+  // 本人が長押しで終えた
+  run.stopDrill(lastT)
   const { log, session } = run.finish()
   const events = log.events.map((e) => e[1])
 
   it('最後まで進み、崩しと戻しの印が残る。種類は kind:drill:lab:base', () => {
-    expect(done).toBe(true)
+    expect(free).toBe(true)
     expect(events).toContain('kind:drill:lab:base')
     expect(session?.kind).toBe('drill')
     const starts = events.filter((e) => /^protocol:.+:start$/.test(e)).map((e) => e.split(':')[1])
     expect(starts.filter((k) => k === 'back')).toHaveLength(11)
     expect(starts.filter((k) => k === 'over')).toHaveLength(2)
     expect(events).toContain('protocol:done')
-    expect(said).toContain(PHRASES.labDone)
+    expect(said).toContain(PHRASES.labFree)
+    // 自由走の印は、終えたときに閉じる。答えつきの区間は最後まで進んだので protocol:stopped はない
+    expect(events).toContain('protocol:free:start')
+    expect(events).toContain('protocol:free:end')
+    expect(events).not.toContain('protocol:stopped')
+  })
+
+  it('自由走：答えつきの区間で線を作り（events の free:line）、腰を深く落とした間だけ、腰のスマホの値で腰落ちの声を出す', () => {
+    const lines = events.filter((e) => e.startsWith('free:line '))
+    expect(lines.map((e) => e.split(' ')[1])).toEqual(['cadence', 'sit', 'over', 'bounce'])
+    expect(lines.every((e) => !e.includes(' none '))).toBe(true) // 模擬では、どの崩しもふつうと分かれる
+    expect(events.some((e) => e.startsWith('free:base '))).toBe(true)
+    const cues = events.filter((e) => e.startsWith('free:cue '))
+    expect(cues.length).toBeGreaterThan(0)
+    expect(cues.every((e) => e.startsWith('free:cue sit '))).toBe(true)
+    // 腰を深く落とした形の間（DEMO_FREE の 120〜180秒。窓と続けて越えた秒の分だけ遅れる）だけ
+    const sit = freeSaid.filter((x) => x.text === PHRASES.cueHip)
+    expect(sit.length).toBe(cues.length)
+    for (const x of sit) {
+      expect(x.t).toBeGreaterThan(120)
+      expect(x.t).toBeLessThan(190)
+    }
+    expect(freeSaid.filter((x) => x.text !== PHRASES.cueHip)).toEqual([])
   })
 
   it('足を前に出しすぎる（模擬はピッチ 172 → 162）でも、ピッチの声とメトロノームは出さない', () => {

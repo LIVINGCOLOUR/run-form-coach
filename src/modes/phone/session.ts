@@ -5,11 +5,15 @@ import { fatigueOf, type FatigueResult } from './fatigue'
 import { formTestOf, type FormTestResult } from './formtest'
 import { PhoneLogRecorder, type PhoneLog } from './log'
 import type { MountIssue } from './mount'
-import type { PhoneMeasure } from './signal'
+import type { Estimate, PhoneMeasure } from './signal'
 import { PracticeRun, type PracticePlan, type PracticeResult } from './practice'
 import { SpeedTrack, type GpsFix } from './speed'
 import { PHRASES, SAY } from '../../core/phrases'
 import { Drill, type DrillOptions } from './drill'
+import { cueText, FreeCoach, lineText } from './free'
+import { waistGait } from '../sensor/waistSit'
+import { WAIST_SIT } from '../sensor/params'
+import { PHONE } from './params'
 
 // スマホ版の1回の走り：センサーの値を見る役と声かけのしくみに渡し、調整用の記録を取り、走り終わったら結果をまとめる
 // 画面（screens/PhoneLive.tsx）から切り離して、模擬データでテストできるようにしている
@@ -48,7 +52,8 @@ export type PhoneWhere = 'outdoor' | 'treadmill'
 //   ほめる言葉と声なしの見守りの言葉も言わない。付け方の確認の声と、始め・終わりの言葉は言う
 // 崩しの撮影（drill.ts。トレッドミルだけ）：ふつうの走りと同じようにピッチの声・メトロノーム・付け方の確認の声を出し、
 //   誘導の声を優先する（誘導の声の近くでは、ほかの声とメトロノームを待たせる）。しくみの始め・一時停止・再開・ほめる言葉・見守りの言葉は言わない
-//   答えつきの記録（drill の version 'lab'。外でもトレッドミルでも）は、同じ流れで、ピッチの声とメトロノームを出さない（付け方の確認の声は出す）
+//   答えつきの記録（drill の version 'lab'。外でもトレッドミルでも）は、同じ流れで、ピッチの声とメトロノームを出さない（付け方の確認の声は出す）。
+//   答えつきの区間が終わったら自由走（free.ts）：答えつきの区間で作った線で、腰のスマホの値だけから試しの声を出す（しくみの声とは別。ふつうのアプリは変えない）
 export type PhoneKind = { kind: 'practice'; plan: PracticePlan } | { kind: 'test' } | { kind: 'drill'; drill: DrillOptions }
 
 export interface PhoneSession {
@@ -108,6 +113,8 @@ export class PhoneRun {
   readonly kind: PhoneKind['kind'] | null
   readonly practice: PracticeRun | null = null // ピッチを上げる練習のときだけ
   readonly drill: Drill | null = null // 崩しの撮影のときだけ
+  readonly free: FreeCoach | null = null // 答えつきの記録のときだけ：自由走の試しの声（free.ts）
+  private wbuf: PhoneMeasure[] = [] // 自由走の線を作る・判定する、接地の割合と山のための直近 WAIST_SIT.window 秒の値
   private held: { e: CoachEvent; phase: number }[] = [] // 誘導の声の近くで待たせている、しくみの声とメトロノーム（どの段で出たか）
   private seen = 0
   private lastState: PhoneCoach['state']
@@ -128,6 +135,7 @@ export class PhoneRun {
     this.lastState = this.coach.state
     if (kind?.kind === 'practice') this.practice = new PracticeRun(kind.plan)
     if (kind?.kind === 'drill') this.drill = new Drill(kind.drill, clock.perfMs / 1000)
+    if (kind?.kind === 'drill' && kind.drill.version === 'lab') this.free = new FreeCoach()
     if (where === 'outdoor') this.analyzer.speed = new SpeedTrack()
     this.rec = new PhoneLogRecorder(clock, device, where)
     this.rec.event(clock.perfMs / 1000, `state:${this.coach.state}`)
@@ -158,6 +166,12 @@ export class PhoneRun {
 
   feed(m: PhoneMeasure): CoachEvent[] {
     this.analyzer.feed(m)
+    if (this.free) {
+      const prev = this.wbuf[this.wbuf.length - 1]
+      if (prev && (m.t - prev.t > PHONE.gapReset || m.t <= prev.t)) this.wbuf = []
+      this.wbuf.push(m)
+      while (this.wbuf.length && m.t - this.wbuf[0].t > WAIST_SIT.window) this.wbuf.shift()
+    }
     const ev = this.coach.update({ t: m.t, present: true, moving: this.analyzer.moving, m })
     this.rec.raw(m, this.coach.state)
     return this.after(m.t, ev)
@@ -265,6 +279,11 @@ export class PhoneRun {
         if (p.tone === 'on') ev.push({ type: 'tone', on: true, item: 'practice', bars: Infinity })
         if (p.tone === 'off') ev.push({ type: 'tone', on: false, item: 'practice' })
       }
+      // 答えつきの記録：区間の値をためて、自由走に入ったら線を作り、試しの声を出す
+      if (this.free) {
+        const c = this.freeSecond(t, s, ls?.est ?? null)
+        if (c) ev.push({ type: 'speak', text: c })
+      }
       // 速さで判定を止めた・戻した（外だけ）
       const g = s.gate ?? null
       if (g !== this.lastGate) {
@@ -277,6 +296,41 @@ export class PhoneRun {
       if (e.type === 'tone') this.rec.event(t, e.on ? `tone:on:${e.item}:${Math.round(this.tempo() ?? 0)}` : `tone:off:${e.item}`)
     }
     return ev
+  }
+
+  // 答えつきの記録の1秒：走る区間（ふつう・崩し・戻し）では値をため、自由走では線と比べる。言う言葉を返す。
+  // 線と、言った声（項目・値・線）は events に残す（free:line・free:cue。あとでセンサー・カメラと突き合わせて、当たっていたかを確かめる）
+  private freeSecond(t: number, s: PhoneSample, est: Estimate | null): string | null {
+    const free = this.free!
+    const at = this.drill!.at(t)
+    const ph = at.phase
+    const stopped = this.coach.state !== 'running' || !est
+    const g = !stopped && this.wbuf.length > 50 ? waistGait(this.wbuf) : null
+    const sec = {
+      t,
+      judged: !this.analyzer.mount.issue,
+      stopped,
+      up: est?.up ?? null,
+      cadence: s.cadence,
+      bounceCm: s.bounceCm,
+      brakingMs: s.brakingMs,
+      duty: g?.duty ?? null,
+      peakG: g?.peakG ?? null,
+      speed: s.speed ?? null,
+    }
+    if (ph.kind !== 'free') {
+      if ((ph.kind === 'run' || ph.kind === 'back') && ph.mark) free.learn(ph.mark, t - this.drill!.t0 - ph.start, sec)
+      return null
+    }
+    if (!free.built) {
+      for (const l of free.build()) this.rec.event(t, lineText(l))
+      const b = free.base
+      if (b) this.rec.event(t, `free:base cad ${b.cadence.toFixed(1)} bounce ${b.bounceCm.toFixed(2)} braking ${b.brakingMs.toFixed(3)} duty ${b.duty.toFixed(3)} peak ${b.peakG.toFixed(2)} v ${b.speed === null ? '-' : b.speed.toFixed(2)} n ${b.n}`)
+    }
+    const c = free.judge(sec)
+    if (!c) return null
+    this.rec.event(t, cueText(c))
+    return c.text
   }
 
   get log(): PhoneLog {

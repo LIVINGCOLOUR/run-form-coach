@@ -4,6 +4,11 @@
 // モデル（胸の正しい前傾の直し方 params.ts の CHEST_EXPECT、腰のスマホの使い道）を合わせ直す材料。手順は docs/validation-plan.md の「センサーとカメラを別々のスマホで」
 //
 // 使い方: npm run merge -- <drill-….json> <カメラ版.json> [<センサーラン.json>] [--camera-offset 秒] [--sensor-offset 秒] [--out ファイル]
+//        npm run merge -- <腰スマホの答えつきの記録 rfc-phone-….json> <センサー rfc-sensor-….json> [<カメラ版.json>] [オプション]
+//   （/lab/ の答えつきの記録：Mac の drill の記録の代わりに、腰のスマホの記録の区間の印 protocol:… で区間を作る。時刻は腰のスマホの時計。
+//    いっしょに記録したセンサー〔腰スマホの記録の events の sensor:log と同じ id〕は同じスマホの時計なので、ずれ 0。
+//    カメラ版は、腰のスマホの記録で大きく動き始めた時刻（最初のジャンプ）を「はい ＋ 0.5秒（merge.mjs の REACT）」とみなして合わせる。
+//    答えつきの記録ではセンサーは震わせない〔表の「センサーの振動」は、見分けた知らせ（記録だけ）〕。腰のスマホの値の表と自由走の試しの声は npm run grade で見る）
 //   ファイル名だけなら RFC_RUNS_DIR（既定 ~/Developer/research-data/runs/）から読む。カメラ版とセンサーランは中身で見分ける（順番は問わない）
 //   センサーランがなく、カメラ版の記録にセンサーの値があれば（同じスマホでカメラとセンサーを使った前の走り）、それを使う（時計は同じ）
 //   --camera-offset / --sensor-offset：その端末の時計 − Mac の時計（秒）を手で決める（ジャンプで決めたものより優先）
@@ -35,7 +40,7 @@ const senManual = num(opt('--sensor-offset'))
 const outFile = opt('--out')
 const [drillPath, ...logPaths] = args
 if (!drillPath || !logPaths.length || logPaths.length > 2) {
-  console.error('使い方: npm run merge -- <drill-….json> <カメラ版.json> [<センサーラン.json>] [--camera-offset 秒] [--sensor-offset 秒] [--out ファイル]')
+  console.error('使い方: npm run merge -- <drill-….json> <カメラ版.json> [<センサーラン.json>] [--camera-offset 秒] [--sensor-offset 秒] [--out ファイル]\n　　　または npm run merge -- <rfc-phone-….json（答えつきの記録）> <rfc-sensor-….json> [<カメラ版.json>] [オプション]')
   process.exit(1)
 }
 
@@ -50,6 +55,7 @@ writeFileSync(
     `export { decodeBlock } from '${join(root, 'src/modes/sensor/log.ts')}'`,
     `export { expectedChest } from '${join(root, 'src/modes/sensor/expect.ts')}'`,
     `export { CHEST_EXPECT, HUNCH } from '${join(root, 'src/modes/sensor/params.ts')}'`,
+    `export { sectionsFromMarks } from '${join(root, 'src/modes/phone/labValues.ts')}'`,
   ].join('\n'),
 )
 const bundle = join(tmp, 'treadmill-merge.mjs')
@@ -59,13 +65,23 @@ const R = await import(pathToFileURL(bundle).href)
 
 const runsDir = process.env.RFC_RUNS_DIR ?? join(homedir(), 'Developer/research-data/runs')
 const read = (p) => JSON.parse(readFileSync(existsSync(p) ? p : join(runsDir, p), 'utf8'))
-const drill = read(drillPath)
-if (drill.kind !== 'treadmill-drill') {
-  console.error(`${drillPath} は npm run drill の記録ではありません`)
-  process.exit(1)
+const logOf = (f) => f.data.log ?? f.data
+const first = read(drillPath)
+// 1つ目が Mac の drill の記録でなく、腰スマホの答えつきの記録（区間の印あり）なら、その印で区間を作る
+let drill = first
+let phoneLab = null
+if (first.kind !== 'treadmill-drill') {
+  const m = (first.log ?? first).mode === 'phone' ? R.sectionsFromMarks(first) : null
+  if (!m || !m.sections.some((x) => ['normal', 'drill', 'gap'].includes(x.kind))) {
+    console.error(`${drillPath} は npm run drill の記録でも、区間の印のある腰スマホの記録（/lab/ の答えつきの記録）でもありません`)
+    process.exit(1)
+  }
+  phoneLab = { path: drillPath, data: first }
+  // 「はい」の代わり：腰のスマホの記録で、最初のジャンプの段（声の指示から12秒）の中で大きく動き始めた時刻 − REACT
+  const pj = m.jumpAt !== null ? R.findJump(first, m.jumpAt, 0, 12000) : null
+  drill = { kind: 'treadmill-drill', fromPhone: true, startedAt: m.startedAt, sections: m.sections, jumpAt: pj && pj.strength >= M.STRONG ? pj.T - M.REACT * 1000 : null, done: m.done, stoppedAt: m.stoppedAt, endedAt: m.endedAt }
 }
 const files = logPaths.map((p) => ({ path: p, data: read(p) }))
-const logOf = (f) => f.data.log ?? f.data
 const senFile = files.find((f) => logOf(f).mode === 'sensor')
 const camFile = files.find((f) => logOf(f).mode !== 'sensor' && logOf(f).mode !== 'phone' && (logOf(f).rows ?? []).length)
 if (files.some((f) => logOf(f).mode === 'phone')) {
@@ -87,9 +103,9 @@ const epoch = (log) => (t) => log.clock.epochMs + t * 1000 - log.clock.perfMs
 
 p(`# トレッドミルの突き合わせ（${clock(drill.startedAt)} に始めた記録）`)
 p()
-p(`- 区間の記録: \`${drillPath}\`${drill.done ? '' : '（途中で止めた記録）'}`)
+p(phoneLab ? `- 区間: 腰スマホの答えつきの記録 \`${drillPath}\` の区間の印から作った${drill.done ? '' : '（途中で止めた記録）'}。下の表の「Mac の時計」は、この腰のスマホの時計。センサーは震わせていない（「センサーの振動」は見分けた知らせを記録しただけ）` : `- 区間の記録: \`${drillPath}\`${drill.done ? '' : '（途中で止めた記録）'}`)
 if (camFile) p(`- カメラ版: \`${camFile.path}\``)
-if (senFile) p(`- センサーラン（腰のスマホ）: \`${senFile.path}\``)
+if (senFile) p(`- ${phoneLab ? 'センサー（腰スマホの答えつきの記録といっしょに記録）' : 'センサーラン（腰のスマホ）'}: \`${senFile.path}\``)
 else if (senSrc) p('- センサー：カメラ版の記録の中のもの（同じスマホ・同じ時計）')
 p()
 
@@ -110,8 +126,10 @@ if (senLog && hai !== null) {
   }
 }
 const camOff = camFile ? M.clockOffset(camJump, hai, camManual) : null
-const senOff = senSrc ? (senSrc === camFile ? { ...camOff, how: 'same' } : M.clockOffset(senJump, hai, senManual)) : null
-const HOW = { manual: '手で決めた', jump: 'ジャンプにそろえた', clock: '端末の時計のまま（ジャンプが見つからない・目立たない）', same: 'カメラ版と同じ時計' }
+// 腰スマホの答えつきの記録といっしょに記録したセンサー（腰スマホの記録の events の sensor:log と同じ id）は、同じスマホの同じ時計
+const samePhone = phoneLab && senLog && (phoneLab.data.log ?? phoneLab.data).events.some(([, text]) => text === `sensor:log ${senLog.id}`)
+const senOff = senSrc ? (senSrc === camFile ? { ...camOff, how: 'same' } : samePhone && senManual === undefined ? { off: 0, how: 'phone' } : M.clockOffset(senJump, hai, senManual)) : null
+const HOW = { manual: '手で決めた', jump: 'ジャンプにそろえた', clock: '端末の時計のまま（ジャンプが見つからない・目立たない）', same: 'カメラ版と同じ時計', phone: '腰のスマホと同じ時計（同じスマホで記録）' }
 p('## 時計')
 p()
 if (hai === null) p('ジャンプの合図がない記録です。端末の時計のまま並べます（`--camera-offset` / `--sensor-offset` で直せます）')
@@ -189,7 +207,7 @@ if (senLog) {
 
 const rows = M.sectionRows(sections, { cam, sec, voices, buzz })
 const line = senLog?.sensors?.pose?.line ?? R.HUNCH.poseLine
-const KIND = { prep: '立つ', poses: '2つの立ち方', walk: '歩く', stop: '止める', jump: 'ジャンプ', speedup: '速さを上げる', normal: 'ふつう', drill: '崩し', gap: '戻し', speed: '速さを変える', move: 'スマホを動かす', moved: '動かしたあと', cool: '歩く' }
+const KIND = { prep: '立つ', poses: '2つの立ち方', walk: '歩く', stop: '止める', jump: 'ジャンプ', speedup: '速さを上げる', normal: 'ふつう', drill: '崩し', gap: '戻し', speed: '速さを変える', move: 'スマホを動かす', moved: '動かしたあと', cool: '歩く', free: '自由走', back: '戻し' }
 const nameOf = (s) => (s.kind === 'gap' ? `戻し（${STEPS[s.after]?.name ?? s.after ?? ''}のあと）` : s.kind === 'drill' ? (STEPS[s.key]?.name ?? s.key) : s.name ?? s.key)
 const list = (xs) => {
   const m = new Map()
@@ -256,8 +274,8 @@ else {
 }
 p()
 
-// ---- 腰のスマホ ----
-if (senFile) {
+// ---- 腰のスマホ（センサーランの腰の iPhone。答えつきの記録の腰のスマホの値は npm run grade）----
+if (senFile && !phoneLab) {
   p('## 腰のスマホ')
   p()
   const w = senLog.sensors?.waist

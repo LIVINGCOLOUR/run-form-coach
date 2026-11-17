@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { heart } from './heart'
 import { HEART } from './params'
 
-// 心拍計をつなぐ小さな枠（ホームで「センサーラン」を選んだとき、センサーの枠の下）。記録だけで、知らせには使わない（heart.ts）。
+// 心拍計をつなぐ小さな枠（ホームで「センサーラン」を選んだとき・テスト用のページ /lab/ の答えつきの記録の下。どちらもセンサーの枠の下）。記録だけで、知らせには使わない（heart.ts）。
 // 自作のセンサーの「まとめてつなぐ」とは別のボタン。Web Bluetooth のないブラウザでは出さない（センサーの枠が Bluefy の案内を出す）
 export function HeartPanel() {
   const v = useSyncExternalStore(heart.subscribe, heart.snapshot)

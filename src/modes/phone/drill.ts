@@ -16,7 +16,8 @@ import type { MountIssue } from './mount'
 //   途中でやめたとき：d.stop(今) → 閉じていない区間の end と protocol:stopped
 //
 // 答えつきの記録（version: 'lab'。テスト用のページ /lab/ から）：腰のスマホ1台で、外でもトレッドミルでも走れる並び（LAB_STEPS・labPlan）。
-// 区間のあいだは止まらず、走ったまま「ふつう」に戻す（印は protocol:back）。並びと秒は下の LAB_STEPS・LAB_TIME
+// 区間のあいだは止まらず、走ったまま「ふつう」に戻す（印は protocol:back）。並びと秒は下の LAB_STEPS・LAB_TIME。
+// 答えつきの区間が終わったら、指示なしの走り（自由走。印は protocol:free）に切り替え、本人が長押しで終えるまで続ける（free.ts）
 
 export type DrillVersion = 'full' | 'short' | 'lab'
 export interface DrillOptions {
@@ -70,14 +71,15 @@ export const DRILL_TIME = {
   soon: 10, // 区間の終わりの、この秒数前に知らせる
 }
 
-// start：答えつきの記録で走り始める（ベルトを動かすの代わり）。back：答えつきの記録で、区間のあいだに走ったまま「ふつう」に戻す
-export type DrillPhaseKind = 'setup' | 'jump' | 'still' | 'belt' | 'start' | 'run' | 'rest' | 'back' | 'endJump' | 'done'
+// start：答えつきの記録で走り始める（ベルトを動かすの代わり）。back：答えつきの記録で、区間のあいだに走ったまま「ふつう」に戻す。
+// free：答えつきの記録のあとの、指示なしの走り（終わりがない。本人が終える）
+export type DrillPhaseKind = 'setup' | 'jump' | 'still' | 'belt' | 'start' | 'run' | 'rest' | 'back' | 'endJump' | 'free' | 'done'
 export interface DrillPhase {
   kind: DrillPhaseKind
   name: string
   how: string
   start: number // 始めてからの秒
-  sec: number
+  sec: number // 自由走は Infinity
   mark?: string // 記録に残す区間の key（protocol:<mark>:start / end）
   step?: DrillStep // 走る区間のとき
 }
@@ -138,8 +140,7 @@ export const LAB_TIME = {
   sec: 30, // 崩しの区間
   back: 40, // 崩しのあと、走ったままふつうに戻す
   lead: 14, // 区間の始まりのこの秒数前に、名前とやり方を言う（いちばん長い言葉で約10秒）
-  last: 60, // 最後のふつう
-  endJump: 20, // 止まって、その場で3回ジャンプ
+  last: 60, // 最後のふつう。このあと自由走（終わりは本人が長押しで終える）
 }
 
 // 崩しの並び。腰を落とす3段は、少し → 中 → 深くの順（落とし方の幅をつかみやすいように）で2回。
@@ -159,6 +160,9 @@ export const LAB_STEPS: DrillStep[] = [
 ]
 // 区間のあいだの「ふつうに戻す」（印は protocol:back。compare.ts・採点が区間の名前に使う。走っている間の画面は大きな字で出すので、短く「ふつう」）
 export const LAB_BACK = { key: 'back', name: 'ふつうに戻す', how: '走ったまま、いつもの走りに戻す' }
+// 答えつきの区間のあとの、指示なしの走り（印は protocol:free）
+// name は走っている間の画面に大きな字で出すので短く
+export const LAB_FREE = { key: 'free', name: '指示なし', how: 'いつもどおり走る。崩れたら、腰のスマホの値だけで声で言います。終えるときは長押し' }
 
 export function labSteps(): DrillStep[] {
   const by = (k: string) => LAB_STEPS.find((s) => s.key === k)!
@@ -197,9 +201,9 @@ export function labPlan(): { phases: DrillPhase[]; cues: DrillCue[]; total: numb
     add({ kind: 'run', name: s.name, how: s.how, sec: s.full, mark: s.key, step: s }, [PHRASES.drillGo])
     cues.push({ at: t - DRILL_TIME.soon, say: PHRASES.drillSoon })
   })
-  add({ kind: 'endJump', name: 'その場でジャンプ', how: '止まって、その場で3回ジャンプ', sec: T.endJump, mark: 'jump2' }, [PHRASES.labEndJump])
-  phases.push({ kind: 'done', name: '終わり', how: '横の iPhone で撮っていたら、録画を止めて大丈夫です', start: t, sec: 0 })
-  cues.push({ at: t, say: PHRASES.labDone }, { at: t, mark: 'protocol:done' })
+  // 答えつきの区間はここまで（protocol:done）。そのまま自由走に入る。自由走の印は、本人が終えたときに閉じる（Drill.stop）
+  phases.push({ kind: 'free', name: LAB_FREE.name, how: LAB_FREE.how, start: t, sec: Infinity, mark: LAB_FREE.key })
+  cues.push({ at: t, mark: 'protocol:done' }, { at: t, mark: `protocol:${LAB_FREE.key}:start` }, { at: t, say: PHRASES.labFree })
   // 言葉を先に言う分（lead・残り10秒）を足したので、時刻の順に並べ直す（同じ時刻は足した順のまま：終わりの印 → 始まりの印 → 言葉）
   const order = cues.map((c, i) => ({ c, i })).sort((a, b) => a.c.at - b.c.at || a.i - b.i)
   return { phases, cues: order.map((x) => x.c), total: t }
@@ -236,7 +240,9 @@ export class Drill {
     }
     const phase = this.phases[i]
     const next = this.phases.slice(i + 1).find((p) => p.kind !== 'rest' && p.kind !== 'back') ?? null
-    return { index: i, phase, remaining: Math.max(0, phase.start + phase.sec - e), next, done: phase.kind === 'done' }
+    // 自由走は終わりがないので、残りは走った秒（画面は「残り」ではなく経過を出す）
+    const remaining = phase.sec === Infinity ? e - phase.start : Math.max(0, phase.start + phase.sec - e)
+    return { index: i, phase, remaining, next, done: phase.kind === 'done' }
   }
 
   // 前に呼んだときから今までに来た言葉と印。印は予定の時刻（t0 と同じ時計）つき
@@ -260,7 +266,8 @@ export class Drill {
     return this.cues.some((c) => c.say && c.at >= e - after && c.at <= e + before)
   }
 
-  // 途中でやめた：始まっていて閉じていない印を閉じる（記録に残すのは呼んだ側。時刻はやめた時刻）
+  // 途中でやめた：始まっていて閉じていない印を閉じる（記録に残すのは呼んだ側。時刻はやめた時刻）。
+  // 自由走に入ってから終えたときは、自由走の印だけ閉じる（答えつきの区間は最後まで進んだので protocol:stopped は付けない）
   stop(): string[] {
     if (this.stopped) return []
     this.stopped = true
@@ -271,7 +278,7 @@ export class Drill {
       if (m[2] === 'start') open.add(m[1])
       else open.delete(m[1])
     }
-    if (this.nextCue >= this.cues.length) return []
-    return [...[...open].map((k) => `protocol:${k}:end`), 'protocol:stopped']
+    const ends = [...open].map((k) => `protocol:${k}:end`)
+    return this.nextCue >= this.cues.length ? ends : [...ends, 'protocol:stopped']
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CoachState } from '../../../core/engine'
 import { RUNNING } from '../../../core/params'
 import { PHRASES } from '../../../core/phrases'
@@ -20,6 +20,7 @@ import { loadProgress } from '../../../core/storage'
 import { sensors } from '../../sensor/ble'
 import { SensorRunner } from '../../sensor/runner'
 import { SensorRunLog } from '../../sensor/runLog'
+import { heart } from '../../sensor/heart'
 import { queueUpload } from '../../../core/upload/uploads'
 
 // スマホ版の走る画面（ウェブ）。スマホを腰のベルトに付けて走る。画面はつけたまま使う（消えないようにしておく）
@@ -29,7 +30,10 @@ import { queueUpload } from '../../../core/upload/uploads'
 // where：外（outdoor）なら位置情報（GPS）の速さを受け取り、速さが走り始めの基準から外れた秒は判定しない（声もメトロノームも出さない）。
 //   トレッドミル（treadmill）では GPS を使わず、速さは一定とみなす
 // kind：ピッチを上げる練習（practice.ts。練習のテンポのメトロノームだけを鳴らす）か、フォームのテスト（formtest.ts。声はかけず、5分で終える）
-//   か、崩しの撮影（drill.ts。区間を声で指示し、いまの区間・残り時間・次の区間を大きく出す。最後まで進んだら終える）
+//   か、崩しの撮影（drill.ts。区間を声で指示し、いまの区間・残り時間・次の区間を大きく出す。最後まで進んだら終える）。
+//   答えつきの記録（drill の version 'lab'。テスト用のページ /lab/）は、答えつきの区間のあと指示なしの走り（自由走。free.ts）に入り、
+//   本人が終えるまで続ける。腰のポーチの中で触れて終わらないように、終えるボタンは長押し
+const HOLD_MS = 1500
 
 interface Hud {
   state: CoachState
@@ -84,6 +88,21 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
   // テスト：前のテストの速さに合わせてもらう
   const prevTest = kind?.kind === 'test' ? prevFormTest(sessions, Date.now())?.test ?? null : null
   const finishRef = useRef<() => void>(() => {})
+  // 答えつきの記録：終えるのは長押しだけ
+  const lab = kind?.kind === 'drill' && kind.drill.version === 'lab'
+  const [holding, setHolding] = useState(false)
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const startHold = () => {
+    setHolding(true)
+    holdTimer.current = setTimeout(() => finishRef.current(), HOLD_MS)
+  }
+  const endHold = () => {
+    setHolding(false)
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+  }
+  // 答えつきの記録：つながっているセンサーと心拍計（記録するだけ。画面に数を出す）
+  const nodes = useSyncExternalStore(sensors.subscribe, sensors.snapshot)
+  const hv = useSyncExternalStore(heart.subscribe, heart.snapshot)
   const [hud, setHud] = useState<Hud>({
     state: 'waiting', elapsed: 0, quiet: false, caption: '', cadence: null, refCadence: null, refLater: false, tone: false, tempo: null, practiceBase: kind?.kind === 'practice' ? kind.plan.base : null, bounceCm: null, brakingMs: null, cadences: [], mount: null, hz: 0, gyro: false, wake: false, noData: false,
     speed: null, refSpeed: null, gate: null, gpsError: location === 'denied' ? 1 : location === 'unsupported' ? 2 : null, drill: null,
@@ -104,9 +123,12 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
     const logTimer = setInterval(() => void saver.flush(), LOG_CHUNK.every * 1000)
     // テスト期間：自作のセンサーがつながっていれば、スマホ版とは別に動かす（立った姿勢と走っているかはセンサーで決め、振動だけで知らせる。
     // 声はスマホ版の声と重ねないので出さない）。記録もスマホ版とは別のファイル（runs/sensor/。時刻は clock で合わせる）
-    const sensorRec = !sim && sensors.supported && sensors.connected > 0 ? new SensorRunLog({ perfMs: perf0, epochMs: run.log.clock.epochMs }, 'phone') : null
+    // 答えつきの記録（/lab/）では、つながっている分だけ記録し、震わせない（センサーは答え合わせの材料。走っている最中の指摘は腰のスマホの値だけ。
+    // 2026-11-17 本人の決め）。2つの立ち方の案内もしない（声を渡さない）。心拍計がつながっていれば心拍も記録する（センサーがなくても）
+    const heartOn = lab && heart.snapshot().status === 'connected'
+    const sensorRec = !sim && ((sensors.supported && sensors.connected > 0) || heartOn) ? new SensorRunLog({ perfMs: perf0, epochMs: run.log.clock.epochMs }, 'phone') : null
     if (sensorRec) {
-      sensorRec.start(new SensorRunner({ onEvent: sensorRec.event, level: loadProgress().level }))
+      sensorRec.start(new SensorRunner({ onEvent: sensorRec.event, level: loadProgress().level, ...(lab ? { haptic: false, heart } : {}) }))
       run.log.events.push([Math.round((perf0 / 1000) * 1000) / 1000, `sensor:log ${sensorRec.log.id}`])
     }
     const saveAll = () => {
@@ -220,6 +242,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       const drill = run.drill
       if (drill) {
         handle(run.guide(t), t)
+        // 答えつきの記録は自由走に入ると終わりがない（本人が長押しで終える）。done になるのは崩しの撮影だけ
         if (drill.at(t).done) {
           finish()
           return
@@ -296,15 +319,18 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
     hud.state === 'waiting' ? '腰のベルトにスマホを付けて、走り出すと始まります' : hud.state === 'paused' ? '一時停止中。走り出すと再開します' : hud.quiet ? '声なしで確認中' : hud.refCadence === null ? '走り始めの基準を作っています（3分）' : ''
   const showNote = !!note && kind?.kind !== 'drill' && !(kind?.kind === 'test' && hud.state === 'running') && !(kind?.kind === 'practice' && hud.practiceBase !== null)
   // 時間の横の短い印：下の文（note）を出さない走り（崩しの撮影・テスト・練習）でも、待っている・止まっているが分かるように
-  const label = showNote ? '' : hud.state === 'paused' ? '一時停止中' : hud.state === 'waiting' ? '走り出し待ち' : hud.quiet ? '声なしで確認中' : ''
+  // 答えつきの記録はしくみの声を使わない（自由走の試しの声は別）ので、「声なしで確認中」は出さない
+  const label = showNote ? '' : hud.state === 'paused' ? '一時停止中' : hud.state === 'waiting' ? '走り出し待ち' : hud.quiet && !lab ? '声なしで確認中' : ''
 
   return (
     <main className="page" style={{ gap: 14 }}>
       <div className="row">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          {!lab && (
+            <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          )}
           <div style={{ width: 10, height: 10, borderRadius: 5, background: hud.state === 'running' ? 'var(--accent)' : 'var(--faint)' }} />
           {label && <div style={{ fontSize: 15, fontWeight: 700 }} className="muted">{label}</div>}
         </div>
@@ -383,6 +409,8 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
         <Chip ok={hud.gyro} label={hud.gyro ? 'ジャイロ あり' : 'ジャイロ なし'} />
         <Chip ok={hud.wake} label={hud.wake ? '画面は消えません' : '画面が消えるかも'} />
         {where === 'outdoor' && !sim && <Chip ok={hud.speed !== null} label={hud.speed !== null ? `GPS ${pace(hud.speed)}/km${hud.refSpeed !== null ? `（基準 ${pace(hud.refSpeed)}）` : ''}` : 'GPS なし'} />}
+        {lab && !sim && <Chip ok={nodes.some((n) => n.status === 'connected')} label={`記録するセンサー ${nodes.filter((n) => n.status === 'connected').length}個（震えません）`} />}
+        {lab && !sim && hv.status === 'connected' && <Chip ok label={`心拍 ${hv.bpm ?? '—'}`} />}
       </div>
       {!hud.wake && <div style={{ fontSize: 12 }} className="muted">画面が消えると測れません。設定の「画面表示と明るさ」→「自動ロック」を「なし」にしてください。</div>}
 
@@ -395,9 +423,23 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
         </div>
       )}
 
-      <button className="primary" onClick={() => finishRef.current()}>
-        終える
-      </button>
+      {lab ? (
+        <button
+          className="primary"
+          onPointerDown={startHold}
+          onPointerUp={endHold}
+          onPointerLeave={endHold}
+          onPointerCancel={endHold}
+          onContextMenu={(e) => e.preventDefault()}
+          style={{ opacity: holding ? 0.6 : 1, userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none' }}
+        >
+          {holding ? 'そのまま押し続けると終わります' : '長押しで終える'}
+        </button>
+      ) : (
+        <button className="primary" onClick={() => finishRef.current()}>
+          終える
+        </button>
+      )}
     </main>
   )
 }
@@ -410,7 +452,7 @@ function DrillCard({ d }: { d: NonNullable<Hud['drill']> }) {
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6, borderColor: running ? 'var(--accent)' : undefined }}>
       <div className="row" style={{ fontSize: 13 }}>
         <span className="muted">{d.lab ? '答えつきの記録' : '崩しの撮影'}{running ? `　区間 ${d.n} / ${d.of}` : ''}</span>
-        <span className="muted">{phase.kind === 'done' ? '' : '残り'}</span>
+        <span className="muted">{phase.kind === 'done' ? '' : phase.kind === 'free' ? '走った時間' : '残り'}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
         <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.15, color: running ? 'var(--accent)' : undefined, minWidth: 0 }}>{phase.name}</div>

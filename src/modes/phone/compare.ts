@@ -3,7 +3,7 @@ import { facing, legLength } from '../camera/geometry'
 import { L } from '../camera/landmarks'
 import { PHONE_MOUNTS, type PhoneLog } from './log'
 import { MountCheck, type MountFeatures, type MountIssue } from './mount'
-import { DRILL_PREP_MARKS, DRILL_STEPS, LAB_BACK, LAB_STEPS, LAB_TIME } from './drill'
+import { DRILL_PREP_MARKS, DRILL_STEPS, LAB_BACK, LAB_FREE, LAB_STEPS, LAB_TIME } from './drill'
 
 // スマホ版とカメラ版を同時に記録した2つのファイルを、時刻を合わせて並べ、声にする前の関門（docs/phone-spec.md
 // 「精度の確かめ方」）の材料を出す。実機テスト①（docs/phone-test1.md）の記録を、scripts/compare-runs.mjs から使う
@@ -41,10 +41,11 @@ export const TEST1: Step[] = [
 ]
 // 崩しの撮影（drill.ts）の区間。key は TEST1 と同じものは同じ。記録に区間の印があれば、それで区間を決める
 export const DRILL: Step[] = DRILL_STEPS.map((s) => ({ key: s.key, name: s.name, min: s.full / 60, waist: s.waist, expect: s.expect }))
-// 答えつきの記録（drill.ts の labPlan。/lab/）の区間と、区間のあいだに走ったまま戻す間（back）
+// 答えつきの記録（drill.ts の labPlan。/lab/）の区間と、区間のあいだに走ったまま戻す間（back）、そのあとの自由走（free）
 export const LAB: Step[] = [
   ...LAB_STEPS.map((s) => ({ key: s.key, name: s.name, min: s.full / 60, waist: s.waist, expect: s.expect })),
   { key: LAB_BACK.key, name: LAB_BACK.name, min: LAB_TIME.back / 60, waist: true, expect: null },
+  { key: LAB_FREE.key, name: LAB_FREE.name, min: 0, waist: true, expect: null }, // 答えつきの区間のあとの自由走（長さは本人が決める）
 ]
 // 研究で分かっている向き（ピッチを落とすと上下動とブレーキが増える：Heiderscheit 2011）。比べる相手は最初の「ふつう」
 const RESEARCH: Record<string, { bounce?: 1 | -1; braking?: 1 | -1 }> = { slow: { bounce: 1, braking: 1 }, bouncy: { bounce: 1 } }

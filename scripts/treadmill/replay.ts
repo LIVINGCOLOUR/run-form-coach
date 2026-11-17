@@ -17,7 +17,7 @@ import { Coach } from '../../src/modes/camera/coach'
 import { LIMITS, REL_LIMITS, FORM, LANDING, GOOD, HIP_ABS, BASE_SETTLE, BASELINE } from '../../src/modes/camera/params'
 export { applyStrictness, STAND_REF } from '../../src/modes/camera/params'
 // 答えつきの記録（/lab/）・崩しの撮影の、スマホの記録の区間の印から区間を作る・区間ごとの値の表
-export { LAB_SETTLE, labReport, sectionsFromMarks } from '../../src/modes/phone/labValues'
+export { LAB_SETTLE, labReport, sectionsFromMarks, freeReplay, freeReport } from '../../src/modes/phone/labValues'
 import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
 import { CUE, RECOVER, SAY, PHRASES, FORM_SAY, phraseId } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'

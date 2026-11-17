@@ -3,6 +3,8 @@ import type { PhoneLog } from './log'
 import type { PhoneMeasure } from './signal'
 import { waistGait } from '../sensor/waistSit'
 import { WAIST_SIT } from '../sensor/params'
+import { FreeCoach, type FreeItem, type FreeLine, type FreeSec } from './free'
+import { FREE } from './params'
 
 // 答えつきの記録（/lab/ の腰スマホ1台の走り。drill.ts の labPlan）と崩しの撮影の、区間ごとの値の表。採点（scripts/treadmill-grade.mjs）から使う。
 // Mac の drill の記録がなくても、スマホの記録の区間の印（protocol:<key>:start / end）から区間を作れる（sectionsFromMarks）。
@@ -22,7 +24,7 @@ export const BASE_SKIP = 60 // 最初のふつうの始めに除く秒（走り�
 // 区間（時刻はふつうの時刻 ms）。kind は Mac の drill の記録（scripts/treadmill/plan.mjs）と同じ名前
 export interface LabSection {
   key: string
-  kind: string // normal・drill・gap（ふつうに戻す）・jump・prep など
+  kind: string // normal・drill・gap（ふつうに戻す）・free（答えつきの区間のあとの自由走）・jump・prep など
   name: string
   start: number
   end: number
@@ -33,7 +35,7 @@ const unwrap = (x: unknown): PhoneLog => ((x as { log?: PhoneLog }).log ?? x) as
 
 const NAMES = [...DRILL, ...LAB, ...TEST1]
 const nameOf = (key: string) => (key === 'jump1' || key === 'jump2' ? 'その場でジャンプ' : key === 'still' ? 'じっと立つ' : NAMES.find((s) => s.key === key)?.name ?? key)
-const kindOf = (key: string) => (key === 'jump1' || key === 'jump2' ? 'jump' : key === 'still' ? 'prep' : /^normal\d*$/.test(key) ? 'normal' : key === 'back' ? 'gap' : 'drill')
+const kindOf = (key: string) => (key === 'jump1' || key === 'jump2' ? 'jump' : key === 'still' ? 'prep' : /^normal\d*$/.test(key) ? 'normal' : key === 'back' ? 'gap' : key === 'free' ? 'free' : 'drill')
 
 // スマホの記録の区間の印から、採点の区間を作る（Mac の drill の記録の代わり）。印がなければ sections は空
 export function sectionsFromMarks(file: unknown): { sections: LabSection[]; startedAt: number; jumpAt: number | null; done: boolean; stoppedAt: number | null; endedAt: number; kind: string | null } {
@@ -231,7 +233,7 @@ const rowOf = (label: string, kind: string, sec: number, xs: LabSecond[], b: Lab
   }
 }
 
-const SHOWN = ['normal', 'drill', 'gap', 'speed', 'moved']
+const SHOWN = ['normal', 'drill', 'gap', 'speed', 'moved', 'free']
 
 // 区間ごとの行と、同じ崩し（key）をまとめた行
 export function labRows(secs: LabSecond[], sections: LabSection[], settle = LAB_SETTLE): { base: LabBase | null; rows: LabRow[]; groups: LabRow[] } {
@@ -249,17 +251,17 @@ export function labRows(secs: LabSecond[], sections: LabSection[], settle = LAB_
     const label = s.kind === 'gap' ? `${s.name}（${s.after ? nameOf(s.after) : ''}のあと）` : s.name
     return rowOf(label, s.kind, (s.end - s.start) / 1000, xs, base, near)
   })
-  // 同じ崩しをまとめる（繰り返した区間の秒を合わせる）。ふつう・戻しは1つにまとめる
+  // 同じ崩しをまとめる（繰り返した区間の秒を合わせる）。ふつう・戻しは1つにまとめる。自由走は別の行
   const keys: string[] = []
   for (const s of shown) {
-    const k = s.kind === 'drill' ? s.key : 'ふつう'
+    const k = s.kind === 'drill' || s.kind === 'free' ? s.key : 'ふつう'
     if (!keys.includes(k)) keys.push(k)
   }
   const groups = keys.map((k) => {
-    const ss = shown.filter((s) => (k === 'ふつう' ? s.kind !== 'drill' : s.kind === 'drill' && s.key === k))
+    const ss = shown.filter((s) => (k === 'ふつう' ? s.kind !== 'drill' && s.kind !== 'free' : s.key === k))
     const xs = ss.flatMap((s) => (s.key === 'normal1' && base ? inside(secs, s, Math.min(BASE_SKIP, (s.end - s.start) / 2000)) : inside(secs, s, Math.min(settle, (s.end - s.start) / 2000))))
-    const label = k === 'ふつう' ? 'ふつう（ふつう・戻しすべて）' : `${nameOf(k)}（${ss.length}回）`
-    return rowOf(label, k === 'ふつう' ? 'normal' : 'drill', ss.reduce((a, s) => a + (s.end - s.start) / 1000, 0), xs, base, null)
+    const label = k === 'ふつう' ? 'ふつう（ふつう・戻しすべて）' : k === 'free' ? nameOf(k) : `${nameOf(k)}（${ss.length}回）`
+    return rowOf(label, k === 'ふつう' ? 'normal' : k === 'free' ? 'free' : 'drill', ss.reduce((a, s) => a + (s.end - s.start) / 1000, 0), xs, base, null)
   })
   return { base, rows, groups }
 }
@@ -270,7 +272,7 @@ const f = (x: number | null | undefined, d = 1) => (x === null || x === undefine
 const pc = (x: number | null, b: number | null | undefined) => (x === null || b === null || b === undefined || !b ? '—' : `${x / b - 1 >= 0 ? '+' : '−'}${Math.abs((x / b - 1) * 100).toFixed(1)}%`)
 const sg = (x: number | null, d = 2) => (x === null || !Number.isFinite(x) ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(d)}`)
 const df = (x: number | null, b: number | null | undefined, d = 2) => (x === null || b === null || b === undefined ? '—' : `${x - b >= 0 ? '+' : '−'}${Math.abs(x - b).toFixed(d)}`)
-const KIND_NAME: Record<string, string> = { normal: 'ふつう', drill: '崩し', gap: '戻し', speed: '速さを変える', moved: '動かしたあと' }
+const KIND_NAME: Record<string, string> = { normal: 'ふつう', drill: '崩し', gap: '戻し', speed: '速さを変える', moved: '動かしたあと', free: '自由走' }
 
 export function labReport(file: unknown, sections: LabSection[], opts: { settle?: number; title?: string } = {}): string {
   const settle = opts.settle ?? LAB_SETTLE
@@ -320,6 +322,90 @@ export function labReport(file: unknown, sections: LabSection[], opts: { settle?
     changeTable('### 基準からの変わり（区間ごと）', rows, true)
     changeTable('### 基準からの変わり（同じ崩しをまとめて）', groups, false)
     p('見分けの値：腰落ちで正（接地の割合が増え、山が下がる）、弾むで負。ブレーキは基準との差（m/s）。「前後のふつうから」は、その崩しのすぐ前と後のふつう（戻し）の真ん中からの変わり（外で道や速さが少しずつ変わっても比べられるように）')
+    p()
+  }
+  return out.join('\n')
+}
+
+// ---- 自由走の試しの声を、記録に通し直す（free.ts） ----
+// 答えつきの区間で線を作り、自由走（区間の key 'free'。なければ最後の崩しのあとの、いちばん長いふつう）の秒で、声が出たはずかを数える。
+// アプリの中と同じ FreeCoach に、記録の1秒ごとの値（ピッチ・上下動・ブレーキ）と、生の値から出し直した接地の割合・山を渡す。
+// 判定してよい秒：アプリが値を出した秒（走っている）・付け方の問題（腰以外・ずれた）がない・スマホの上向きが最初のふつうの向きから PHONE.upShiftDeg 以内（free.ts）。
+// 外の記録は GPS の速さも渡す（treadmill を付けると渡さない。2026-11-09 のように、トレッドミルで外を選んで走った記録のため）。
+// alias：古い記録の区間の key を、答えつきの記録の key に読み替える（2026-11-09 の腰を落とす sit → sitmid、ふつうに戻す gap → back）
+
+export interface FreeReplay {
+  lines: FreeLine[]
+  base: FreeCoach['base']
+  free: LabSection | null
+  freeSec: number // 自由走の秒
+  judgedSec: number // そのうち判定した秒（走っていて、止まったあと・速さが外れたあとの待ちも過ぎた秒）
+  cues: { T: number; item: FreeItem; value: number; line: number }[]
+  logged: { lines: string[]; cues: string[] } // 記録に残っている free:line・free:cue（アプリで走ったとき）
+}
+
+export function freeReplay(file: unknown, sections: LabSection[], o: { treadmill?: boolean; alias?: Record<string, string>; p?: typeof FREE } = {}): FreeReplay {
+  const log = unwrap(file)
+  const secs = labSeconds(file)
+  const sc = log.secondColumns
+  const k = (n: string) => sc.indexOf(n)
+  const [iMount, iUx, iUy, iUz, iSpeed] = ['mount', 'upX', 'upY', 'upZ', 'speed'].map(k)
+  const ups = log.seconds.map((r) => (iUx < 0 || r[iUx] === null ? null : ([r[iUx], r[iUy], r[iUz]] as [number, number, number])))
+  const mounts = log.seconds.map((r) => (iMount < 0 ? 0 : (r[iMount] ?? 0)))
+  const speeds = log.seconds.map((r) => (iSpeed < 0 ? null : (r[iSpeed] ?? null)))
+  const outdoor = log.where === 'outdoor' && !o.treadmill
+  const alias = (key: string, kind: string) => o.alias?.[key] ?? (kind === 'gap' ? 'back' : key)
+  const drills = sections.filter((s) => s.kind === 'drill')
+  const lastDrill = drills.length ? Math.max(...drills.map((s) => s.end)) : -Infinity
+  const free = sections.find((s) => s.key === 'free') ?? [...sections].filter((s) => s.kind === 'normal' && s.start >= lastDrill).sort((a, b) => b.end - b.start - (a.end - a.start))[0] ?? null
+  const coach = new FreeCoach(o.p)
+  const cues: FreeReplay['cues'] = []
+  let freeSec = 0
+  let built = false
+  secs.forEach((x, i) => {
+    const judged = mounts[i] !== 1 && mounts[i] !== 3
+    const s: FreeSec = { t: x.T / 1000, judged, stopped: x.cadence === null, up: ups[i], cadence: x.cadence, bounceCm: x.bounceCm, brakingMs: x.brakingMs, duty: x.duty, peakG: x.peakG, speed: outdoor ? speeds[i] : null }
+    if (free && x.T >= free.start) {
+      if (x.T >= free.end) return
+      if (!built) {
+        coach.build()
+        built = true
+      }
+      freeSec++
+      const c = coach.judge(s)
+      if (c) cues.push({ T: x.T, item: c.item, value: c.value, line: c.line })
+      return
+    }
+    const sec = sections.find((z) => z !== free && ['normal', 'drill', 'gap'].includes(z.kind) && x.T >= z.start && x.T < z.end)
+    if (sec) coach.learn(alias(sec.key, sec.kind), (x.T - sec.start) / 1000, s)
+  })
+  if (!built) coach.build()
+  const ev = (re: RegExp) => log.events.filter(([, t]) => re.test(t)).map(([, t]) => t)
+  return { lines: coach.lines, base: coach.base, free, freeSec, judgedSec: coach.checked, cues, logged: { lines: ev(/^free:line /), cues: ev(/^free:cue /) } }
+}
+
+const ITEM_NAME: Record<FreeItem, string> = { cadence: 'ピッチの下がり %', sit: '腰落ちの見分けの値', over: 'ブレーキの増え m/s', bounce: '上下動の増え %' }
+const WHY: Record<FreeLine['why'], string> = { ok: '', noBase: '基準（最初のふつう）の秒が足りない', few: '崩しの区間の秒が足りない（FREE.minCrit より少ない・走っていない）', overlap: '崩しがふつうと分かれなかった', normalOver: 'ふつうでも線を越えていた' }
+
+export function freeReport(r: FreeReplay): string {
+  const out: string[] = []
+  const p = (s = '') => out.push(s)
+  const f2 = (x: number | null) => (x === null ? '—' : x.toFixed(2))
+  p('## 自由走の試しの声（腰のスマホだけ。free.ts に通し直した）')
+  p()
+  p(`線は、答えつきの区間で作った（ふつうの上の端〔${Math.round(FREE.normalQ * 100)}% の分位〕と、わざとの崩しの真ん中の間の真ん中）。${r.free ? `自由走（${r.free.name}）の記録のある ${r.freeSec} 秒のうち、判定した秒 ${r.judgedSec}（止まったあと・速さが外れたあとの待ちを除く）` : '自由走の区間がない'}`)
+  p()
+  p('| 項目 | 線 | ふつうの上の端 | 崩しの真ん中 | 秒（ふつう / 崩し） | 声 | 線を作れなかったわけ |')
+  p('|---|---|---|---|---|---|---|')
+  for (const l of r.lines) p(`| ${ITEM_NAME[l.item]} | ${f2(l.line)} | ${f2(l.normalHi)} | ${f2(l.crit)} | ${l.nNormal} / ${l.nCrit} | ${l.line === null ? '—' : `${r.cues.filter((c) => c.item === l.item).length}回`} | ${WHY[l.why]} |`)
+  p()
+  if (r.cues.length) {
+    const t0 = r.free?.start ?? 0
+    p(`自由走で出たはずの声：${r.cues.map((c) => `${Math.floor((c.T - t0) / 60000)}分${String(Math.round(((c.T - t0) % 60000) / 1000)).padStart(2, '0')}秒 ${c.item}（${c.value.toFixed(2)}）`).join('、')}`)
+    p()
+  }
+  if (r.logged.lines.length || r.logged.cues.length) {
+    p(`記録にある線と声（アプリで走ったとき）：${[...r.logged.lines, ...r.logged.cues].map((x) => `\`${x}\``).join('、')}`)
     p()
   }
   return out.join('\n')

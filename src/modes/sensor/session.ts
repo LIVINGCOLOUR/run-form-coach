@@ -93,6 +93,10 @@ export class SensorSession {
   private peak: Partial<Record<Key, { a: Vec3; deg: number; done: boolean }>> = {}
   poseTries = 0
   voice = true
+  // 震わせるか。false なら、知らせ・ずれ・直ったの振動を出さずに、見分けた結果だけを記録と events に残す
+  // （テスト用のページ /lab/ の答えつきの記録。センサーは答え合わせの材料として記録するだけ。2026-11-17 本人の決め）。
+  // 知らせの events は、震わせなかった印「 (silent)」を付ける
+  haptic = true
   // この走りで知らせた回数（項目ごと）・1時間の上限（core/params.ts の LIMIT.perHour）に達した回数・ずれとみなした回数。
   // 走り終わりのまとめ（runLog.ts の summary）に残す。あとで、知らせを減らしていく決まりを考えるため（いまは数えるだけ）
   readonly counts = { cues: zeroCounts(), capped: zeroCounts(), slips: { chest: 0, head: 0 } }
@@ -330,7 +334,7 @@ export class SensorSession {
         // 2つの立ち方で見ているときは、置き直した基準の猫背の割合も（1 に近ければ、ずれではなく猫背のまま走っていたのかもしれない。あとで確かめる）
         const idx = x.d.index(to)
         this.onEvent(t, `${SLIP} ${x.p.place} ${from.toFixed(1)}→${to.toFixed(1)}${idx !== null ? ` idx ${idx.toFixed(2)}` : ''}`)
-        void sensors.buzz(x.p.place, x.p.slipBuzzCount, x.p.slipBuzzMs)
+        void this.buzz(x.p.place, x.p.slipBuzzCount, x.p.slipBuzzMs)
       }
       if (r.cue && r.tilt !== null) {
         if (x.key === 'chest') chestCued = true
@@ -338,7 +342,7 @@ export class SensorSession {
       }
       // 知らせたあと直った：短く2回震わせる（知らせの1秒1回・ずれの0.3秒×3回と分ける）
       if (r.praise) {
-        void sensors.buzz(x.p.place, x.p.praiseBuzzCount, x.p.praiseBuzzMs)
+        void this.buzz(x.p.place, x.p.praiseBuzzCount, x.p.praiseBuzzMs)
         this.onEvent(t, `${x.ev.ok}${r.tilt !== null ? ` ${r.tilt.toFixed(1)}` : ''}`)
       }
     }
@@ -366,12 +370,17 @@ export class SensorSession {
     })
   }
 
+  // 震わせる（haptic が false なら震わせずに false）
+  private buzz(place: string, count: number, ms: number): Promise<boolean> {
+    return this.haptic ? sensors.buzz(place, count, ms) : Promise.resolve(false)
+  }
+
   // 崩れを知らせる：その場所を震わせ、記録と events に残す。capped：この知らせで1時間の上限に達した
   private notify(x: SensorSession['parts'][number], t: number, tilt: number, capped: boolean) {
     this.counts.cues[x.key]++
-    void sensors.buzz(x.p.place, x.p.buzzCount, x.p.buzzMs).then((ok) => {
+    void this.buzz(x.p.place, x.p.buzzCount, x.p.buzzMs).then((ok) => {
       this.rec?.cue(t, tilt, ok, x.key)
-      this.onEvent(t, `${x.ev.cue} ${tilt.toFixed(1)}${ok ? '' : ' (no buzz)'}`)
+      this.onEvent(t, `${x.ev.cue} ${tilt.toFixed(1)}${!this.haptic ? ' (silent)' : ok ? '' : ' (no buzz)'}`)
     })
     // 1時間の上限に達した（この1時間は、これが最後の知らせ）：sensor:capped 胸
     if (capped) {
@@ -457,7 +466,7 @@ export class SensorSession {
   //   sensor:steps df 0.38 ct 272 L 270 R 275 v 7.4 cad 168 imp 4.1/4.9 drop 1.2 net 1.2（drop：走り出しからのピッチの落ち方 %、net：基準を研究データの下の端より下にしないときの落ち方）
   private tickContact(t: number, running: boolean) {
     for (const c of this.contact.tick(t, running)) {
-      for (const place of c.places) void sensors.buzz(place, c.count, c.ms)
+      for (const place of c.places) void this.buzz(place, c.count, c.ms)
       // 声はカメラの声と重ねない（話している間は振動だけ）
       if (this.voice && !voiceBusy()) speak(c.text)
       if (c.kind === 'cue') this.counts.cues[c.item]++

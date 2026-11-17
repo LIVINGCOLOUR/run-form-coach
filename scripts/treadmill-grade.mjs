@@ -9,7 +9,8 @@
 //   （Mac の drill の記録がないとき：答えつきの記録〔/lab/〕・崩しの撮影〔腰スマホのモード〕のスマホの記録の区間の印 protocol:… から区間を作る。
 //    カメラ版を足すときは、2台の時計が自動で合っている前提。ずれていたら --camera-offset で直す）
 //   スマホ版があれば、区間ごとの値の表（腰の沈み込み・接地の割合・上下の加速度の山・見分けの値・有効接地時間・上下動・ブレーキ・ピッチ。
-//   src/modes/phone/labValues.ts）も出す
+//   src/modes/phone/labValues.ts）と、自由走の試しの声（答えつきの区間で作った線と、自由走で声が出たはずの回数。src/modes/phone/free.ts）も出す。
+//   いっしょに記録したセンサー（rfc-sensor-….json）は npm run merge で並べる
 //   --set 名前=値          線を上書きして、記録をもう一度判定に通す（何回でも）。例 --set head=7 --set trunkRel=4
 //                          短い名前：head・hip（LIMITS の cue）、trunkRel・bodyRel（REL_LIMITS の cue）、bodyMin・bodyMax・trunkMin・trunkMax・headNeck・headLean（正しいフォームの線 FORM）、window、
 //                          landing（着地の基準からの増えの線）・landingMax（着地の決まった線）・landingSay（1 で着地の決まった線を声にする）・speedGuard、
@@ -91,6 +92,10 @@ if (!logPaths.length || logPaths.length > 2) {
   process.exit(1)
 }
 const files = logPaths.map((p, i) => ({ path: p, data: !fromMac && i === 0 ? first : read(p) }))
+if (files.some((f) => (f.data.log ?? f.data).mode === 'sensor')) {
+  console.error('センサーの記録（rfc-sensor-….json）は npm run merge で並べてください（答えつきの記録なら npm run merge -- <rfc-phone-….json> <rfc-sensor-….json>）')
+  process.exit(1)
+}
 const cam = files.find((f) => !R.isPhone(f.data))
 const phone = files.find((f) => R.isPhone(f.data))
 if (files.length === 2 && (!cam || !phone)) {
@@ -297,7 +302,7 @@ function grade(cues, kind) {
   return { rows, sum }
 }
 
-const KIND_NAME = { prep: '立つ', walk: '歩く', stop: '止める', jump: 'ジャンプ', speedup: '速さを上げる', normal: 'ふつう', drill: '崩し', gap: '戻し', speed: '速さを変える', move: 'スマホを動かす', moved: '動かしたあと', cool: '歩く' }
+const KIND_NAME = { prep: '立つ', walk: '歩く', stop: '止める', jump: 'ジャンプ', speedup: '速さを上げる', normal: 'ふつう', drill: '崩し', gap: '戻し', speed: '速さを変える', move: 'スマホを動かす', moved: '動かしたあと', cool: '歩く', free: '自由走' }
 const L = R.PARAMS.LANDING
 const pct = (x) => (x === null || x === undefined || !Number.isFinite(x) ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x * 1000) / 10)}%`)
 const median = (xs) => {
@@ -450,7 +455,11 @@ for (const d of devices) {
 // 区間ごとの値（スマホ版）：腰の沈み込み・接地の割合・上下の加速度の山・見分けの値・有効接地時間・上下動・ブレーキ・ピッチ（labValues.ts）
 if (phone) {
   const settle = settleOpt === undefined ? R.LAB_SETTLE : Number(settleOpt)
-  p(R.labReport(phone.data, sections.map((x) => ({ ...x, start: x.start + phoneOff, end: x.end + phoneOff })), { settle }))
+  const phoneSections = sections.map((x) => ({ ...x, start: x.start + phoneOff, end: x.end + phoneOff }))
+  p(R.labReport(phone.data, phoneSections, { settle }))
+  // 自由走の試しの声（free.ts）：答えつきの区間で線を作り、自由走（なければ最後の崩しのあとの長いふつう）で声が出たはずかを数える。
+  // Mac の drill の記録（トレッドミル）なら、GPS の速さは使わず、古い区間の名前（腰を落とす sit）を「腰を落とす（中）」として読む
+  p(R.freeReport(R.freeReplay(phone.data, phoneSections, { treadmill: fromMac, alias: { sit: 'sitmid' } })))
 }
 
 const md = out.join('\n')

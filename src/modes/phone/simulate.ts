@@ -321,7 +321,8 @@ export function simulateJumps(s: { seconds: number; orientation?: Vec3; seed?: n
 // 崩しの撮影（drill.ts）の段に合わせた模擬の走り。0 秒が誘導の始まり。
 // 立つ・ジャンプ・休みは止まって、走る区間は区間ごとに値を変える（ピッチを落とす：155、弾む：上下動 12cm、
 // かかとから前に：ブレーキ 0.45、付け方の区間はその付け方）。頭・目線・猫背・腕などの姿勢は、腰のスマホの模擬では作れないのでふつうと同じ
-// 答えつきの記録（labPlan）の「ふつうに戻す」（back）はふつうに走り、「走り始める」（start）はベルトを動かすと同じ形
+// 答えつきの記録（labPlan）の「ふつうに戻す」（back）はふつうに走り、「走り始める」（start）はベルトを動かすと同じ形。
+// そのあとの自由走（free。終わりがない）は DEMO_FREE の長さだけ：ふつうに走り、途中に腰を深く落とした形の間をはさむ（試しの声が出るかを見るため）
 export function demoDrill(phases: { kind: string; start: number; sec: number; step?: { key: string } }[]): PhoneMeasure[] {
   const o: Vec3 = [90, 0, 0]
   const real = { noise: 0.5, jitter: 0.02, rollDeg: 4, yawDeg: 6, impact: 20, cadence: 172, bounceCm: 8, brakingMs: 0.3, orientation: o }
@@ -339,9 +340,18 @@ export function demoDrill(phases: { kind: string; start: number; sec: number; st
     pocket: { mount: { kind: 'pocket' } },
   }
   const out: PhoneMeasure[] = []
+  let end = 0
   phases.forEach((p, i) => {
     const seed = 200 + i
-    if (p.kind === 'jump' || p.kind === 'endJump') out.push(...simulateJumps({ seconds: p.sec, orientation: o, seed, t0: p.start }))
+    end = Number.isFinite(p.sec) ? p.start + p.sec : p.start
+    if (p.kind === 'free') {
+      let t = p.start
+      for (const [k, sec] of DEMO_FREE) {
+        out.push(...simulateRun({ ...real, ...(by[k] ?? {}), seconds: sec, seed: seed + t, t0: t }))
+        t += sec
+      }
+      end = t
+    } else if (p.kind === 'jump' || p.kind === 'endJump') out.push(...simulateJumps({ seconds: p.sec, orientation: o, seed, t0: p.start }))
     else if (p.kind === 'run' || p.kind === 'back') out.push(...simulateRun({ ...real, ...(by[p.step?.key ?? ''] ?? {}), seconds: p.sec, seed, t0: p.start }))
     else if (p.kind === 'belt' || p.kind === 'start') {
       // ベルトが動き出すまで立ち、後半はもう走っている
@@ -350,7 +360,13 @@ export function demoDrill(phases: { kind: string; start: number; sec: number; st
     } else if (p.sec > 0) out.push(...simulateStanding({ seconds: p.sec, orientation: o, noise: 0.05, seed, t0: p.start }))
   })
   // 終わりの言葉のあとも少し立っている
-  const end = phases[phases.length - 1]
-  out.push(...simulateStanding({ seconds: 5, orientation: o, noise: 0.05, seed: 999, t0: end.start + end.sec }))
+  out.push(...simulateStanding({ seconds: 5, orientation: o, noise: 0.05, seed: 999, t0: end }))
   return out
 }
+
+// 模擬の自由走：ふつう2分 → 腰を深く落とした形1分 → ふつう2分（区間の key、秒）
+export const DEMO_FREE: [string, number][] = [
+  ['normal', 120],
+  ['sitdeep', 60],
+  ['normal', 120],
+]

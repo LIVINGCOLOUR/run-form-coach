@@ -197,9 +197,9 @@ export const PHRASES = {
   labOpen: '次は、胸を開く。胸を張って、肩を後ろに引いて走ります。',
   labOver: '次は、足を前に出しすぎる。大またで、足を体よりずっと前に伸ばして、かかとから着地します。',
   labBack: 'そこまで。走ったまま、いつもの走りに戻します。',
-  labLast: 'そこまで。走ったまま、いつもの走りに戻して、最後に1分走ります。',
-  labEndJump: 'そこまで。止まって、その場で3回、ジャンプしてください。',
-  labDone: '答えつきの記録は、これで終わりです。横の iPhone で撮っていたら、録画を止めて大丈夫です。おつかれさまでした。',
+  labLast: 'そこまで。走ったまま、いつもの走りに戻して、1分走ります。',
+  // 答えつきの区間のあとの、指示なしの走り（自由走。src/modes/phone/free.ts）。崩れたときの声は、スマホ版の言葉（phoneCadence・phoneBraking・phoneBounce）と腰落ちの cueHip
+  labFree: '答えつきの記録は、ここまでです。ここからは指示なしで、いつもどおり走ってください。崩れたら声で言います。終えるときは、画面の終えるを長押ししてください。',
 } as const
 
 export type PhraseId = keyof typeof PHRASES
