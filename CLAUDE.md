@@ -16,7 +16,7 @@
 | | 判定のロジックの全体（人向け） | `src/theory/`（公開先の /theory/。値は `params.ts` から出す） |
 | 根拠 | 実機の記録で確かめた結果（猫背と厳しさ・胸の震え・直立・速さごとのよい例） | `docs/validation-plan.md` の「確かめた結果」 |
 | | 仮想実験の結果 | `sim/result-*.md`（`sim/*.sim.ts` が書き出す。手で直さない） |
-| | 研究の材料（速さと姿勢、スマホ版の測り方と声かけ、スマホで取り込める競合の機能） | `docs/research/posture-vs-speed.md`、`docs/research/phone-methods.md`、`docs/research/phone-competitors.md`、走ったあとのフォームのふり返り（ほかの製品が見せているもの） `docs/research/post-run-review.md`、心拍と GPS を使うスマホのランのアプリ `docs/research/phone-hr-gps-apps.md` |
+| | 研究の材料（速さと姿勢、スマホ版の測り方と声かけ、スマホで取り込める競合の機能） | `docs/research/posture-vs-speed.md`、`docs/research/phone-methods.md`、`docs/research/phone-competitors.md`、走ったあとのフォームのふり返り（ほかの製品が見せているもの） `docs/research/post-run-review.md`、心拍と GPS を使うスマホのランのアプリ `docs/research/phone-hr-gps-apps.md`、スマホ単体で姿勢（腰の沈み）を見る競合 `docs/research/phone-only-posture.md` |
 | | 競合（定期的に調べ直す） | `docs/competitors.md` |
 | 手順 | 答えつきの記録・確かめ走・採点、素材の集め方 | `docs/validation-plan.md` |
 | | スマホ版の実機テスト①（測り方と付け方）・②（ピッチの声とメトロノーム） | `docs/phone-test1.md`、`docs/phone-test2.md` |
