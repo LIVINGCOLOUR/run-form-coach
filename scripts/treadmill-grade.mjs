@@ -5,6 +5,11 @@
 //
 // 使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [オプション]
 //   （カメラ版・スマホ版はどちらか1つでもよく、順番も問わない。中身で見分ける）
+//        npm run grade -- <スマホ版.json> [<カメラ版.json>] [オプション]
+//   （Mac の drill の記録がないとき：答えつきの記録〔/lab/〕・崩しの撮影〔腰スマホのモード〕のスマホの記録の区間の印 protocol:… から区間を作る。
+//    カメラ版を足すときは、2台の時計が自動で合っている前提。ずれていたら --camera-offset で直す）
+//   スマホ版があれば、区間ごとの値の表（腰の沈み込み・接地の割合・上下の加速度の山・見分けの値・有効接地時間・上下動・ブレーキ・ピッチ。
+//   src/modes/phone/labValues.ts）も出す
 //   --set 名前=値          線を上書きして、記録をもう一度判定に通す（何回でも）。例 --set head=7 --set trunkRel=4
 //                          短い名前：head・hip（LIMITS の cue）、trunkRel・bodyRel（REL_LIMITS の cue）、bodyMin・bodyMax・trunkMin・trunkMax・headNeck・headLean（正しいフォームの線 FORM）、window、
 //                          landing（着地の基準からの増えの線）・landingMax（着地の決まった線）・landingSay（1 で着地の決まった線を声にする）・speedGuard、
@@ -24,6 +29,7 @@
 //                          走り始め・止まりは、どちらでも今のコードと同じく直近のコマの割合で決める。--replay-from start と合わせて、歩きで始まらないかを確かめる
 //   --level 初心者|中級|上級   カメラ版を、そのレベルの線（beginner・intermediate・advanced）と、記録のベルトの速さ・胸を開いた立ち方（b）で通し直す
 //                          （撮ったときと同じ条件。無ければ今までどおり、読み込んだときの線＝中級で、速さも b も入れない）。--set はそのあとに効く
+//   --settle 秒            区間ごとの値の表で、区間の始めに除く秒（既定 8。窓6秒 ＋ 合図から崩すまで）
 //   --out ファイル         Markdown をファイルにも書く
 //
 // 判定に通し直すところ（scripts/treadmill/replay.ts）は src/ の判定のコードをそのまま使う（rolldown で1つにまとめて読む）
@@ -51,7 +57,7 @@ const sets = []
 for (let v; (v = opt('--set')) !== undefined; ) sets.push(v)
 const grace = Number(opt('--grace') ?? 10)
 const camOff = Number(opt('--camera-offset') ?? 0) * 1000
-const phoneOff = Number(opt('--phone-offset') ?? 0) * 1000
+let phoneOff = Number(opt('--phone-offset') ?? 0) * 1000
 const itemsAll = opt('--items') === 'all'
 const noReplay = flag('--no-replay')
 const thin = flag('--thin')
@@ -61,9 +67,10 @@ const LEVEL_NAME = { 初心者: 'beginner', 中級: 'intermediate', 上級: 'adv
 const levelOpt = opt('--level')
 const level = levelOpt ? LEVEL_NAME[levelOpt] ?? levelOpt : undefined
 const outFile = opt('--out')
-const [drillPath, ...logPaths] = args
-if (!drillPath || !logPaths.length || logPaths.length > 2) {
-  console.error('使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [--set 名前=値] [--grace 秒] [--camera-offset 秒] [--phone-offset 秒] [--items all] [--no-replay] [--thin] [--replay-from jog|start] [--running steps] [--out ファイル]')
+const settleOpt = opt('--settle')
+const USAGE = '使い方: npm run grade -- <drill-….json> <カメラ版.json> [<スマホ版.json>] [オプション]\n　　　または npm run grade -- <スマホ版.json（区間の印のある記録）> [<カメラ版.json>] [オプション]\nオプション: [--set 名前=値] [--grace 秒] [--camera-offset 秒] [--phone-offset 秒] [--items all] [--no-replay] [--thin] [--replay-from jog|start] [--running steps] [--settle 秒] [--out ファイル]'
+if (!args.length) {
+  console.error(USAGE)
   process.exit(1)
 }
 
@@ -74,20 +81,40 @@ await build({ input: join(root, 'scripts/treadmill/replay.ts'), platform: 'node'
 const R = await import(pathToFileURL(bundle).href)
 
 const read = (p) => JSON.parse(readFileSync(p, 'utf8'))
-const drill = read(drillPath)
-if (drill.kind !== 'treadmill-drill') {
-  console.error(`${drillPath} は npm run drill の記録ではありません`)
+// 1つ目が Mac の drill の記録か。そうでなければ、全部が走りの記録で、区間はスマホの記録の印から作る
+const first = read(args[0])
+const fromMac = first?.kind === 'treadmill-drill'
+const drillPath = fromMac ? args[0] : null
+const logPaths = fromMac ? args.slice(1) : args
+if (!logPaths.length || logPaths.length > 2) {
+  console.error(USAGE)
   process.exit(1)
 }
-const files = logPaths.map((p) => ({ path: p, data: read(p) }))
+const files = logPaths.map((p, i) => ({ path: p, data: !fromMac && i === 0 ? first : read(p) }))
 const cam = files.find((f) => !R.isPhone(f.data))
 const phone = files.find((f) => R.isPhone(f.data))
 if (files.length === 2 && (!cam || !phone)) {
   console.error('カメラ版とスマホ版を1つずつ渡してください（同じ種類が2つあります）')
   process.exit(1)
 }
+let drill
+if (fromMac) drill = first
+else {
+  if (!phone) {
+    console.error(`${args[0]} は npm run drill の記録ではありません。Mac の drill の記録がないときは、区間の印のあるスマホ版の記録（/lab/ の答えつきの記録か、崩しの撮影）を渡してください`)
+    process.exit(1)
+  }
+  // スマホの記録の時計を「Mac の時計」の代わりにする（--phone-offset は使わない）
+  const m = R.sectionsFromMarks(phone.data)
+  if (!m.sections.some((x) => ['normal', 'drill', 'gap'].includes(x.kind))) {
+    console.error(`${phone.path} に区間の印（protocol:…）がありません。/lab/ の答えつきの記録か、崩しの撮影の記録を渡してください`)
+    process.exit(1)
+  }
+  drill = { kind: 'treadmill-drill', fromPhone: true, phoneKind: m.kind, startedAt: m.startedAt, sections: m.sections, jumpAt: m.jumpAt, done: m.done, stoppedAt: m.stoppedAt, endedAt: m.endedAt }
+}
 
-// 区間（Mac の時計）。閉じていない区間（途中で止めた）は止めた時刻で閉じる
+if (drill.fromPhone) phoneOff = 0
+// 区間（Mac の時計。スマホの記録の印から作ったときは、スマホの時計）。閉じていない区間（途中で止めた）は止めた時刻で閉じる
 const sections = drill.sections
   .filter((s) => s.start !== null)
   .map((s) => ({ ...s, end: s.end ?? drill.stoppedAt ?? drill.endedAt ?? s.start + s.plannedSec * 1000 }))
@@ -115,9 +142,10 @@ const fmt = (x, d = 1) => (x === null || x === undefined || !Number.isFinite(x) 
 const out = []
 const p = (s = '') => out.push(s)
 
-p(`# トレッドミルの検証の採点（${clock(drill.startedAt)} に始めた記録）`)
+p(`# ${drill.fromPhone ? '答えつきの記録の採点' : 'トレッドミルの検証の採点'}（${clock(drill.startedAt)} に始めた記録）`)
 p()
-p(`- 区間の記録: \`${drillPath}\`${drill.done ? '' : '（途中で止めた記録）'}${drill.note ? `。メモ: ${drill.note}` : ''}`)
+if (drill.fromPhone) p(`- 区間: スマホ版の記録の区間の印（protocol:…）から作った（${drill.phoneKind?.startsWith('kind:drill:lab') ? '答えつきの記録' : drill.phoneKind?.startsWith('kind:drill:') ? '崩しの撮影' : drill.phoneKind ?? '種類の印なし'}）${drill.done ? '' : '。途中で止めた記録'}。時刻はスマホの時計`)
+else p(`- 区間の記録: \`${drillPath}\`${drill.done ? '' : '（途中で止めた記録）'}${drill.note ? `。メモ: ${drill.note}` : ''}`)
 if (cam) p(`- カメラ版: \`${cam.path}\``)
 if (phone) p(`- スマホ版: \`${phone.path}\``)
 p(`- 崩しの区間が終わってから ${grace} 秒までに出た声は、その崩しを見つけたと数える（\`--grace\`）`)
@@ -204,6 +232,8 @@ p()
 // ---- 時計 ----
 p('## 時計（ジャンプの「はい」と、記録で大きく動き始めた時刻）')
 p()
+if (drill.fromPhone && drill.jumpAt) p('区間はスマホの記録の印から作ったので、「はい」の代わりに、ジャンプの言葉を言い始めた時刻（protocol:jump1:start）と比べる。言葉に約3秒かかるので、スマホ版は 3〜5 秒ほどになるのがふつう。カメラ版がスマホ版と1秒より大きくずれていたら、その差を `--camera-offset` に入れる')
+if (drill.fromPhone && drill.jumpAt) p()
 if (!drill.jumpAt) p('ジャンプの合図がない記録です（--no-jump か、その前に止めた）。')
 else {
   p('| 記録 | 動いた時刻 − 「はい」 | 目立ち（ばらつきの何倍） |')
@@ -415,6 +445,12 @@ for (const d of devices) {
       p()
     }
   }
+}
+
+// 区間ごとの値（スマホ版）：腰の沈み込み・接地の割合・上下の加速度の山・見分けの値・有効接地時間・上下動・ブレーキ・ピッチ（labValues.ts）
+if (phone) {
+  const settle = settleOpt === undefined ? R.LAB_SETTLE : Number(settleOpt)
+  p(R.labReport(phone.data, sections.map((x) => ({ ...x, start: x.start + phoneOff, end: x.end + phoneOff })), { settle }))
 }
 
 const md = out.join('\n')

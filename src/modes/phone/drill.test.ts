@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { PHRASES, SAY } from '../../core/phrases'
 import { findSegments, readPhone } from './compare'
-import { Drill, DRILL_TIME, drillPlan, drillSteps } from './drill'
+import { Drill, DRILL_TIME, drillPlan, drillSteps, LAB_TIME } from './drill'
+import { labReport, labRows, labSeconds, sectionsFromMarks } from './labValues'
 import { PhoneRun } from './session'
 import { demoDrill } from './simulate'
 
@@ -183,5 +184,123 @@ describe.each([
     expect(warnings[0]).toContain('印')
     // 名前を渡したときは、今までどおり休みで区切る
     expect(findSegments(ph, undefined, ['a']).warnings.some((w) => w.includes('印'))).toBe(false)
+  })
+})
+
+// 答えつきの記録（/lab/、labPlan）：腰のスマホ1台で、外でもトレッドミルでも。区間のあいだは走ったまま戻す
+describe('答えつきの記録：区間の並びと声', () => {
+  const lab = { version: 'lab', extra: false } as const
+  const plan = drillPlan(lab)
+
+  it('ふつう4分 → 腰を落とす3段×2・猫背・弾む×2・胸を開く・足を前に出しすぎる×2（30秒ずつ）→ ふつう1分。崩しのあいだは40秒、走ったまま戻す。全体はおよそ20分', () => {
+    const runs = plan.phases.filter((p) => p.kind === 'run')
+    expect(runs.map((p) => p.mark)).toEqual(['normal1', 'sitlight', 'sitmid', 'sitdeep', 'hunch', 'bouncy', 'open', 'over', 'sitlight', 'sitmid', 'sitdeep', 'bouncy', 'over', 'normal2'])
+    expect(runs.map((p) => p.sec)).toEqual([LAB_TIME.base, ...Array(12).fill(LAB_TIME.sec), LAB_TIME.last])
+    expect(plan.phases.filter((p) => p.kind === 'rest')).toEqual([])
+    expect(plan.phases.filter((p) => p.kind === 'back')).toHaveLength(11)
+    expect(plan.phases.filter((p) => p.kind === 'back').every((p) => p.sec === LAB_TIME.back && p.mark === 'back')).toBe(true)
+    expect(plan.phases.map((p) => p.kind).slice(0, 5)).toEqual(['setup', 'jump', 'still', 'start', 'run'])
+    expect(plan.phases.slice(-2).map((p) => p.kind)).toEqual(['endJump', 'done'])
+    plan.phases.slice(1).forEach((p, i) => expect(p.start).toBe(plan.phases[i].start + plan.phases[i].sec))
+    expect(plan.total / 60).toBeGreaterThan(18)
+    expect(plan.total / 60).toBeLessThan(22)
+    // 足を前に出しすぎるは必ず入る
+    expect(runs.filter((p) => p.mark === 'over')).toHaveLength(2)
+  })
+
+  it('声は時刻の順。崩しの名前とやり方は始まりの14秒前（戻しかふつうの中）、合図は始まり、残り10秒の予告、終わりに「走ったまま戻す」', () => {
+    plan.cues.slice(1).forEach((c, i) => expect(c.at).toBeGreaterThanOrEqual(plan.cues[i].at))
+    const deep = plan.phases.find((p) => p.mark === 'sitdeep')!
+    const sayAt = (text: string) => plan.cues.filter((c) => c.say === text).map((c) => c.at)
+    expect(sayAt(PHRASES.labSitDeep)).toContain(deep.start - LAB_TIME.lead)
+    expect(sayAt(PHRASES.drillGo)).toContain(deep.start)
+    expect(sayAt(PHRASES.drillSoon)).toContain(deep.start + deep.sec - DRILL_TIME.soon)
+    expect(sayAt(PHRASES.labBack)).toContain(deep.start + deep.sec)
+    const first = plan.phases.find((p) => p.mark === 'sitlight')!
+    const n1 = plan.phases.find((p) => p.mark === 'normal1')!
+    expect(first.start).toBe(n1.start + n1.sec) // 最初の崩しは、基準のふつうのすぐあと
+    expect(sayAt(PHRASES.labSitLight)).toContain(first.start - LAB_TIME.lead)
+    // 名前とやり方を言っている間（約10秒）に、前の区間の残り10秒の予告が重ならない
+    for (const c of plan.cues.filter((x) => x.say === PHRASES.drillSoon)) expect(plan.cues.some((x) => x.say && x.say !== PHRASES.drillSoon && Math.abs(x.at - c.at) < 4)).toBe(false)
+    // 使う言葉はすべて PHRASES にある（音声を作る）
+    const ids = new Set(Object.values(PHRASES))
+    for (const c of plan.cues) if (c.say) expect(ids.has(c.say as never)).toBe(true)
+  })
+
+  it('次の区間は、戻しを飛ばして次の崩し', () => {
+    const d = new Drill(lab, 0)
+    const back = plan.phases.find((p) => p.kind === 'back')!
+    expect(d.at(back.start + 1).next?.kind).toBe('run')
+  })
+})
+
+describe('答えつきの記録：模擬データで最後まで（ピッチの声とメトロノームは出さない）', () => {
+  const base = 500
+  const lab = { version: 'lab', extra: false } as const
+  const run = new PhoneRun({ perfMs: base * 1000, epochMs: 1_760_000_000_000 }, { userAgent: 'test', intervalMs: 16.7 }, 'treadmill', { kind: 'drill', drill: lab })
+  const data = demoDrill(run.drill!.phases)
+  const said: string[] = []
+  let next = base
+  let done = false
+  for (const m of data) {
+    const t = base + m.t
+    for (const e of run.feed({ ...m, t })) if (e.type === 'speak') said.push(e.text)
+    if (t >= next) {
+      next += 0.25
+      for (const e of run.guide(t)) if (e.type === 'speak') said.push(e.text)
+      if (run.drill!.at(t).done) {
+        done = true
+        break
+      }
+    }
+  }
+  const { log, session } = run.finish()
+  const events = log.events.map((e) => e[1])
+
+  it('最後まで進み、崩しと戻しの印が残る。種類は kind:drill:lab:base', () => {
+    expect(done).toBe(true)
+    expect(events).toContain('kind:drill:lab:base')
+    expect(session?.kind).toBe('drill')
+    const starts = events.filter((e) => /^protocol:.+:start$/.test(e)).map((e) => e.split(':')[1])
+    expect(starts.filter((k) => k === 'back')).toHaveLength(11)
+    expect(starts.filter((k) => k === 'over')).toHaveLength(2)
+    expect(events).toContain('protocol:done')
+    expect(said).toContain(PHRASES.labDone)
+  })
+
+  it('足を前に出しすぎる（模擬はピッチ 172 → 162）でも、ピッチの声とメトロノームは出さない', () => {
+    expect(said).not.toContain(PHRASES.phoneCadence)
+    expect(events.some((e) => e.startsWith('tone:on:'))).toBe(false)
+  })
+
+  it('compare.ts は印で区間を決め、答えつきの記録の名前を付ける', () => {
+    const ph = readPhone(JSON.parse(JSON.stringify({ log, session })))
+    const { segments } = findSegments(ph)
+    expect(segments.find((s) => s.step?.key === 'over')?.name).toBe('足を前に出しすぎる')
+    expect(segments.find((s) => s.step?.key === 'back')?.name).toBe('ふつうに戻す')
+    expect(segments.find((s) => s.step?.key === 'sitdeep')?.name).toBe('腰を深く落とす')
+  })
+
+  it('区間ごとの値の表：スマホの記録だけで区間を作り、新しい区間（足を前に出しすぎる）も出る', () => {
+    const file = JSON.parse(JSON.stringify({ log, session }))
+    const m = sectionsFromMarks(file)
+    expect(m.done).toBe(true)
+    expect(m.sections.find((s) => s.key === 'normal1')?.kind).toBe('normal')
+    expect(m.sections.find((s) => s.key === 'back')?.kind).toBe('gap')
+    expect(m.sections.find((s) => s.key === 'back')?.after).toBe('sitlight')
+    expect(m.sections.find((s) => s.key === 'over')?.kind).toBe('drill')
+    const { base, rows, groups } = labRows(labSeconds(file), m.sections)
+    expect(base?.duty).toBeGreaterThan(0)
+    expect(base?.peakG).toBeGreaterThan(1)
+    const over = rows.find((r) => r.label === '足を前に出しすぎる')!
+    expect(over.n).toBeGreaterThan(15)
+    // 模擬では、足を前に出しすぎるでピッチを下げ、腰を深く落とすで着地の山を下げている
+    expect(over.v.cadence!).toBeLessThan(base!.cadence! - 5)
+    const deep = groups.find((g) => g.label.startsWith('腰を深く落とす'))!
+    expect(deep.v.peakG!).toBeLessThan(base!.peakG!)
+    expect(deep.n).toBeGreaterThan(30)
+    const md = labReport(file, m.sections)
+    expect(md).toContain('足を前に出しすぎる（2回）')
+    expect(md).toContain('腰の沈み込み')
   })
 })

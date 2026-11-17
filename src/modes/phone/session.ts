@@ -48,6 +48,7 @@ export type PhoneWhere = 'outdoor' | 'treadmill'
 //   ほめる言葉と声なしの見守りの言葉も言わない。付け方の確認の声と、始め・終わりの言葉は言う
 // 崩しの撮影（drill.ts。トレッドミルだけ）：ふつうの走りと同じようにピッチの声・メトロノーム・付け方の確認の声を出し、
 //   誘導の声を優先する（誘導の声の近くでは、ほかの声とメトロノームを待たせる）。しくみの始め・一時停止・再開・ほめる言葉・見守りの言葉は言わない
+//   答えつきの記録（drill の version 'lab'。外でもトレッドミルでも）は、同じ流れで、ピッチの声とメトロノームを出さない（付け方の確認の声は出す）
 export type PhoneKind = { kind: 'practice'; plan: PracticePlan } | { kind: 'test' } | { kind: 'drill'; drill: DrillOptions }
 
 export interface PhoneSession {
@@ -120,8 +121,10 @@ export class PhoneRun {
     this.where = where
     this.kind = kind?.kind ?? null
     // 練習とテストでは、どの項目でも知らせない（ピッチが落ちたときのメトロノームを鳴らさない）
-    // 崩しの撮影では、ふつうの走りと同じくピッチで知らせる
-    this.coach = new PhoneCoach(this.analyzer, { pause: true, items: kind && kind.kind !== 'drill' ? [] : voiced, muteOthers: true, holdUnjudged: true })
+    // 崩しの撮影では、ふつうの走りと同じくピッチで知らせる。答えつきの記録（drill の version 'lab'）は、わざと崩している間に
+    // 直す声がかかると崩し方が変わるので知らせない（採点の --items all は、ふつうの走りとして通し直して「声が出たはずか」を見る）
+    const quiet = !!kind && (kind.kind !== 'drill' || kind.drill.version === 'lab')
+    this.coach = new PhoneCoach(this.analyzer, { pause: true, items: quiet ? [] : voiced, muteOthers: true, holdUnjudged: true })
     this.lastState = this.coach.state
     if (kind?.kind === 'practice') this.practice = new PracticeRun(kind.plan)
     if (kind?.kind === 'drill') this.drill = new Drill(kind.drill, clock.perfMs / 1000)

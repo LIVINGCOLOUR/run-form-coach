@@ -25,6 +25,9 @@ export const STEPS = {
   bouncy: { name: '弾む', say: '上に弾んで', camera: [], phone: ['bounce'], legs: true },
   // 着地が体より前（オーバーストライド）。3R の動画の着地の崩しは、基準より +0.03〜+0.09
   heel: { name: 'かかとから前に', say: '大またで、足を体より前に伸ばして、かかとから着地', camera: ['landing'], phone: ['braking'], legs: true, sec: 60 },
+  // 足を前に出しすぎる（オーバーストライド。体よりずっと前に着地）。答えつきの記録（/lab/、src/modes/phone/drill.ts の labPlan）の区間で、
+  // 本人の希望で必ず入れる（2026-11-17）。heel と同じ崩しを、はっきり大きく30秒
+  over: { name: '足を前に出しすぎる', say: '大またで、足を体よりずっと前に伸ばして、かかとから着地', camera: ['landing'], phone: ['braking'], legs: true },
   flat: { name: 'べた足', say: 'べた足で、ぺたっと着地', camera: [], phone: [], legs: true },
   // 起きた形（体を後ろに残す）。ふつうは走り出しの区間（options.upright）として使い、アプリの整える声（体が後ろに残っています）に従って直す
   upright: { name: '起きた形で走り出す', say: '体を少し後ろに残して、起きた形で', camera: ['bodyBack', 'trunkBack'], phone: [] },

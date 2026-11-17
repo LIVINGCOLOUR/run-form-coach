@@ -1,5 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { exportLog } from '../core/exportLog'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { Screen } from '../App'
 import type { ItemKey, Session } from '../core/types'
 import { goodFor, mainStride, pct0, todayFocus } from '../modes/camera/nextStep'
@@ -14,15 +13,11 @@ import { startGravity } from '../modes/camera/gravity'
 import { fullFrames } from '../modes/camera/fullFrames'
 import { correctFrames, demoStride, normalizeStride } from '../modes/camera/ui/figure'
 import { ShareBar } from '../ui/ShareBar'
-import type { PhoneKind, PhoneSession, PhoneWhere } from '../modes/phone/session'
-import { nextPractice } from '../modes/phone/practice'
-import { prevFormTest } from '../modes/phone/formtest'
-import { FORM_TEST, PRACTICE } from '../modes/phone/params'
-import { drillPlan, type DrillOptions, type DrillVersion } from '../modes/phone/drill'
-import { requestLocation, requestMotionPermission, requestWakeLock } from '../modes/phone/sensor'
-import { exportPhoneLog, loadPhoneWhere, savePhoneWhere } from '../modes/phone/storage'
+import type { PhoneSession } from '../modes/phone/session'
+import { requestMotionPermission } from '../modes/phone/sensor'
+import { startPhone } from '../modes/phone/screens/startPhone'
 import { flushUploads } from '../core/upload/uploads'
-import { UploadKeyButton, UploadPanel } from '../ui/Upload'
+import { UploadPanel } from '../ui/Upload'
 import { SensorPanel } from '../modes/sensor/SensorPanel'
 import { HeartPanel } from '../modes/sensor/HeartPanel'
 import { sensors } from '../modes/sensor/ble'
@@ -36,15 +31,9 @@ const fmt1 = (x: number) => String(Math.round(x * 10) / 10)
 // 着地は、速さで補正したかかとの前（脚の長さに対する割合）を % で
 const show = (item: ItemKey, x: number) => (item === 'landing' ? pct0(x) : `${fmt1(x)}${unit(item)}`)
 
-const WHERE_LABEL: Record<PhoneWhere, string> = { outdoor: '外', treadmill: 'トレッドミル' }
-const WHERE_NOTE: Record<PhoneWhere, string> = {
-  outdoor: 'GPS で速さを見ます。ペースを変えたときは判定を止めます（位置情報の許可を求めます）',
-  treadmill: 'GPS は使いません。速さは一定とみなします',
-}
-
-// 開発用の入り口（動画で試す・スロー動画・腰スマホの練習とテスト・記録の書き出しなど）は、URL に ?dev=1 を付けたときだけ出す。
-// ふだんのホームは、走り方・はじめる・フォームの見方だけにする（本人の希望。2026-11-05）
-const dev = typeof location !== 'undefined' && new URLSearchParams(location.search).has('dev')
+// ふだんのホームは、走り方・はじめる・フォームの見方だけにする（本人の希望。2026-11-05）。
+// テストの機能（答えつきの記録・崩しの撮影・動画で試す・スロー動画・腰スマホの練習とテスト・記録の書き出しなど）は、
+// テスト用のページ /lab/（LabHome.tsx）に分けた（本人の決め 2026-11-17）
 
 // 走り方（入り口）。ホームのいちばん上で選び、「はじめる」1つで始める。選んだものは端末に覚えておく
 type RunMode = 'treadmill' | 'waist' | 'sensor'
@@ -79,8 +68,6 @@ const linkStyle = { background: 'none', border: 0, padding: 0, color: 'var(--mut
 export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]; phoneSessions?: PhoneSession[]; go: (s: Screen) => void }) {
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [progress, setProgress] = useState<Progress>(loadProgress)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const slowRef = useRef<HTMLInputElement>(null)
   const [mode, setMode] = useState<RunMode>(loadMode)
   const chooseMode = (m: RunMode) => {
     setMode(m)
@@ -132,55 +119,8 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
     speak(PHRASES.sample, voice)
   }
 
-  // スマホ版：押したときに、動きのセンサーの許可（iPhone）と、画面が消えないようにする仕組みと、位置情報の許可（外のとき）をまとめて求める。
-  // 動きのセンサーの許可は、押した流れの中で求めないと出ないので先に。位置情報は、そのあとに続けて
-  const startPhone = async (where: PhoneWhere, kind?: PhoneKind) => {
-    unlockVoice()
-    const wake = requestWakeLock()
-    await requestMotionPermission()
-    const location = where === 'outdoor' ? await requestLocation() : undefined
-    await wake
-    go({ name: 'phone', where, location, kind })
-  }
+  // 腰スマホ：外で走る（GPS で速さを見る）。トレッドミルで試すのは /lab/ から
   const lastPhone = phoneSessions[0]
-  // ピッチを上げる練習（選んだ人だけ）とフォームのテスト（月1回）
-  const practice = nextPractice(phoneSessions, Date.now())
-  const lastTest = prevFormTest(phoneSessions, Date.now())
-  const testDays = lastTest ? Math.floor((Date.now() - lastTest.startedAt) / (24 * 3600 * 1000)) : null
-  // どこで走るかを先に選び、やること（走る・練習・テスト）は同じ形のボタンで並べる。選んだ場所は端末に覚えておく
-  const [where, setWhere] = useState<PhoneWhere>(() => (dev ? loadPhoneWhere() : 'outdoor'))
-  const chooseWhere = (w: PhoneWhere) => {
-    setWhere(w)
-    savePhoneWhere(w)
-  }
-  // 崩しの撮影（トレッドミルだけ）：ふつう版か短い版か、上半身だけにするか、最後に付け方の区間も走るか
-  const [drill, setDrill] = useState<DrillOptions>({ version: 'full', extra: true, upper: false })
-  const drillMin = (o: DrillOptions) => Math.round(drillPlan(o).total / 60)
-  const testDue = testDays !== null && testDays >= FORM_TEST.everyDays
-  const phoneActions = [
-    {
-      title: 'ピッチを上げる練習',
-      note: practice.n === 1 ? `メトロノームに合わせて走ります。2週間で${PRACTICE.runs}回` : `${practice.n} / ${PRACTICE.runs} 回目。メトロノームに合わせて走ります`,
-      start: () => startPhone(where, { kind: 'practice', plan: practice }),
-    },
-    {
-      title: 'フォームのテスト',
-      note: testDays === null ? '声はかけずに5分。月1回' : testDue ? `前のテストから${testDays}日。そろそろ` : `前のテストから${testDays}日`,
-      due: testDue,
-      start: () => startPhone(where, { kind: 'test' }),
-    },
-    // トレッドミルのときだけ：わざと崩した走りを、声の指示どおりに順に走る（横の iPhone で全身を録画する）
-    ...(where === 'treadmill'
-      ? [
-          {
-            title: '崩しの撮影（声で指示）',
-            note: `横の iPhone で全身を録画しながら、${drill.upper ? '頭を前に・下を向く・腕を振らない…' : '頭を前に・腕を振らない・ピッチを落とす…'}を声の指示どおりに順に走ります。約${drillMin(drill)}分`,
-            drill: true,
-            start: () => startPhone(where, { kind: 'drill', drill }),
-          },
-        ]
-      : []),
-  ]
 
   const goodPct = last ? Math.round(last.share.good * 100) : null
   const delta = last && prev ? Math.round((last.share.good - prev.share.good) * 100) : null
@@ -310,7 +250,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           style={mode === 'sensor' && sensorsOn === 0 ? { opacity: 0.4 } : undefined}
           onClick={() => {
             unlockVoice()
-            if (mode === 'waist') return void startPhone(where)
+            if (mode === 'waist') return void startPhone(go, 'outdoor')
             if (mode === 'sensor') {
               // 腰のポーチに入れたこのスマホの向きも記録する（sensor/waist.ts）。iPhone は押した流れの中でしか、動きのセンサーの許可が出ない
               void requestMotionPermission()
@@ -335,155 +275,23 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           <a href="/theory/" style={{ color: 'var(--muted)', fontSize: 12 }}>
             フォームの見方
           </a>
-          {dev && mode === 'treadmill' && (
-            <>
-              {' · '}
-              <button onClick={() => fileRef.current?.click()} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
-                動画で試す
-              </button>
-              {' · '}
-              <button onClick={() => exportLog().then((ok) => ok || alert('まだ記録がありません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
-                直近の記録を書き出す
-              </button>
-            </>
-          )}
         </div>
-        {dev && mode === 'treadmill' && (
-        <button className="card" onClick={() => slowRef.current?.click()} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>スロー動画で詳しく見る</div>
-          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            iPhone のカメラの「スロー」で、真横から1〜1.5m離れて、足元まで入れて数歩撮った動画を選びます。接地時間・着地のすね・上下動を測ります。
-          </div>
-        </button>
-        )}
         <UploadPanel />
-        {(mode === 'waist' || dev) && (
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {mode === 'waist' && (
-          <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>腰スマホ</div>
-            <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-              加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。
+        {mode === 'waist' && (
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>腰スマホ</div>
+              <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。
+              </div>
             </div>
-          </div>
-
-          {dev && (
-          <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 13 }} className="muted">どこで走る？</div>
-            <div className="seg" role="group" aria-label="どこで走る？" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              {(['outdoor', 'treadmill'] as PhoneWhere[]).map((w) => (
-                <button key={w} aria-pressed={where === w} onClick={() => chooseWhere(w)}>
-                  {WHERE_LABEL[w]}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">
-              {WHERE_NOTE[where]}
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {phoneActions.map((a) => (
-              <Fragment key={a.title}>
-                {a.drill && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
-                    <div className="seg" role="group" aria-label="崩しの撮影の長さ" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                      {(['full', 'short'] as DrillVersion[]).map((v) => (
-                        <button key={v} aria-pressed={drill.version === v} onClick={() => setDrill({ ...drill, version: v })}>
-                          {v === 'full' ? 'ふつう版' : '短い版'}（約{drillMin({ ...drill, version: v })}分）
-                        </button>
-                      ))}
-                    </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                      <input type="checkbox" checked={!!drill.upper} onChange={(e) => setDrill({ ...drill, upper: e.target.checked })} style={{ accentColor: 'var(--accent)', width: 18, height: 18 }} />
-                      上半身だけ（頭・目線・背中・腕。脚に負担のかかる区間は走らない）
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: drill.upper ? 0.45 : 1 }}>
-                      <input type="checkbox" checked={drill.extra && !drill.upper} disabled={!!drill.upper} onChange={(e) => setDrill({ ...drill, extra: e.target.checked })} style={{ accentColor: 'var(--accent)', width: 18, height: 18 }} />
-                      最後に付け方の区間も（ゆるい・手・ポケット）
-                    </label>
-                  </div>
-                )}
-                <button className="phone-action" onClick={a.start}>
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                    <span style={{ fontSize: 15, fontWeight: 700 }}>{a.title}</span>
-                    <span className="muted" style={{ fontSize: 12, lineHeight: 1.5, color: a.due ? 'var(--accent)' : undefined }}>
-                      {a.note}
-                    </span>
-                  </span>
-                  <span aria-hidden="true" style={{ fontSize: 20, color: 'var(--accent)' }}>
-                    ›
-                  </span>
-                </button>
-              </Fragment>
-            ))}
-          </div>
-          </>
-          )}
-
-          {lastPhone && (
-            <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={{ ...linkStyle, alignSelf: 'flex-start', fontSize: 13 }}>
-              前回の結果を見る（{fmtDate(lastPhone.startedAt)}）
-            </button>
-          )}
-          </>
-          )}
-          {dev && (
-          <details className="dev">
-            <summary>開発用</summary>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, paddingTop: 10 }}>
-              <button onClick={() => exportPhoneLog().then((ok) => ok || alert('まだスマホ版の記録がありません'))} style={linkStyle}>
-                直近の記録を書き出す
+            {lastPhone && (
+              <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={{ ...linkStyle, alignSelf: 'flex-start', fontSize: 13 }}>
+                前回の結果を見る（{fmtDate(lastPhone.startedAt)}）
               </button>
-              <button
-                onClick={() => {
-                  unlockVoice()
-                  go({ name: 'phone', where: 'treadmill', sim: 10 })
-                }}
-                style={linkStyle}
-              >
-                模擬データで試す（センサーの代わりに作った値を流す）
-              </button>
-              <button
-                onClick={() => {
-                  unlockVoice()
-                  go({ name: 'phone', where: 'treadmill', sim: 20, kind: { kind: 'drill', drill: { ...drill, version: 'short' } } })
-                }}
-                style={linkStyle}
-              >
-                模擬データで崩しの撮影を試す（上の選び方の短い版を20倍の速さで）
-              </button>
-              <UploadKeyButton />
-            </div>
-          </details>
-          )}
-        </div>
+            )}
+          </div>
         )}
-        <input
-          ref={slowRef}
-          type="file"
-          accept="video/*"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) go({ name: 'slow', video: f })
-          }}
-        />
-        <input
-          ref={fileRef}
-          type="file"
-          accept="video/*"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) {
-              unlockVoice()
-              go({ name: 'live', video: f })
-            }
-          }}
-        />
       </div>
     </main>
   )

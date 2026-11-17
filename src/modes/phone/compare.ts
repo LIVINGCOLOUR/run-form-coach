@@ -3,7 +3,7 @@ import { facing, legLength } from '../camera/geometry'
 import { L } from '../camera/landmarks'
 import { PHONE_MOUNTS, type PhoneLog } from './log'
 import { MountCheck, type MountFeatures, type MountIssue } from './mount'
-import { DRILL_PREP_MARKS, DRILL_STEPS } from './drill'
+import { DRILL_PREP_MARKS, DRILL_STEPS, LAB_BACK, LAB_STEPS, LAB_TIME } from './drill'
 
 // スマホ版とカメラ版を同時に記録した2つのファイルを、時刻を合わせて並べ、声にする前の関門（docs/phone-spec.md
 // 「精度の確かめ方」）の材料を出す。実機テスト①（docs/phone-test1.md）の記録を、scripts/compare-runs.mjs から使う
@@ -41,6 +41,11 @@ export const TEST1: Step[] = [
 ]
 // 崩しの撮影（drill.ts）の区間。key は TEST1 と同じものは同じ。記録に区間の印があれば、それで区間を決める
 export const DRILL: Step[] = DRILL_STEPS.map((s) => ({ key: s.key, name: s.name, min: s.full / 60, waist: s.waist, expect: s.expect }))
+// 答えつきの記録（drill.ts の labPlan。/lab/）の区間と、区間のあいだに走ったまま戻す間（back）
+export const LAB: Step[] = [
+  ...LAB_STEPS.map((s) => ({ key: s.key, name: s.name, min: s.full / 60, waist: s.waist, expect: s.expect })),
+  { key: LAB_BACK.key, name: LAB_BACK.name, min: LAB_TIME.back / 60, waist: true, expect: null },
+]
 // 研究で分かっている向き（ピッチを落とすと上下動とブレーキが増える：Heiderscheit 2011）。比べる相手は最初の「ふつう」
 const RESEARCH: Record<string, { bounce?: 1 | -1; braking?: 1 | -1 }> = { slow: { bounce: 1, braking: 1 }, bouncy: { bounce: 1 } }
 
@@ -319,7 +324,8 @@ export function findSegments(ph: PhoneData, steps: Step[] = TEST1, labels?: stri
   if (runMarks.length) {
     const lastT = ph.raw.length ? ph.raw[ph.raw.length - 1].T : 0
     const segments = runMarks.map((m, i): Segment => {
-      const step = steps.find((s) => s.key === m.key) ?? DRILL.find((s) => s.key === m.key) ?? TEST1.find((s) => s.key === m.key) ?? null
+      // 同じ key は崩しの撮影の名前を先に（normal1・hunch・bouncy は同じ意味）。答えつきの記録だけの区間（腰を落とす3段・足を前に出しすぎる・胸を開く・戻す）は LAB から
+      const step = steps.find((s) => s.key === m.key) ?? DRILL.find((s) => s.key === m.key) ?? LAB.find((s) => s.key === m.key) ?? TEST1.find((s) => s.key === m.key) ?? null
       return { i, step, name: step?.name ?? m.key, start: m.start, end: m.end ?? lastT }
     })
     warnings.push(`区間は記録の印（protocol:…）から決めた（${segments.length} 個）`)

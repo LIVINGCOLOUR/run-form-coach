@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session } from './core/types'
 import { CAMERA_LOGS, deleteLog, loadLogStamps, loadSessions } from './core/storage'
 import { Home } from './screens/Home'
+import { LabHome } from './screens/LabHome'
+import { IN_LAB } from './core/lab'
 import { Live } from './modes/camera/screens/Live'
 import { Result } from './screens/Result'
 import { Posture } from './modes/camera/screens/Posture'
@@ -61,10 +63,12 @@ export default function App() {
   }, [reload])
 
   const find = (id: string) => sessions.find((s) => s.id === id)
+  // ホーム：テスト用のページ（/lab/）ではテスト用のホーム。走っている間・結果の画面は同じものを使う
+  const home = () => (IN_LAB ? <LabHome sessions={sessions} phoneSessions={phoneSessions} go={setScreen} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />)
 
   switch (screen.name) {
     case 'home':
-      return <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
+      return home()
     case 'live':
       return (
         <Live
@@ -78,7 +82,7 @@ export default function App() {
       )
     case 'result': {
       const s = find(screen.id)
-      return s ? <Result session={s} sessions={sessions} go={setScreen} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
+      return s ? <Result session={s} sessions={sessions} go={setScreen} /> : home()
     }
     case 'phone':
       return (
@@ -96,7 +100,7 @@ export default function App() {
       )
     case 'phoneResult': {
       const s = phoneSessions.find((x) => x.id === screen.id)
-      return s ? <PhoneResult session={s} sessions={phoneSessions} onHome={() => setScreen({ name: 'home' })} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
+      return s ? <PhoneResult session={s} sessions={phoneSessions} onHome={() => setScreen({ name: 'home' })} /> : home()
     }
     case 'sensorRun':
       return <SensorLive onDone={(logId) => setScreen(logId ? { name: 'sensorResult', logId } : { name: 'home' })} />
@@ -106,7 +110,7 @@ export default function App() {
       return <Slow video={screen.video} go={setScreen} />
     case 'posture': {
       const s = find(screen.id)
-      return s ? <Posture session={s} go={setScreen} /> : <Home sessions={sessions} phoneSessions={phoneSessions} go={setScreen} />
+      return s ? <Posture session={s} go={setScreen} /> : home()
     }
   }
 }

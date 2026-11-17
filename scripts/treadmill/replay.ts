@@ -16,6 +16,8 @@
 import { Coach } from '../../src/modes/camera/coach'
 import { LIMITS, REL_LIMITS, FORM, LANDING, GOOD, HIP_ABS, BASE_SETTLE, BASELINE } from '../../src/modes/camera/params'
 export { applyStrictness, STAND_REF } from '../../src/modes/camera/params'
+// 答えつきの記録（/lab/）・崩しの撮影の、スマホの記録の区間の印から区間を作る・区間ごとの値の表
+export { LAB_SETTLE, labReport, sectionsFromMarks } from '../../src/modes/phone/labValues'
 import { ABSENCE, CUE as CUE_P, HIP_REF, POWER, PRAISE, QUIET, RUNNING, SCORE } from '../../src/core/params'
 import { CUE, RECOVER, SAY, PHRASES, FORM_SAY, phraseId } from '../../src/core/phrases'
 import { activeItems } from '../../src/core/level'
@@ -346,7 +348,10 @@ export function replayPhone(file: unknown, opts: { fromMs?: number; items?: 'all
   let kind: ConstructorParameters<typeof PhoneRun>[3]
   if (kindEv?.startsWith('kind:drill:')) {
     const [, , version, extra] = kindEv.split(':')
-    kind = { kind: 'drill', drill: { version: version as DrillOptions['version'], extra: extra === 'extra', upper: extra === 'upper' } }
+    // 答えつきの記録（lab）は声を出さない走り。--items all のときは、ふつうの走りとして（ピッチ・接地・上下動を声にするとして）通し、
+    // 声が出たはずかを見る（崩しの撮影として通すと、区間の始め10秒と誘導の声の近くの声を待たせるので、30秒の区間ではほとんど出ない）
+    if (version === 'lab' && opts.items === 'all') warnings.push('答えつきの記録は声を出さない走りなので、--items all では、ふつうの走りとして通し直した（区間の印はそのとき残したものを使う）')
+    else kind = { kind: 'drill', drill: { version: version as DrillOptions['version'], extra: extra === 'extra', upper: extra === 'upper' } }
   } else if (kindEv) warnings.push(`練習・テストの記録（${kindEv}）は、ふつうの走りとして通しました`)
   if (log.where === 'outdoor') warnings.push('外の記録です。GPS の速さは通し直していません（トレッドミルとして通しました）')
   const voiced = opts.items === 'all' ? [...PHONE_VOICED, ...PHONE_MEASURED] : PHONE_VOICED

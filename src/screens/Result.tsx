@@ -3,6 +3,7 @@ import { ITEM_KEYS, type ItemKey, type Session } from '../core/types'
 import { ShareBar } from '../ui/ShareBar'
 import { fmtDate } from './Home'
 import { exportLog } from '../core/exportLog'
+import { IN_LAB } from '../core/lab'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
 import { formRows, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, speedNote, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
@@ -13,8 +14,8 @@ import type { GaitResult } from '../core/types'
 
 const ITEMS: ItemKey[] = ITEM_KEYS
 
-// 開発用（記録の書き出し）は、ホームと同じく URL に ?dev=1 を付けたときだけ出す（Home.tsx）
-const dev = typeof location !== 'undefined' && new URLSearchParams(location.search).has('dev')
+// 開発用（記録の書き出し）は、テスト用のページ /lab/ で開いたときだけ出す（core/lab.ts）
+const dev = IN_LAB
 
 export function Result({ session: s, sessions, go }: { session: Session; sessions: Session[]; go: (x: Screen) => void }) {
   const idx = sessions.findIndex((x) => x.id === s.id)

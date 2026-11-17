@@ -54,7 +54,7 @@ interface Hud {
   refSpeed: number | null
   gate: SpeedGate | null // 速さで判定を止めている理由
   gpsError: number | null // 位置が取れない理由（1=許可されていない、2=取れない、3=時間切れ）
-  drill: { phase: DrillPhase; remaining: number; next: DrillPhase | null; n: number; of: number } | null // 崩しの撮影：いまの段
+  drill: { phase: DrillPhase; remaining: number; next: DrillPhase | null; n: number; of: number; lab: boolean } | null // 崩しの撮影・答えつきの記録：いまの段
 }
 
 const GATE_TEXT: Record<SpeedGate, string> = {
@@ -267,7 +267,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
               const a = drill.at(t)
               const runs = drill.phases.filter((p) => p.kind === 'run')
               const n = runs.filter((p) => p.start <= a.phase.start).length
-              return { phase: a.phase, remaining: a.remaining, next: a.next, n, of: runs.length }
+              return { phase: a.phase, remaining: a.remaining, next: a.next, n, of: runs.length, lab: drill.options.version === 'lab' }
             })()
           : null,
       })
@@ -402,14 +402,14 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
   )
 }
 
-// 崩しの撮影：いまの段・残り時間・次の段。腰に付ける前と休みのときに見るので、大きく出す
+// 崩しの撮影・答えつきの記録：いまの段・残り時間・次の段。腰に付ける前と休みのときに見るので、大きく出す
 function DrillCard({ d }: { d: NonNullable<Hud['drill']> }) {
   const { phase, remaining, next } = d
   const running = phase.kind === 'run'
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6, borderColor: running ? 'var(--accent)' : undefined }}>
       <div className="row" style={{ fontSize: 13 }}>
-        <span className="muted">崩しの撮影{running ? `　区間 ${d.n} / ${d.of}` : ''}</span>
+        <span className="muted">{d.lab ? '答えつきの記録' : '崩しの撮影'}{running ? `　区間 ${d.n} / ${d.of}` : ''}</span>
         <span className="muted">{phase.kind === 'done' ? '' : '残り'}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
