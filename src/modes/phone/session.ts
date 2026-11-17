@@ -254,7 +254,7 @@ export class PhoneRun {
     while (this.seen < ss.length) {
       const ls = this.analyzer.lastSecond
       const s = ss[this.seen++]
-      this.rec.second(t, s, ls?.est ?? null, ls?.mount ?? null)
+      this.rec.second(t, s, ls?.est ?? null, ls?.mount ?? null, ls?.sink ?? null)
       // 練習：1秒ごとに、鳴らす・止める・テンポを変えるを決める
       if (this.practice) {
         const p = this.practice.second(s.t, s.cadence, this.analyzer.ref?.cadence ?? null, this.coach.state === 'running')

@@ -63,4 +63,28 @@ describe('腰のスマホの向き（記録だけ）', () => {
     none.w.tick(WAIST.none + 0.1)
     expect(none.events.map((e) => e[1])).toEqual(['waist: none'])
   })
+
+  it('走っている秒には、腰の沈み込み（phone/sink.ts）も出す。走っていない秒は出さない', () => {
+    const { w } = make()
+    // ばねの形の走り（ピッチ170・接地 0.25秒）。重力を引いた上下の加速度：空中は −g、接地中は A sin(πτ/Tc) − g
+    const G = 9.80665
+    const P = 60 / 170
+    const tc = 0.25
+    const A = (G * P * Math.PI) / (2 * tc)
+    let t = 0
+    for (let k = 0; k < 8 * 60; k++) {
+      t = k / 60
+      const tau = t % P
+      const a = (tau < tc ? A * Math.sin((Math.PI * tau) / tc) - G : -G) + G
+      w.sample(t, [0, 0, a])
+    }
+    const s = w.second(t, { running: true, chestOver: false, v: 9 })
+    expect(s.sink).not.toBeNull()
+    expect(s.sink!.sinkCm).toBeGreaterThan(4)
+    expect(s.sink!.sinkCm).toBeLessThan(7)
+    expect(s.sink!.contactMs).toBeGreaterThan(200)
+    expect(s.sink!.contactMs).toBeLessThan(280)
+    expect(w.second(t, { running: false, chestOver: false, v: 9 }).sink).toBeNull()
+    expect(w.second(t).sink).toBeNull()
+  })
 })

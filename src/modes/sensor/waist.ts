@@ -1,6 +1,7 @@
 import type { SensorWaistLog } from '../../core/types'
 import { listenMotion, motionPermission, toMeasure, type MotionLike } from '../phone/sensor'
 import type { PhoneMeasure } from '../phone/signal'
+import { hipSink, type SinkEst } from '../phone/sink'
 import { LeanDetector } from './lean'
 import { HUNCH, WAIST, WAIST_SIT } from './params'
 import type { Vec3 } from './parse'
@@ -15,8 +16,9 @@ import { median, waistGait, WaistSit, type WaistGait, type WaistSitSec } from '.
 // 許可（iPhone）は、ホームの「はじめる」を押したときに求める（phone/sensor.ts の requestMotionPermission）。結果は events の waist:permission
 // 腰落ち（記録だけ。開発中）：直近 WAIST_SIT.window 秒の値（角速度も）から、1秒ごとにピッチ・上下動・有効接地時間・接地の割合・上下の加速度の山を出し、
 //   waistSit.ts の WaistSit で、同じ速さのふつうの走りと比べる（events の waist:ref・waist:sit・waist:sitOk）
+// 腰の沈み込み（記録だけ。phone/sink.ts、腰スマホのモードと同じ計算）：同じ窓の値から、1歩ごとの「着地から接地中のいちばん低いところまでの腰の下がり」の真ん中（cm）を出す
 // テスト期間：届いた値すべて（t・加速度・角速度）を WAIST_RAW_COLUMNS の行で残す（session.ts が記録の sensors.waistRaw へ移す。60秒ごとに端末へ書き出す）
-export type WaistSec = { tilt: number | null; g: Vec3 | null; n: number; gait: WaistGait | null; sit: WaistSitSec | null }
+export type WaistSec = { tilt: number | null; g: Vec3 | null; n: number; gait: WaistGait | null; sit: WaistSitSec | null; sink: SinkEst | null }
 // 1秒ごとのまとめに渡す、そのときの走りのようす。running：走っているか。chestOver：胸の猫背の見張りが線を越えているか。
 // v：いまの速さ（km/h。足首のセンサーの見積もり、なければ GPS。分からなければ null）
 export type WaistCtx = { running: boolean; chestOver: boolean; v: number | null }
@@ -119,6 +121,7 @@ export class WaistPhone {
     const fresh = t - this.lastAt <= WAIST.stale
     let gait: WaistGait | null = null
     let sit: WaistSitSec | null = null
+    let sink: SinkEst | null = null
     if (ctx) {
       if (ctx.running && ctx.v !== null && Number.isFinite(ctx.v)) this.vs.push({ t, v: ctx.v })
       while (this.vs.length && t - this.vs[0].t > WAIST_SIT.speedSec) this.vs.shift()
@@ -126,8 +129,9 @@ export class WaistPhone {
       // 窓の値が途切れていたら（画面が消えた）出さない
       gait = fresh && this.buf.length && t - this.buf[0].t >= WAIST_SIT.window - WAIST.gap ? waistGait(this.buf) : null
       sit = this.sit.second(t, gait, ctx.running, ctx.chestOver, v)
+      sink = gait && ctx.running ? hipSink(this.buf) : null
     }
-    const out: WaistSec = { tilt: fresh ? this.d.tilt() : null, g: fresh ? this.d.dir() : null, n: this.n, gait, sit }
+    const out: WaistSec = { tilt: fresh ? this.d.tilt() : null, g: fresh ? this.d.dir() : null, n: this.n, gait, sit, sink }
     this.n = 0
     return out
   }

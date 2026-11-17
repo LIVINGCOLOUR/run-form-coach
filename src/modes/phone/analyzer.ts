@@ -5,6 +5,7 @@ import { MountCheck, mountFeatures, offWaistRunning, type MountFeatures, type Mo
 import { PHONE, PHONE_LIMITS, PHONE_REF, SPEED } from './params'
 import type { FatigueFeatures } from './fatigue'
 import { estimate, isRunning, type Estimate, type PhoneMeasure, type Vec3 } from './signal'
+import { hipSink, type SinkEst } from './sink'
 import { speedGate, type SpeedGate, type SpeedTrack } from './speed'
 
 // スマホ1台（腰のベルト）の入り口の「見る役」。engine.ts の CueEngine に渡す
@@ -153,7 +154,8 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
   private gateUntil = -1e9 // 速さが範囲に戻っても、この秒までは止める（SPEED.hold）
   private lastGate: SpeedGate | null = null
   // 直近の1秒で使った、測った値と付け方の手がかり（記録の書き出しで使う）。走っていない秒は est が null
-  lastSecond: { est: Estimate | null; mount: MountFeatures | null } | null = null
+  // sink：腰の沈み込み（sink.ts。記録だけで、声・判定には使わない）。走っていない秒・出せない秒は null
+  lastSecond: { est: Estimate | null; mount: MountFeatures | null; sink: SinkEst | null } | null = null
   upShift: number | null = null // 直近の秒の、スマホの上向きの基準からの傾き（度）。基準ができる前は null
   private form: { t: number; bounce: number; contact: number }[] = [] // 上下動・接地の、直近 PHONE.formHold 秒の値（続けて判定できた秒だけ）
 
@@ -186,7 +188,7 @@ export class PhoneAnalyzer implements ModeAnalyzer<PhoneMeasure, PhoneSample, Ph
     const est = estimate(this.buf)
     const e = isRunning(est, RUNNING.runSpm) ? est : null
     const x: MountFeatures | null = mountFeatures(this.buf, e ? e.cadence / 60 : undefined)
-    this.lastSecond = { est: e, mount: x }
+    this.lastSecond = { est: e, mount: x, sink: e ? hipSink(this.buf) : null }
     if (!e && !offWaistRunning(x, RUNNING.runSpm)) return null
 
     const gps = this.speed !== null

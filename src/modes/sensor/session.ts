@@ -48,10 +48,11 @@ const r3n = (x: number | null | undefined) => (x === null || x === undefined || 
 // 腰のスマホ（センサーランだけ。waist.ts）の傾き（度。b から。2つの立ち方の差が小さければ向きによらない角度）と、ならした重力の向き（スマホの軸、長さ1）・その1秒に届いた値の数。値がなければ null
 // 腰落ち（センサーランの腰のスマホ。記録だけ。waistSit.ts）：直近6秒の窓のピッチ（歩/分）・上下動（cm）・有効接地時間（ms）・接地の割合・上下の加速度の山（g）、
 //   同じ速さのふつうの走り（基準）からの接地の割合と山の変わり（%）・見分けの値 wSitIdx・その秒が決まりを満たしたか wSit（1/0）・判定しなかったわけ wSkip（WAIST_SKIP の番号。0 は判定した）・
-// 心拍計（センサーランだけ。heart.ts。記録だけ）の心拍 hr（拍/分。つないでいない・HEART.stale 秒より届いていなければ null）
+// 心拍計（センサーランだけ。heart.ts。記録だけ）の心拍 hr（拍/分。つないでいない・HEART.stale 秒より届いていなければ null）・
+// 腰の沈み込み（センサーランの腰のスマホ。記録だけ。phone/sink.ts）：直近6秒の窓の、1歩ごとの着地から接地中のいちばん低いところまでの腰の下がりの真ん中 wSink（cm）と、同じ見方の着地から離地までの時間の真ん中 wSinkCt（ms）
 export const SEC_COLS = [
   't', 'run', 'chest', 'chestRef', 'head', 'headRef', 'bent', 'df', 'ctL', 'ctR', 'v', 'cad', 'chestIdx', 'headIdx', 'gpsV', 'gpsAcc', 'alt', 'altAcc', 'waist', 'wgx', 'wgy', 'wgz', 'wHz',
-  'wCad', 'wBounce', 'wCt', 'wDuty', 'wPeak', 'wDutyPct', 'wPeakPct', 'wSitIdx', 'wSit', 'wSkip', 'hr',
+  'wCad', 'wBounce', 'wCt', 'wDuty', 'wPeak', 'wDutyPct', 'wPeakPct', 'wSitIdx', 'wSit', 'wSkip', 'hr', 'wSink', 'wSinkCt',
 ]
 
 // 心拍計から runner.ts が渡すもの：いまの心拍（拍/分。なければ null）と、前の tick から届いた RR 間隔 [届いた t, ms]
@@ -418,7 +419,7 @@ export class SensorSession {
         r1n(gps?.v), r1n(gps?.acc), r1n(gps?.alt), r1n(gps?.altAcc),
         r1n(w?.tilt), r3n(w?.g?.[0]), r3n(w?.g?.[1]), r3n(w?.g?.[2]), w ? w.n : null,
         r1n(wg?.cad), r1n(wg?.bounceCm), r1n(wg?.contactMs), r3n(wg?.duty), r3n(wg?.peakG), r1n(ws?.dutyPct), r1n(ws?.peakPct), r2n(ws?.index), ws ? ws.sit : null, ws ? WAIST_SKIP.indexOf(ws.skip) : null,
-        bpm,
+        bpm, r2n(w?.sink?.sinkCm), r1n(w?.sink?.contactMs),
       ])
     }
     if (t >= this.nextBat) {

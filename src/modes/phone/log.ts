@@ -3,6 +3,7 @@ import type { PhoneSample } from './analyzer'
 import type { Estimate, PhoneMeasure } from './signal'
 import { mountVerdict, type MountFeatures } from './mount'
 import type { FatigueResult } from './fatigue'
+import type { SinkEst } from './sink'
 import { SPEED_GATES, type FixOut, type GpsFix } from './speed'
 
 // スマホ版の調整用の記録。センサーの生の値（届いたコマすべて）と、1秒ごとの判定の値を残す
@@ -18,6 +19,7 @@ export const PHONE_SECOND_COLUMNS = [
   't', 'wallMs', 'sec', 'cadence', 'bounceCm', 'brakingMs', 'regularity', 'accRms', 'score', 'quiet', 'mount',
   'vCadence', 'vBounce', 'vBraking', 'stepHz', 'gravity', 'gyroSwing', 'gyroHf', 'upX', 'upY', 'upZ', 'speed', 'gate',
   'brakingFixed', 'gyroLevel', 'apRegularity', 'ratioV', 'ratioAP', 'ratioML', 'contactMs', 'vContact', 'contactMs5', 'loose',
+  'sinkCm', 'sinkCt',
 ] as const
 // 位置が届くたびの1行（外だけ）。位置そのもの（緯度・経度）は残さない（家の場所が分かるため）。速さは前の点からの距離で出し直せる
 export const PHONE_GPS_COLUMNS = ['t', 'wallMs', 'accuracy', 'speedDevice', 'stepM', 'raw', 'speed', 'used', 'altitude', 'altitudeAccuracy'] as const
@@ -66,6 +68,8 @@ const UNITS = {
   'vCadence,vBounce,vBraking,vContact': '線と比べた値（走り始めからのピッチの下がり %・上下動の増え %・ブレーキの増え m/s・接地の割合〔有効接地時間 ÷ 1歩の時間〕の増え %）。判定しない秒は null。2026-11-07 より前の記録の vBounce は cm',
   mount: `判定を止めた付け方の問題（${PHONE_MOUNTS.map((s, i) => `${i}=${s ?? 'なし'}`).join('、')}）。2026-11-09 からは loose は付かない（ゆるいは記録だけ。loose の列と mount:loose の出来事）`,
   loose: 'その秒の付け方の見立てが「ゆるい」（細かい回転 gyroHf が MOUNT.looseGyroHf 以上で、腰以外ではない）なら 1。記録だけで、声にも判定にも使わない。2026-11-09 より前の記録にはない',
+  'sinkCm,sinkCt':
+    'cm・ms。腰の沈み込み（sink.ts）：その秒の直近4秒の歩ごとの「着地から接地中のいちばん低いところまでの腰の下がり」の真ん中と、同じ見方の着地から離地までの時間の真ん中。記録だけで、声にも判定にも使わない。身長比（%）は Mac で身長で割る。2026-11-17 より前の記録にはない',
   'stepHz,gravity,gyroSwing,gyroHf,upX,upY,upZ': '付け方の確認の手がかり（mount.ts の MountFeatures）',
   speed: 'm/s。GPS のならした速さ（外だけ。取れない秒・トレッドミルは null）',
   gate: `速さで判定を止めた理由（${SPEED_GATES.map((s, i) => `${i}=${s ?? '止めていない'}`).join('、')}。noGps=GPS が取れない、noBase=基準の速さを作れなかった、slow・fast=基準の速さから外れた）。トレッドミルは null`,
@@ -115,7 +119,7 @@ export class PhoneLogRecorder {
     this.log.rows.push([r(m.t, 1000), this.wallMs(m.t), r(m.ax, 1000), r(m.ay, 1000), r(m.az, 1000), n(m.gx, 10000), n(m.gy, 10000), n(m.gz, 10000), PHONE_STATES.indexOf(state)])
   }
 
-  second(t: number, s: PhoneSample, est: Estimate | null, x: MountFeatures | null) {
+  second(t: number, s: PhoneSample, est: Estimate | null, x: MountFeatures | null, sink: SinkEst | null = null) {
     this.log.seconds.push([
       r(t, 1000), this.wallMs(t), s.t,
       n(s.cadence, 10), n(s.bounceCm, 100), n(s.brakingMs, 1000), n(est?.regularity, 1000), n(est?.accRms, 100),
@@ -126,6 +130,7 @@ export class PhoneLogRecorder {
       n(est?.brakingFixed, 1000), est ? (est.gyroLevel ? 1 : 0) : null, n(est?.apRegularity, 1000),
       n(est?.ratioV, 1000), n(est?.ratioAP, 1000), n(est?.ratioML, 1000), n(est?.contactMs, 1), n(s.values.contact, 100), n(est?.contactMs5, 1),
       x ? (mountVerdict(x) === 'loose' ? 1 : 0) : null,
+      n(sink?.sinkCm, 100), n(sink?.contactMs, 1),
     ])
   }
 

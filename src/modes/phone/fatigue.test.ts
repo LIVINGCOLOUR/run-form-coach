@@ -102,6 +102,9 @@ describe('スマホ：疲れの見分け（走った後）', () => {
     expect(log.secondColumns).toContain('contactMs')
     // 1秒ごとの記録に、疲れの材料が入る
     expect(log.seconds.some((r) => r[log.secondColumns.indexOf('apRegularity')] !== null)).toBe(true)
+    // 腰の沈み込み（sink.ts。記録だけ）も、走っている秒に入る
+    const sink = log.secondColumns.indexOf('sinkCm')
+    expect(log.seconds.filter((r) => typeof r[sink] === 'number' && r[sink]! > 0).length).toBeGreaterThan(log.seconds.length / 2)
   })
 
   it('12分より長い走りでは 5〜12分を基準にして、その後の崩れ始めを見つける', { timeout: 120000 }, () => {
