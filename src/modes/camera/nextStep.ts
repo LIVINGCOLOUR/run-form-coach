@@ -2,7 +2,7 @@ import type { Category, FormGroup, FormResult, GaitResult, ItemKey, Session, Str
 import { ALL, STEPS, startPhrase, type Progress } from '../../core/level'
 import { LEVEL } from '../../core/params'
 import { FOCUS } from '../../core/phrases'
-import { FORM, GAIT, GOOD, GOOD_SPEED, goodAt, kmh1, SETUP, typicalHipAt, type GoodRanges } from './params'
+import { FORM, GAIT, GOOD, GOOD_SPEED, goodAt, kmh1, SETUP, typicalHipAt, withStrictness, type GoodRanges } from './params'
 import { formOver } from './form'
 
 // 今日の意識・次の一歩：1つだけ選ぶ。
@@ -27,6 +27,10 @@ export const NEXT_TEXT: Record<ItemKey, { title: string; reason: string }> = {
 
 // 項目の名前（結果の画面・次の一歩）
 export const GROUP_LABEL: Record<FormGroup, string> = { body: '体全体の前傾', trunk: '上体の前傾', head: '頭の位置', landing: '着地の位置' }
+
+// その走りで使った線（レベルと、走る前に入れたベルトの速さ）で計算する（params.ts の withStrictness）
+export const withRunLines = <T>(s: Pick<Session, 'focus' | 'speedKmh' | 'speedSource'>, fn: () => T): T =>
+  withStrictness(s.focus?.level, s.speedSource === 'belt' ? s.speedKmh : undefined, fn)
 
 // よい例より離れていた向きの言い方（前回の走りのことを言うときは、past で「〜いました」に）
 const GAP_WORD: Record<ItemKey, string> = { hunch: '丸まっています', head: '前に出ています', trunk: '前に傾いています', trunkBack: '起きています', body: '前に倒れています', bodyBack: '起きています', hip: '下がっています', landing: '前に着いています' }
@@ -190,6 +194,7 @@ export interface FormRow {
   good: string // よい例の範囲（「7°〜9.6°」）
   line: string // 声をかける線との比べ（「声をかける線 5.5°〜15°：内側でした」）
   lineOut: boolean // 声をかける線の外だった
+  lineName: string // 「声をかける線」（着地を声にしない間は「試しの線」）
   note?: string // 頭：実際より大きく出ているかもしれない。着地：試しの測り方であること
 }
 
@@ -240,6 +245,7 @@ export function formRows(form: FormResult[], kmh?: number): FormRow[] {
       good: goodText(r.group, good),
       line: `${lineName(r.group)} ${rangeText(r.group)}：${line}`,
       lineOut: r.judged && r.over > 0,
+      lineName: lineName(r.group),
       ...(note ? { note } : {}),
     }
   })
@@ -289,6 +295,11 @@ export function todayFocus(sessions: Session[], p: Progress): Focus {
     return { title: s.title, reason, say }
   }
   if (p.justUp) return stage()
+  const last = sessions[0]
+  return last ? withRunLines(last, () => focusOf(sessions, p, stage)) : focusOf(sessions, p, stage)
+}
+
+function focusOf(sessions: Session[], p: Progress, stage: () => Focus): Focus {
   const last = sessions[0]
   const compared = !!last?.form?.length
   if (compared) {

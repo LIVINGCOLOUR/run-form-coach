@@ -6,9 +6,9 @@ import { exportLog } from '../core/exportLog'
 import { IN_LAB } from '../core/lab'
 import { UploadState } from '../ui/Upload'
 import { fmtMinSec, quietDelta, QUIET_NONE, splitMinSec } from '../core/quiet'
-import { formRows, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, speedNote, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
+import { formRows, gapSentence, gaitRows, GAIT_NO_CONTACT, nextItem, nextNote, noNextNote, NEXT_TEXT, speedNote, withRunLines, type FormRow, type GaitRow, type Next } from '../modes/camera/nextStep'
 import { GOOD, kmh1 } from '../modes/camera/params'
-import { runSummary } from '../modes/camera/summary'
+import { badCause, CAUSE_LABEL, runSummary } from '../modes/camera/summary'
 import { SlipNote } from '../modes/sensor/SlipNote'
 import type { GaitResult } from '../core/types'
 
@@ -32,6 +32,8 @@ export function Result({ session: s, sessions, go }: { session: Session; session
   const firstHalf = cues.filter((c) => c.t < half).length
   // 走りのひとこと：崩れ始めだけでなく、良い・悪いの割合と声の回数も見て選ぶ（camera/summary.ts）
   const summary = runSummary(s)
+  // 悪い姿勢の秒の、いちばん多かった理由（見出しの割合と、下の「よい例との差」をつなぐ。2026-11-19）
+  const cause = badCause(s)
 
   return (
     <main className="page">
@@ -94,6 +96,12 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         <ShareBar share={s.share} height={12} />
         <div style={{ fontSize: 12 }} className="muted">良い姿勢 {goodMin}分 / {Math.round(s.durationSec / 60)}分</div>
         <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.5, paddingTop: 4 }}>{summary}</div>
+        {cause && (
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            悪い姿勢の時間の<span style={{ fontWeight: 700 }}>{cause.part >= 0.85 ? 'ほとんど' : '多く'}</span>は、
+            <span style={{ fontWeight: 700, color: 'var(--warn)' }}>{CAUSE_LABEL[cause.group]}</span>でした
+          </div>
+        )}
         {s.standing && (
           <details className="more">
             <summary>くわしく（走る前の立ち姿勢）</summary>
@@ -106,7 +114,7 @@ export function Result({ session: s, sessions, go }: { session: Session; session
         {s.provisionalBaseline && <div style={{ fontSize: 12, color: 'var(--warn)' }}>動画で試したため、直立の基準は仮のものです</div>}
       </div>
 
-      {s.form && s.form.length > 0 && <FormCard session={s} next={nextItem(s)} />}
+      {s.form && s.form.length > 0 && <FormCard session={s} next={withRunLines(s, () => nextItem(s))} />}
       {s.gait && <GaitCard gait={s.gait} standingHip={s.standing?.hip} kmh={s.speedKmh} />}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -171,23 +179,28 @@ export function Result({ session: s, sessions, go }: { session: Session; session
 
 // よい例との差：項目ごとに、走っていた秒の平均と、よい例の範囲と、その差（主役）。声をかける線（正しいフォームの線）との
 // 比べは、控えめに添える（線は外れた声にならないよう広く取っているので、ふつうはどれも内側に入る）。次に意識する1つも。
+// ただし、平均が声をかける線の外だった項目は、線の外を主役にし、よい例との差を添える（上級の頭の線はよい例より厳しく、
+// 「よい例の範囲です」と大きく出しながら、見出しでは悪い姿勢が多い、という食い違いになっていた。2026-11-19）。
+// 線は、その走りのレベルと速さのもの（withRunLines）
 // 着地の位置は、試しの測り方（params.ts の FORM.landing.say が false の間）であることを、行の下に添える。
 // 言葉は nextStep.ts の formRows で決める。よい例の範囲は、その走りの速さ（Session.speedKmh）のもの（params.ts の goodAt）
 function FormCard({ session: s, next }: { session: Session; next: Next | undefined }) {
-  const rows = formRows(s.form!, s.speedKmh)
+  const rows = withRunLines(s, () => formRows(s.form!, s.speedKmh))
   // 線の外は warn、よい例から離れていたら mid、ほぼ同じは文字の色、よい例の範囲なら accent
   const color = (r: FormRow) => (r.lineOut ? 'var(--warn)' : r.state === 'off' ? 'var(--mid)' : r.state === 'near' ? 'var(--text)' : 'var(--accent)')
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <div style={{ fontSize: 15, fontWeight: 700 }}>よい例との差</div>
-        <div style={{ fontSize: 12 }} className="muted">走っていた間の平均を、よい例の範囲と比べました</div>
+        <div style={{ fontSize: 12 }} className="muted">走っていた間の平均を、声をかける線とよい例の範囲と比べました</div>
       </div>
       {rows.map((r) => (
         <div key={r.group} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontSize: 13 }} className="muted">{r.label}</div>
           <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 6px', color: color(r) }}>
-            {r.state === 'in' ? (
+            {r.lineOut ? (
+              <span style={{ fontSize: 22, fontWeight: 900 }}>{r.lineName}の外でした</span>
+            ) : r.state === 'in' ? (
               <span style={{ fontSize: 22, fontWeight: 900 }}>よい例の範囲です</span>
             ) : (
               <>
@@ -209,6 +222,7 @@ function FormCard({ session: s, next }: { session: Session; next: Next | undefin
             ))}
             <span className="muted">／よい例 {r.good}</span>
           </div>
+          {r.lineOut && <div style={{ fontSize: 12, lineHeight: 1.5 }} className="muted">よい例との差：{gapSentence(r)}</div>}
           <div style={{ fontSize: 12, lineHeight: 1.5, color: r.lineOut ? 'var(--warn)' : 'var(--faint)' }}>{r.line}</div>
           {r.note && <div style={{ fontSize: 12, lineHeight: 1.5, color: '#E0B341' }}>{r.note}</div>}
         </div>

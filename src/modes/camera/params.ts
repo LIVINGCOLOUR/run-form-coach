@@ -821,6 +821,24 @@ export function applySpeed(kmh: number | undefined) {
 }
 applyStrictness()
 
+// 決まった走りの線（レベルと速さ）で計算して、終わったら元の線に戻す。結果の画面・ホームで、その走りで使った線を出すため
+// （線は applyStrictness で入れ替える1つの値なので、そのまま読むと、最後に走ったときや既定〔中級〕の線になり、
+//  上級で走った記録に「声をかける線 首46°…：外でした」と、合わない線を出していた。2026-11-19）
+export function withStrictness<T>(level: Level | undefined, kmh: number | undefined, fn: () => T): T {
+  const was = { level: strictness, kmh: speedKmh }
+  applyStrictness(level ?? DEFAULT_STRICT, kmh)
+  try {
+    return fn()
+  } finally {
+    applyStrictness(was.level, was.kmh)
+  }
+}
+
+// 結果の画面の、悪い姿勢の秒のいちばん多かった理由（summary.ts の badCause）。見せ方の値で、判定には使わない
+//   minShare：悪い姿勢の割合がこれ未満の走りでは言わない（少ない秒の理由を言っても役に立たない）
+//   minPart：いちばん多かった項目が悪い秒のこれ未満（理由がばらけている）なら言わない
+export const BAD_CAUSE = { minShare: 0.1, minPart: 0.5 }
+
 // 結果の画面の、走りのひとこと（summary.ts）。「大きく崩れずに走れました」と言うのは、次の3つがそろった走りだけ。
 // 崩れ始め（5分平均の点数が序盤より下がった時刻）だけで選ぶと、走り出しから崩れていた走りは「下がらない」ので崩れ始めがなく、
 // 良い 16%・悪い 53%・声 17回（13分）の走り（2026-11-06 12:27）にも「大きく崩れずに走れました」と出た。

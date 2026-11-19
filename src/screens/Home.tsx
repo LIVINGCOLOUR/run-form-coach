@@ -39,20 +39,21 @@ const show = (item: ItemKey, x: number) => (item === 'landing' ? pct0(x) : `${fm
 type RunMode = 'treadmill' | 'waist' | 'sensor'
 const MODE_KEY = 'rfc.runMode'
 const MODES: { key: RunMode; label: string; note: string }[] = [
-  { key: 'treadmill', label: 'トレッドミル', note: '横に置いたカメラで全身を見て、声で知らせます。センサーをつなげば、いっしょに使います' },
   { key: 'waist', label: '腰スマホ', note: 'スマホを腰のベルトに付けて外を走り、ピッチが落ちたら声で知らせます。画面はつけたままにします。センサーをつなげば、いっしょに使います（振動だけ）' },
+  { key: 'treadmill', label: 'トレッドミル', note: '横に置いたカメラで全身を見て、声で知らせます。センサーをつなげば、いっしょに使います' },
   {
     key: 'sensor',
     label: SENSOR_RUN_NAME,
     note: 'センサーだけで外を走ります（マラソンにも）。スマホはポケットかアームバンドに入れ、画面は消さずに見ません。崩れたら、その場所が震えます。始めたら、声の案内に従って2つの立ち方で3秒ずつ止まってください',
   },
 ]
+// 最初に選ばれているのは腰スマホ（本人の決め 2026-11-19：普及はスマホ1台から。並びも左から 腰スマホ・トレッドミル・センサーラン）
 const loadMode = (): RunMode => {
   try {
     const v = localStorage.getItem(MODE_KEY)
-    return v === 'waist' || v === 'sensor' ? v : 'treadmill'
+    return v === 'treadmill' || v === 'sensor' ? v : 'waist'
   } catch {
-    return 'treadmill'
+    return 'waist'
   }
 }
 const saveMode = (m: RunMode) => {
