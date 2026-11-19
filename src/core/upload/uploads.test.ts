@@ -30,8 +30,29 @@ describe('記録を送るしくみ（uploads）', () => {
     store.clear()
     sent.length = 0
     vi.stubGlobal('localStorage', fakeStorage)
+    // テスト期間の既定の鍵は、テスト用のページ（/lab/）だけで使う。ほかのテストは /lab/ で開いたとして動かす
+    vi.stubGlobal('location', { pathname: '/lab/' })
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it('ふつうのアプリ（/）では既定の鍵を使わず、走り終わった記録も送らない（手で入れた鍵があれば送る）', async () => {
+    vi.stubGlobal('location', { pathname: '/' })
+    const u = await load()
+    expect(u.getUploadKey()).toBeNull()
+    u.registerUploadSource('phone', payload('a'))
+    u.queueUpload('phone', 'log-a', Date.UTC(2026, 10, 19))
+    await u.flushUploads(true)
+    expect(sent).toEqual([])
+    expect(u.uploadView().list).toEqual([])
+    u.setUploadKey('mine')
+    expect(u.getUploadKey()).toBe('mine')
+  })
+
+  it('ふつうのアプリでも、検証用の全コマ記録（?full=1）で開いたときは既定の鍵で送る', async () => {
+    vi.stubGlobal('location', { pathname: '/', search: '?full=1' })
+    const u = await load()
+    expect(u.getUploadKey()).toBe(u.TEST_UPLOAD_KEY)
+  })
 
   it('鍵を入れていなければテスト期間の既定の鍵を使い、手で入れた鍵があればそちらを使う', async () => {
     const u = await load()

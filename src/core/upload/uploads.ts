@@ -4,12 +4,17 @@
 import { packJson, packPieces } from './pack'
 import { addEntry, backfillEntries, entryId, flushQueue, logsToPrune, resetWaits, type LocalLog, type UploadEntry, type UploadPayload } from './queue'
 import { sendRun } from './send'
+import { IN_LAB } from '../lab'
 
 const LIST_KEY = 'rfc.uploads'
 const KEY_KEY = 'rfc.uploadKey'
 
 // テスト期間だけの、送る鍵の既定（Vercel の UPLOAD_KEY と同じ）。鍵を入れていない端末でも、走り終わったら自動で送る。
 // ホーム画面のアプリと Safari のタブは localStorage が別なので、鍵を入れ忘れた側の記録が送られなかったことがある。
+// この既定を使うのは、テスト用のページ（/lab/）と、検証用の全コマ記録（?full=1。カメラ版の答えつきの記録で使う）で開いたときだけ
+// （本人の決め 2026-11-19：紹介動画のショートで見る人が増え、ふつうのアプリ〔/〕を使ったほかの人の記録が、断りなく届かないように）。
+// ふつうのアプリで送るのは、手で鍵を入れた端末だけ。
+// 同じブラウザでは / と /lab/ の端末の記録は共通なので、本人が / で走った記録も、/lab/ を開いたときに送る（開いたときに直近14日を入れる）。
 // ほかの人に使ってもらう前に、必ず null にする（Vercel の UPLOAD_KEY も変える）。手で入れた鍵があれば、そちらを使う
 export const TEST_UPLOAD_KEY: string | null = 'run'
 
@@ -111,7 +116,8 @@ const setList = (list: UploadEntry[]) => {
 // 手で入れた鍵
 const getStoredUploadKey = () => read<string | null>(KEY_KEY, null)
 // 送るときに使う鍵：手で入れた鍵、なければテスト期間の既定
-export const getUploadKey = () => getStoredUploadKey() || TEST_UPLOAD_KEY
+const TEST_PAGE = () => IN_LAB || (typeof location !== 'undefined' && new URLSearchParams(location.search ?? '').get('full') === '1')
+export const getUploadKey = () => getStoredUploadKey() || (TEST_PAGE() ? TEST_UPLOAD_KEY : null)
 // 空にすると、手で入れた鍵を消す（テスト期間の既定に戻る）
 export function setUploadKey(key: string | null) {
   write(KEY_KEY, key?.trim() || null)
