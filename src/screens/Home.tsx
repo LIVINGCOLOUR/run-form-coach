@@ -18,6 +18,7 @@ import { requestMotionPermission } from '../modes/phone/sensor'
 import { startPhone } from '../modes/phone/screens/startPhone'
 import { flushUploads } from '../core/upload/uploads'
 import { UploadPanel } from '../ui/Upload'
+import { ContactLink } from '../ui/Contact'
 import { SensorPanel } from '../modes/sensor/SensorPanel'
 import { HeartPanel } from '../modes/sensor/HeartPanel'
 import { sensors } from '../modes/sensor/ble'
@@ -339,6 +340,7 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           </a>
         </div>
         <UploadPanel />
+        <ContactLink />
       </div>
     </main>
   )

@@ -4,6 +4,7 @@ import { demoStride, REFERENCE } from '../modes/camera/ui/figure'
 import { FORM, GAIT, HIP_ABS, LANDING, LIMITS, REL_LIMITS, STAND_REF } from '../modes/camera/params'
 import { PHRASES } from '../core/phrases'
 import { Logic } from './Logic'
+import { ContactLink } from '../ui/Contact'
 
 // 脚の長さに対する割合を、小数1桁の % に
 const pct1 = (x: number) => `${Math.round(x * 1000) / 10}`
@@ -376,6 +377,7 @@ export function Theory() {
       <a className="primary" href="/" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
         アプリを開く
       </a>
+      <ContactLink />
     </main>
   )
 }
