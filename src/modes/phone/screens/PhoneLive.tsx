@@ -22,6 +22,7 @@ import { SensorRunner } from '../../sensor/runner'
 import { SensorRunLog } from '../../sensor/runLog'
 import { heart } from '../../sensor/heart'
 import { queueUpload } from '../../../core/upload/uploads'
+import { IN_LAB } from '../../../core/lab'
 
 // スマホ版の走る画面（ウェブ）。スマホを腰のベルトに付けて走る。画面はつけたまま使う（消えないようにしておく）
 // 声は共通のしくみ（engine.ts）が決め、言葉と音声は phrases.ts のものを使う
@@ -32,7 +33,8 @@ import { queueUpload } from '../../../core/upload/uploads'
 // kind：ピッチを上げる練習（practice.ts。練習のテンポのメトロノームだけを鳴らす）か、フォームのテスト（formtest.ts。声はかけず、5分で終える）
 //   か、崩しの撮影（drill.ts。区間を声で指示し、いまの区間・残り時間・次の区間を大きく出す。最後まで進んだら終える）。
 //   答えつきの記録（drill の version 'lab'。テスト用のページ /lab/）は、答えつきの区間のあと指示なしの走り（自由走。free.ts）に入り、
-//   本人が終えるまで続ける。腰のポーチの中で触れて終わらないように、終えるボタンは長押し
+//   本人が終えるまで続ける。
+// 終えるボタンは、どの走りも長押し（腰のポーチの中で触れて終わらないように。センサーランと同じ）
 const HOLD_MS = 1500
 
 interface Hud {
@@ -88,7 +90,7 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
   // テスト：前のテストの速さに合わせてもらう
   const prevTest = kind?.kind === 'test' ? prevFormTest(sessions, Date.now())?.test ?? null : null
   const finishRef = useRef<() => void>(() => {})
-  // 答えつきの記録：終えるのは長押しだけ
+  // 答えつきの記録（/lab/）
   const lab = kind?.kind === 'drill' && kind.drill.version === 'lab'
   const [holding, setHolding] = useState(false)
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -326,11 +328,6 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
     <main className="page" style={{ gap: 14 }}>
       <div className="row">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {!lab && (
-            <button className="icon-btn" aria-label="終える" onClick={() => finishRef.current()}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
-            </button>
-          )}
           <div style={{ width: 10, height: 10, borderRadius: 5, background: hud.state === 'running' ? 'var(--accent)' : 'var(--faint)' }} />
           {label && <div style={{ fontSize: 15, fontWeight: 700 }} className="muted">{label}</div>}
         </div>
@@ -394,13 +391,13 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
       )}
       {where === 'outdoor' && !sim && !kind && hud.gpsError === 1 && (
         <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
-          位置情報が許可されていないので、速さが分からず、ピッチの判定（声とメトロノーム）を止めています。記録は取ります。設定の「プライバシーとセキュリティ」→「位置情報サービス」→「Safari の Web サイト」で許可してください。トレッドミルなら、ホームの「どこで走る？」で「トレッドミル」を選んでから始めてください。
+          位置情報が許可されていないので、速さが分からず、ピッチの判定（声とメトロノーム）を止めています。記録は取ります。設定の「プライバシーとセキュリティ」→「位置情報サービス」→「Safari の Web サイト」で許可してください。{IN_LAB && 'トレッドミルなら、上の「どこで走る？」で「トレッドミル」を選んでから始めてください。'}
         </div>
       )}
       {hud.mount && <div style={{ padding: '10px 14px', borderRadius: 14, background: 'var(--warn)', color: '#0A0C0E', fontSize: 14, fontWeight: 900, lineHeight: 1.5 }}>{MOUNT_TEXT[hud.mount]}</div>}
       {hud.noData && (
         <div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid var(--warn)', color: 'var(--warn)', fontSize: 13, lineHeight: 1.6 }}>
-          動きのセンサーの値が届いていません。許可しなかったときは、Safari をいったん閉じて開き直し、もう一度ホームのスマホ版のボタンを押してください。
+          動きのセンサーの値が届いていません。許可しなかったときは、Safari をいったん閉じて開き直し、もう一度ホームから始めてください。
         </div>
       )}
 
@@ -423,23 +420,17 @@ export function PhoneLive({ sim, where, location, kind, sessions = [], onDone }:
         </div>
       )}
 
-      {lab ? (
-        <button
-          className="primary"
-          onPointerDown={startHold}
-          onPointerUp={endHold}
-          onPointerLeave={endHold}
-          onPointerCancel={endHold}
-          onContextMenu={(e) => e.preventDefault()}
-          style={{ opacity: holding ? 0.6 : 1, userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none' }}
-        >
-          {holding ? 'そのまま押し続けると終わります' : '長押しで終える'}
-        </button>
-      ) : (
-        <button className="primary" onClick={() => finishRef.current()}>
-          終える
-        </button>
-      )}
+      <button
+        className="primary"
+        onPointerDown={startHold}
+        onPointerUp={endHold}
+        onPointerLeave={endHold}
+        onPointerCancel={endHold}
+        onContextMenu={(e) => e.preventDefault()}
+        style={{ opacity: holding ? 0.6 : 1, userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none' }}
+      >
+        {holding ? 'そのまま押し続けると終わります' : '長押しで終える'}
+      </button>
     </main>
   )
 }

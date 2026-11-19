@@ -35,12 +35,12 @@ const show = (item: ItemKey, x: number) => (item === 'landing' ? pct0(x) : `${fm
 // テストの機能（答えつきの記録・崩しの撮影・動画で試す・スロー動画・腰スマホの練習とテスト・記録の書き出しなど）は、
 // テスト用のページ /lab/（LabHome.tsx）に分けた（本人の決め 2026-11-17）
 
-// 走り方（入り口）。ホームのいちばん上で選び、「はじめる」1つで始める。選んだものは端末に覚えておく
+// 走り方（入り口）。ホームのいちばん上で選び、画面の下の「はじめる」1つで始める。選んだものは端末に覚えておく
 type RunMode = 'treadmill' | 'waist' | 'sensor'
 const MODE_KEY = 'rfc.runMode'
 const MODES: { key: RunMode; label: string; note: string }[] = [
   { key: 'treadmill', label: 'トレッドミル', note: '横に置いたカメラで全身を見て、声で知らせます。センサーをつなげば、いっしょに使います' },
-  { key: 'waist', label: '腰スマホ', note: 'スマホを腰のベルトに付けて外を走り、ピッチが落ちたら声で知らせます。センサーをつなげば、いっしょに使います（振動だけ）' },
+  { key: 'waist', label: '腰スマホ', note: 'スマホを腰のベルトに付けて外を走り、ピッチが落ちたら声で知らせます。画面はつけたままにします。センサーをつなげば、いっしょに使います（振動だけ）' },
   {
     key: 'sensor',
     label: SENSOR_RUN_NAME,
@@ -63,7 +63,6 @@ const saveMode = (m: RunMode) => {
   }
 }
 
-const linkStyle = { background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 } as const
 
 export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]; phoneSessions?: PhoneSession[]; go: (s: Screen) => void }) {
   const [settings, setSettings] = useState<Settings>(loadSettings)
@@ -119,12 +118,23 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
     speak(PHRASES.sample, voice)
   }
 
-  // 腰スマホ：外で走る（GPS で速さを見る）。トレッドミルで試すのは /lab/ から
-  const lastPhone = phoneSessions[0]
+  // 腰スマホ：外で走る（GPS で速さを見る）。トレッドミルで試すのは /lab/ から。
+  // 前回の走りは、ふつうの走りだけ（/lab/ の練習・テスト・答えつきの記録は入れない）。判定した時間がない走りは割合を出さない
+  const phoneRuns = phoneSessions.filter((s) => !s.kind)
+  const lastPhone = phoneRuns[0]
+  const prevPhone = phoneRuns[1]
+  const judged = (s: PhoneSession) => s.share.good + s.share.mid + s.share.bad > 0
+  const phonePct = lastPhone && judged(lastPhone) ? Math.round(lastPhone.share.good * 100) : null
+  const phoneDelta = phonePct !== null && prevPhone && judged(prevPhone) ? phonePct - Math.round(prevPhone.share.good * 100) : null
 
   const goodPct = last ? Math.round(last.share.good * 100) : null
   const delta = last && prev ? Math.round((last.share.good - prev.share.good) * 100) : null
+  const sensorBlocked = mode === 'sensor' && sensorsOn === 0
 
+  // 並び（2026-11-19 本人の決め：紹介動画を見て、基本の使い方は分かっている人が使う前提）：
+  //   いちばん上で走り方を選び、その下には、選んだ走り方に関わるものだけを出す
+  //   （走り姿・今日の意識・前回の良い姿勢はカメラ版のもの。レベルはカメラ版とセンサー〔センサーランと、いっしょにつないだとき〕で使う）。
+  //   「はじめる」は画面の下に固定して、スクロールしなくても押せるようにする（iPhone の小さい画面で、下に隠れていた）
   return (
     <main className="page">
       <div className="row">
@@ -138,64 +148,83 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         </div>
       </div>
 
-      <div className="stage" style={{ height: 236 }}>
-        <Mannequin
-          frames={correct}
-          ghost={today}
-          upperColor="#6B7480"
-          width={358}
-          height={236}
-          viewBox="0 0 358 236"
-          transform="translate(52,-22) scale(0.56)"
-        />
-        <div style={{ position: 'absolute', left: 14, top: 12, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#C9CFD5' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 16, height: 8, borderRadius: 4, background: '#6B7480' }} />
-            {today ? '正しいフォーム' : '見本'}
-          </div>
-          {today && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 16, borderTop: '2px dashed var(--accent)' }} />
-              {runLabel}
-            </div>
-          )}
-          {good && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>{good.kmh !== undefined ? `時速${kmh1(good.kmh)}kmのよい例` : '時速12kmのよい例（速さが分からないとき）'}</div>}
-          {!today && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>研究にもとづく目安</div>}
-        </div>
-        {nextShown && next && (
-          <div style={{ position: 'absolute', right: 14, top: 64, textAlign: 'right' }}>
-            <div style={{ fontSize: 11 }} className="muted">{next.kind === 'good' ? `${next.group === 'head' ? '首の角度' : ITEM_LABEL[next.group]}（よい例へ）` : ITEM_LABEL[next.item]}</div>
-            <div className="num" style={{ fontSize: 30 }}>
-              <span style={{ color: 'var(--accent)' }}>{show(next.item, next.from)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
-              <span style={{ color: '#C9CFD5' }}>{show(next.item, next.to)}</span>
-            </div>
-            <div style={{ fontSize: 11, paddingTop: 4 }} className="muted">{next.kind === 'line' ? (next.group === 'landing' && !FORM.landing.say ? '試しの線まで' : '声をかける線まで') : 'よい例の範囲まで'}</div>
-          </div>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 4px' }}>
-        <div style={{ fontSize: 12 }} className="muted">今日の意識</div>
-        <div style={{ fontSize: 22, fontWeight: 900 }}>{focus.title}</div>
-        <div style={{ fontSize: 12 }} className="muted">{focus.reason}</div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ fontSize: 13 }} className="muted">あなたのレベル</div>
-        <div className="seg" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-          {(['beginner', 'intermediate', 'advanced'] as Level[]).map((lv) => (
-            <button key={lv} aria-pressed={progress.level === lv} onClick={() => chooseLevel(lv)}>
-              {LEVEL_LABEL[lv]}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="seg" role="group" aria-label="走り方" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          {MODES.map((m) => (
+            <button key={m.key} aria-pressed={mode === m.key} onClick={() => chooseMode(m.key)}>
+              {m.label}
             </button>
           ))}
         </div>
-        <div style={{ fontSize: 12 }} className="muted">
-          {LEVEL_NOTE[progress.level]}
-          {progress.level !== 'advanced' && (progress.step >= ALL ? '（すべての項目を見ています）' : `（${progress.step + 1}/${ALL}段階目）`)}
+        <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">
+          {MODES.find((m) => m.key === mode)!.note}
         </div>
       </div>
 
-      {last && goodPct !== null && (
+      {mode === 'treadmill' && (
+        <>
+          <div className="stage" style={{ height: 236 }}>
+            <Mannequin
+              frames={correct}
+              ghost={today}
+              upperColor="#6B7480"
+              width={358}
+              height={236}
+              viewBox="0 0 358 236"
+              transform="translate(52,-22) scale(0.56)"
+            />
+            <div style={{ position: 'absolute', left: 14, top: 12, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#C9CFD5' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 16, height: 8, borderRadius: 4, background: '#6B7480' }} />
+                {today ? '正しいフォーム' : '見本'}
+              </div>
+              {today && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 16, borderTop: '2px dashed var(--accent)' }} />
+                  {runLabel}
+                </div>
+              )}
+              {good && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>{good.kmh !== undefined ? `時速${kmh1(good.kmh)}kmのよい例` : '時速12kmのよい例（速さが分からないとき）'}</div>}
+              {!today && <div style={{ fontSize: 10.5, color: 'var(--faint)' }}>研究にもとづく目安</div>}
+            </div>
+            {nextShown && next && (
+              <div style={{ position: 'absolute', right: 14, top: 64, textAlign: 'right' }}>
+                <div style={{ fontSize: 11 }} className="muted">{next.kind === 'good' ? `${next.group === 'head' ? '首の角度' : ITEM_LABEL[next.group]}（よい例へ）` : ITEM_LABEL[next.item]}</div>
+                <div className="num" style={{ fontSize: 30 }}>
+                  <span style={{ color: 'var(--accent)' }}>{show(next.item, next.from)}</span> <span style={{ fontSize: 20, color: 'var(--faint)' }}>→</span>{' '}
+                  <span style={{ color: '#C9CFD5' }}>{show(next.item, next.to)}</span>
+                </div>
+                <div style={{ fontSize: 11, paddingTop: 4 }} className="muted">{next.kind === 'line' ? (next.group === 'landing' && !FORM.landing.say ? '試しの線まで' : '声をかける線まで') : 'よい例の範囲まで'}</div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 4px' }}>
+            <div style={{ fontSize: 12 }} className="muted">今日の意識</div>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>{focus.title}</div>
+            <div style={{ fontSize: 12 }} className="muted">{focus.reason}</div>
+          </div>
+        </>
+      )}
+
+      {mode !== 'waist' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: 13 }} className="muted">あなたのレベル</div>
+          <div className="seg" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            {(['beginner', 'intermediate', 'advanced'] as Level[]).map((lv) => (
+              <button key={lv} aria-pressed={progress.level === lv} onClick={() => chooseLevel(lv)}>
+                {LEVEL_LABEL[lv]}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12 }} className="muted">
+            {LEVEL_NOTE[progress.level]}
+            {mode === 'treadmill' && progress.level !== 'advanced' && (progress.step >= ALL ? '（すべての項目を見ています）' : `（${progress.step + 1}/${ALL}段階目）`)}
+          </div>
+        </div>
+      )}
+
+      {mode === 'treadmill' && last && goodPct !== null && (
         <button className="card" onClick={() => go({ name: 'result', id: last.id })} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div className="row" style={{ fontSize: 13 }}>
             <span className="muted">前回の良い姿勢</span>
@@ -216,38 +245,67 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         </button>
       )}
 
+      {mode === 'waist' && lastPhone && (
+        <button className="card" onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="row" style={{ fontSize: 13 }}>
+            <span className="muted">前回の良い走り</span>
+            <span className="muted">{fmtDate(lastPhone.startedAt)} · {Math.round(lastPhone.durationSec / 60)}分　›</span>
+          </div>
+          {phonePct !== null ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
+                <div className="num" style={{ fontSize: 72, lineHeight: 0.85, color: 'var(--accent)' }}>
+                  {phonePct}
+                  <span style={{ fontSize: 36 }}>%</span>
+                </div>
+                {phoneDelta !== null && (
+                  <div style={{ fontSize: 14, paddingBottom: 6, color: phoneDelta >= 0 ? 'var(--accent)' : 'var(--warn)' }}>
+                    {phoneDelta >= 0 ? '▲' : '▼'} {Math.abs(phoneDelta)}%　前回より
+                  </div>
+                )}
+              </div>
+              <ShareBar share={lastPhone.share} />
+            </>
+          ) : (
+            <div style={{ fontSize: 13 }} className="muted">判定した時間がありませんでした（走り始めの基準は3分で作ります）</div>
+          )}
+        </button>
+      )}
+
       {VOICE_ORDER.length > 1 && (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ fontSize: 13 }} className="muted">声（押すと試しに話します）</div>
-        <div className="seg" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          {VOICE_ORDER.map((v) => (
-            <button key={v} aria-pressed={settings.voice === v} onClick={() => setVoice(v)}>
-              {VOICES[v].label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 13 }} className="muted">声（押すと試しに話します）</div>
+          <div className="seg" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+            {VOICE_ORDER.map((v) => (
+              <button key={v} aria-pressed={settings.voice === v} onClick={() => setVoice(v)}>
+                {VOICES[v].label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
       )}
 
       <div style={{ flexGrow: 1 }} />
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-          <div className="seg" role="group" aria-label="走り方" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            {MODES.map((m) => (
-              <button key={m.key} aria-pressed={mode === m.key} onClick={() => chooseMode(m.key)}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">
-            {MODES.find((m) => m.key === mode)!.note}
-          </div>
-        </div>
+      {/* 「はじめる」は画面の下に固定（スクロールしても見える）。下のセンサーの枠などは、その下に続く */}
+      <div
+        style={{
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 5,
+          margin: '0 -16px',
+          padding: '16px 16px max(12px, env(safe-area-inset-bottom))',
+          background: 'linear-gradient(to bottom, rgba(10,12,14,0), var(--bg) 16px)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          alignItems: 'center',
+        }}
+      >
         <button
           className="primary"
-          disabled={mode === 'sensor' && sensorsOn === 0}
-          style={mode === 'sensor' && sensorsOn === 0 ? { opacity: 0.4 } : undefined}
+          disabled={sensorBlocked}
+          style={sensorBlocked ? { opacity: 0.4 } : undefined}
           onClick={() => {
             unlockVoice()
             if (mode === 'waist') return void startPhone(go, 'outdoor')
@@ -263,11 +321,14 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
         >
           はじめる
         </button>
-        {mode === 'sensor' && sensorsOn === 0 && <div style={{ fontSize: 12, color: 'var(--warn)' }}>{SENSOR_RUN_NAME}は、センサーを1つ以上つないでから始めます</div>}
+        {sensorBlocked && <div style={{ fontSize: 12, color: 'var(--warn)' }}>{SENSOR_RUN_NAME}は、センサーを1つ以上つないでから始めます</div>}
         {mode === 'treadmill' && fullFrames() && (
           <div style={{ fontSize: 12, color: 'var(--accent)' }}>全コマ記録（検証用）：走っている間も間引かず、毎コマ骨格を取って残します</div>
         )}
-        <SensorPanel key={mode === 'sensor' ? 'open' : 'closed'} defaultOpen={mode === 'sensor' && sensorsOn === 0} />
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+        <SensorPanel key={mode === 'sensor' ? 'open' : 'closed'} defaultOpen={sensorBlocked} />
         {/* 心拍計（センサーランだけ。記録するだけ） */}
         {mode === 'sensor' && <HeartPanel />}
         <div style={{ fontSize: 12 }} className="muted">
@@ -277,21 +338,6 @@ export function Home({ sessions, phoneSessions = [], go }: { sessions: Session[]
           </a>
         </div>
         <UploadPanel />
-        {mode === 'waist' && (
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{ fontSize: 15, fontWeight: 700 }}>腰スマホ</div>
-              <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                加速度とジャイロでピッチ・上下動・着地のブレーキを測ります。いまは実機の値を取るための試作で、画面はつけたまま使います。
-              </div>
-            </div>
-            {lastPhone && (
-              <button onClick={() => go({ name: 'phoneResult', id: lastPhone.id })} style={{ ...linkStyle, alignSelf: 'flex-start', fontSize: 13 }}>
-                前回の結果を見る（{fmtDate(lastPhone.startedAt)}）
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </main>
   )

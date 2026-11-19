@@ -9,6 +9,7 @@ import type { PhoneSession } from '../session'
 import { exportPhoneLog } from '../storage'
 import { UploadState } from '../../../ui/Upload'
 import { FormTestCard, PracticeCard } from './PhoneProgress'
+import { IN_LAB } from '../../../core/lab'
 
 // スマホ版の結果。カメラ版の結果（src/screens/Result.tsx）は姿勢の項目と走り姿を前提にしているので、別に持つ
 // 腰のスマホでは姿勢が見えないので「良い姿勢」ではなく「良い走り」と言う
@@ -135,8 +136,16 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
       </div>
       <div style={{ fontSize: 12, lineHeight: 1.6 }} className="muted">上下動とブレーキは、腰のスマホで測った目安です。カメラ版と比べて確かめるまでは、自分の基準との差だけを見てください。</div>
 
-      {s.fatigue && <FatigueCard f={s.fatigue} total={s.durationSec} />}
-      {s.fatigue && <ChangeCard f={s.fatigue} total={s.durationSec} />}
+      {/* いつもと違う度合い・走り始めからの変化はたたむ（本人：崩れた時刻より「疲れたら崩れる」で足りる。2026-11-19 結果を短くする） */}
+      {s.fatigue && (
+        <details>
+          <summary style={{ fontSize: 13, padding: '10px 0' }} className="muted">くわしく（走り始めからの変化）</summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 6 }}>
+            <FatigueCard f={s.fatigue} total={s.durationSec} />
+            <ChangeCard f={s.fatigue} total={s.durationSec} />
+          </div>
+        </details>
+      )}
 
       {s.cues.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -154,7 +163,8 @@ export function PhoneResult({ session: s, sessions, onHome }: { session: PhoneSe
 
       <div style={{ flexGrow: 1 }} />
       {s.logId && <UploadState kind="phone" logId={s.logId} startedAt={s.startedAt} />}
-      {s.logId && (
+      {/* 調整用の書き出しはテスト用のページ（/lab/）だけ */}
+      {IN_LAB && s.logId && (
         <button onClick={() => exportPhoneLog(s.logId).then((ok) => ok || alert('記録が見つかりません'))} style={{ background: 'none', border: 0, padding: 0, color: 'var(--muted)', textDecoration: 'underline', fontSize: 12 }}>
           調整用の記録を書き出す（加速度・ジャイロと1秒ごとの判定）
         </button>
